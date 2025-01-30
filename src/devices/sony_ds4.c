@@ -115,8 +115,8 @@ void input_sony_ds4(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
                  ((ds4_report.triangle) ? 0x00 : USBR_BUTTON_B4) |
                  ((ds4_report.l1)       ? 0x00 : USBR_BUTTON_L1) |
                  ((ds4_report.r1)       ? 0x00 : USBR_BUTTON_R1) |
-                 ((ds4_report.l2)       ? 0x00 : USBR_BUTTON_L2) |
-                 ((ds4_report.r2)       ? 0x00 : USBR_BUTTON_R2) |
+                 ((ds4_report.l2 > 210)       ? 0x00 : USBR_BUTTON_L2) |
+                 ((ds4_report.r2 > 210)       ? 0x00 : USBR_BUTTON_R2) |
                  ((ds4_report.share)    ? 0x00 : USBR_BUTTON_S1) |
                  ((ds4_report.option)   ? 0x00 : USBR_BUTTON_S2) |
                  ((ds4_report.l3)       ? 0x00 : USBR_BUTTON_L3) |
