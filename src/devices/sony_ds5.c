@@ -117,7 +117,7 @@ void input_sony_ds5(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
                  ((ds5_report.l1)       ? 0x00 : USBR_BUTTON_L1) |
                  ((ds5_report.r1)       ? 0x00 : USBR_BUTTON_R1) |
                  ((ds5_report.l2)       ? 0x00 : USBR_BUTTON_L2) |
-                 ((ds5_report.r2 > 200)       ? 0x00 : USBR_BUTTON_R2) |
+                 ((ds5_report.r2 > uint8_t l2_trigger_effect_force)       ? 0x00 : USBR_BUTTON_R2) |
                  ((ds5_report.share)    ? 0x00 : USBR_BUTTON_S1) |
                  ((ds5_report.option)   ? 0x00 : USBR_BUTTON_S2) |
                  ((ds5_report.l3)       ? 0x00 : USBR_BUTTON_L3) |
