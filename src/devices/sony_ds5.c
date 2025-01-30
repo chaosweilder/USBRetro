@@ -117,7 +117,7 @@ void input_sony_ds5(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
                  ((ds5_report.l1)       ? 0x00 : USBR_BUTTON_L1) |
                  ((ds5_report.r1)       ? 0x00 : USBR_BUTTON_R1) |
                  ((ds5_report.l2)       ? 0x00 : USBR_BUTTON_L2) |
-                 ((ds5_report.r2)       ? 0x00 : USBR_BUTTON_R2) |
+                 ((ds5_report.r2 > 200)       ? 0x00 : USBR_BUTTON_R2) |
                  ((ds5_report.share)    ? 0x00 : USBR_BUTTON_S1) |
                  ((ds5_report.option)   ? 0x00 : USBR_BUTTON_S2) |
                  ((ds5_report.l3)       ? 0x00 : USBR_BUTTON_L3) |
@@ -217,7 +217,7 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, int player_index, uint8
   uint8_t l2_trigger_effect_force =
     (uint8_t)((0xb4 - l2_trigger_start_resistance) * (l2_start_resistance_value / 255.0) + l2_trigger_start_resistance);
 
-  uint8_t r2_trigger_start_resistance = (uint8_t)(0x94 * (r2_start_resistance_value / 150.0));
+  uint8_t r2_trigger_start_resistance = (uint8_t)(0x94 * (r2_start_resistance_value / 255.0));
   uint8_t r2_trigger_effect_force =
     (uint8_t)((0xb4 - r2_trigger_start_resistance) * (r2_start_resistance_value / 255.0) + r2_trigger_start_resistance);
 
