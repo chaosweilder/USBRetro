@@ -211,7 +211,7 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, int player_index, uint8
 
   // gamecube simulated analog/digital click
   uint8_t l2_start_resistance_value = (perc_threshold_l * 255) / 100;
-  uint8_t r2_start_resistance_value = (perc_threshold_r * 255) / 100;
+  uint8_t r2_start_resistance_value = (perc_threshold_r * 150) / 100;
 
   uint8_t l2_trigger_start_resistance = (uint8_t)(0x94 * (l2_start_resistance_value / 255.0));
   uint8_t l2_trigger_effect_force =
