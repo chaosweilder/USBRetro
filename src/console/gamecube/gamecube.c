@@ -273,6 +273,7 @@ void __not_in_flash_func(update_output)(void)
       gc_report.dpad_left  |= ((byte & USBR_BUTTON_DL) == 0) ? 1 : 0; // left
       gc_report.a          |= ((byte & USBR_BUTTON_B2) == 0) ? 1 : 0; // b
       gc_report.b          |= ((byte & USBR_BUTTON_B1) == 0) ? 1 : 0; // a
+      gc_report.z          |= ((byte & USBR_BUTTON_S1) == 0) ? 1 : 0; // select
       gc_report.z          |= ((byte & USBR_BUTTON_R1) == 0) ? 1 : 0; // zr
       gc_report.start      |= ((byte & USBR_BUTTON_S2) == 0) ? 1 : 0; // start
       gc_report.x          |= ((byte & USBR_BUTTON_B4) == 0) ? 1 : 0; // y
