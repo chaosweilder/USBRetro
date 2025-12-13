@@ -19,18 +19,18 @@
 
 // NeoPixel power control and pin configuration (board-specific)
 #ifdef ADAFRUIT_FEATHER_RP2040_USB_HOST
-#define WS2812_PIN 21
+#define WS2812_PIN 16
 #define WS2812_POWER_PIN 20
 #define IS_RGBW true
 #elif defined(ADAFRUIT_MACROPAD_RP2040)
-#define WS2812_PIN 19
+#define WS2812_PIN 16
 #define IS_RGBW false  // MacroPad uses WS2812B (RGB, not RGBW)
 #elif defined(PICO_DEFAULT_WS2812_PIN)
 #define WS2812_PIN PICO_DEFAULT_WS2812_PIN
 #define IS_RGBW true
 #else
 // default to pin 2 if the board doesn't have a default WS2812 pin defined
-#define WS2812_PIN 2
+#define WS2812_PIN 16
 #define IS_RGBW true
 #endif
 
