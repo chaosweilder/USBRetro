@@ -27,8 +27,8 @@ static const pad_device_config_t pad_config_alpakka = {
     .active_high = false,   // Pull-up buttons (pressed = low)
 
     // I2C for PCA9555 expanders
-    .i2c_sda = 18,
-    .i2c_scl = 19,
+    .i2c_sda = 14,
+    .i2c_scl = 15,
 
     // D-pad (I2C expander 0)
     .dpad_up    = 103,      // PIN_DPAD_UP
