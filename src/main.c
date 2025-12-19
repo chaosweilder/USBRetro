@@ -1,4 +1,4 @@
-* 
+/* 
  * USBRetro - Adapts most USB controllers/mice/keyboards for use with
  *            various retro consoles and computers. Built specifically
  *            for the Raspberry Pi Pico or other RP2040 based MCUs.
@@ -11,15 +11,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "bsp/board_api.h"
+						  
 #include "tusb.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "globals.h"
 
-							  
-						
-						
+//bool update_pending = false;
+//uint8_t gc_rumble = 0;
+//uint8_t gc_kb_led = 0;
 
 // include console specific handling
 #ifdef CONFIG_NGC
@@ -85,11 +85,11 @@ static void __not_in_flash_func(process_signals)(void)
 
 int main(void)
 {
-				   
+  stdio_init_all();
 
   printf("\nUSB_RETRO::");
 
-  board_init();
+  // board_init() removed in latest pico-sdk/TinyUSB
 
 #ifndef CONFIG_LOOPY
   // pause briefly for stability before starting activity
