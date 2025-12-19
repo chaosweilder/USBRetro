@@ -116,7 +116,7 @@ static const pad_device_config_t pad_config_macropad = {
 
     // Speaker for haptic/rumble feedback
     .speaker_pin = 16,          // Speaker on GPIO 16
-    .speaker_enable_pin = 18,   // Speaker shutdown on GPIO 14 (active high to enable)
+    .speaker_enable_pin = 14,   // Speaker shutdown on GPIO 14 (active high to enable)
 
     // OLED display (SH1106 128x64 on SPI1)
     .display_spi = 1,           // SPI1
