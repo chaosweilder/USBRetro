@@ -23,7 +23,7 @@
 #define WS2812_POWER_PIN 20
 #define IS_RGBW true
 #elif defined(ADAFRUIT_MACROPAD_RP2040)
-#define WS2812_PIN 19
+#define WS2812_PIN 20
 #define IS_RGBW false  // MacroPad uses WS2812B (RGB, not RGBW)
 #elif defined(PICO_DEFAULT_WS2812_PIN)
 #define WS2812_PIN 16
