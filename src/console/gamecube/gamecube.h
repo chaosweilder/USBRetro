@@ -32,11 +32,8 @@
 #define BUTTON_MODE_4  0x04
 #define BUTTON_MODE_KB 0x05
 
-// NGC analog trigger to digital click threshold
-#define GC_DIGITAL_TRIGGER_THRESHOLD 230
-
 // Global variables
-PIO pio;
+extern PIO pio;
 
 // Function declarations
 void ngc_init(void);
