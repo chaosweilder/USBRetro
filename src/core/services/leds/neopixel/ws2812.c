@@ -26,7 +26,7 @@
 #define WS2812_PIN 19
 #define IS_RGBW false  // MacroPad uses WS2812B (RGB, not RGBW)
 #elif defined(PICO_DEFAULT_WS2812_PIN)
-#define WS2812_PIN PICO_DEFAULT_WS2812_PIN
+#define WS2812_PIN 16
 #define IS_RGBW true
 #else
 // default to pin 2 if the board doesn't have a default WS2812 pin defined
