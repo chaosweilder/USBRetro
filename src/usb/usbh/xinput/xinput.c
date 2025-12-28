@@ -18,16 +18,17 @@ __attribute__((weak)) void xbone_auth_register(uint8_t dev_addr, uint8_t instanc
 __attribute__((weak)) void xbone_auth_unregister(uint8_t dev_addr) { (void)dev_addr; }
 __attribute__((weak)) void xbone_auth_report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) { (void)dev_addr; (void)instance; (void)report; (void)len; }
 
-// BTD driver for Bluetooth dongles
+// BTstack driver for Bluetooth dongles
 #if CFG_TUH_BTD
-#include "usb/usbh/btd/btd.h"
+#include "usb/usbh/btd/hci_transport_h2_tinyusb.h"
 #endif
 
 uint32_t buttons;
 int last_player_count = 0; // used by xboxone
 
 // Chatpad keepalive tracking (per device/instance)
-static uint32_t chatpad_last_keepalive[CFG_TUH_DEVICE_MAX][CFG_TUH_XINPUT];
+// Size +1 because device addresses are 1-indexed (1 to CFG_TUH_DEVICE_MAX inclusive)
+static uint32_t chatpad_last_keepalive[CFG_TUH_DEVICE_MAX + 1][CFG_TUH_XINPUT];
 
 uint8_t byteScaleAnalog(int16_t xbox_val);
 
@@ -61,7 +62,7 @@ usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
         memcpy(&drivers[idx++], &usbh_xinput_driver, sizeof(usbh_class_driver_t));
 #endif
 #if CFG_TUH_BTD
-        memcpy(&drivers[idx++], &usbh_btd_driver, sizeof(usbh_class_driver_t));
+        memcpy(&drivers[idx++], &usbh_btstack_driver, sizeof(usbh_class_driver_t));
 #endif
         drivers_initialized = true;
     }
@@ -98,10 +99,12 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
         dev_addr, instance, type_str, p->wButtons, p->bLeftTrigger, p->bRightTrigger, p->sThumbLX, p->sThumbLY, p->sThumbRX, p->sThumbRY);
 
       // Scale Xbox analog values to [1-255] range (platform-agnostic)
+      // XInput uses positive Y = UP, but internal format uses Y: 0=UP, 255=DOWN
+      // So we invert Y-axis values to match HID convention
       uint8_t analog_1x = byteScaleAnalog(p->sThumbLX);
-      uint8_t analog_1y = byteScaleAnalog(p->sThumbLY);
+      uint8_t analog_1y = 256 - byteScaleAnalog(p->sThumbLY);  // Invert Y
       uint8_t analog_2x = byteScaleAnalog(p->sThumbRX);
-      uint8_t analog_2y = byteScaleAnalog(p->sThumbRY);
+      uint8_t analog_2y = 256 - byteScaleAnalog(p->sThumbRY);  // Invert Y
       uint8_t analog_l = p->bLeftTrigger;
       uint8_t analog_r = p->bRightTrigger;
 
@@ -128,6 +131,7 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
         .dev_addr = dev_addr,
         .instance = instance,
         .type = INPUT_TYPE_GAMEPAD,
+        .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 10,  // Xbox: A, B, X, Y, LB, RB, LT, RT, L3, R3
         .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, analog_l, analog_r, 128},
@@ -164,7 +168,13 @@ void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_inter
   if (xinput_itf->type == XBOX360_WIRELESS)
   {
     tuh_xinput_init_chatpad(dev_addr, instance, true);
-    chatpad_last_keepalive[dev_addr][instance] = 0;  // Reset keepalive timer
+  }
+
+  // Reset keepalive timer for any controller with chatpad support
+  // (wired chatpad is initialized separately in set_config)
+  if (dev_addr < CFG_TUH_DEVICE_MAX && instance < CFG_TUH_XINPUT)
+  {
+    chatpad_last_keepalive[dev_addr][instance] = 0;
   }
 
   tuh_xinput_set_led(dev_addr, instance, 0, true);
@@ -194,15 +204,33 @@ void xinput_task(void)
   // Process Xbox One auth passthrough
   xbone_auth_task();
 
-  // Rumble only if controller connected
-  if (!playersCount) return;
-
   uint32_t now = to_ms_since_boot(get_absolute_time());
+
+  // Chatpad keepalive for all xinput devices (runs even without player assignment)
+  // This is critical - chatpad goes to sleep without keepalives
+  for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; dev_addr++)
+  {
+    for (uint8_t instance = 0; instance < CFG_TUH_XINPUT; instance++)
+    {
+      if (now - chatpad_last_keepalive[dev_addr][instance] >= XINPUT_CHATPAD_KEEPALIVE_MS)
+      {
+        // tuh_xinput_chatpad_keepalive returns false if chatpad not enabled/inited
+        if (tuh_xinput_chatpad_keepalive(dev_addr, instance))
+        {
+          chatpad_last_keepalive[dev_addr][instance] = now;
+        }
+      }
+    }
+  }
+
+  // Rumble/LED only if controller connected to a player
+  if (!playersCount) return;
 
   // Update rumble/LED state for each xinput device
   for (int i = 0; i < playersCount; ++i)
   {
     if (players[i].dev_addr < 0) continue;  // Skip empty slots
+    if (players[i].transport != INPUT_TRANSPORT_USB) continue;  // USB only
 
     uint8_t dev_addr = players[i].dev_addr;
     uint8_t instance = players[i].instance;
@@ -214,16 +242,6 @@ void xinput_task(void)
     // TODO: throttle and only fire if device is xinput
     tuh_xinput_set_led(dev_addr, instance, i+1, true);
     tuh_xinput_set_rumble(dev_addr, instance, rumble, rumble, true);
-
-    // Chatpad keepalive (every ~1 second)
-    if (dev_addr < CFG_TUH_DEVICE_MAX && instance < CFG_TUH_XINPUT)
-    {
-      if (now - chatpad_last_keepalive[dev_addr][instance] >= XINPUT_CHATPAD_KEEPALIVE_MS)
-      {
-        tuh_xinput_chatpad_keepalive(dev_addr, instance);
-        chatpad_last_keepalive[dev_addr][instance] = now;
-      }
-    }
   }
 }
 

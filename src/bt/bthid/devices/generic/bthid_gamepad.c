@@ -27,9 +27,12 @@ static bthid_gamepad_data_t gamepad_data[BTHID_MAX_DEVICES];
 // DRIVER IMPLEMENTATION
 // ============================================================================
 
-static bool gamepad_match(const char* device_name, const uint8_t* class_of_device)
+static bool gamepad_match(const char* device_name, const uint8_t* class_of_device,
+                          uint16_t vendor_id, uint16_t product_id)
 {
     (void)device_name;
+    (void)vendor_id;   // Generic driver doesn't use VID/PID
+    (void)product_id;
 
     if (!class_of_device) {
         return false;
@@ -152,6 +155,8 @@ static void gamepad_disconnect(bthid_device_t* device)
 
     bthid_gamepad_data_t* gp = (bthid_gamepad_data_t*)device->driver_data;
     if (gp) {
+        // Clear router state first (sends zeroed input report)
+        router_device_disconnected(gp->event.dev_addr, gp->event.instance);
         // Remove player assignment
         remove_players_by_address(gp->event.dev_addr, gp->event.instance);
 

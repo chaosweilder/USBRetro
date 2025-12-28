@@ -12,15 +12,12 @@
 #include "core/input_interface.h"
 #include "core/output_interface.h"
 #include "usb/usbh/usbh.h"
-#include "usb/usbh/btd/btd_linkkey.h"
 #include "usb/usbd/usbd.h"
-#include "bt/transport/bt_transport.h"
+
+#include "bt/btstack/btstack_host.h"
 #include "tusb.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
-
-// External reference to USB BT transport
-extern const bt_transport_t bt_transport_usb;
 
 // ============================================================================
 // BUTTON EVENT HANDLER
@@ -84,9 +81,7 @@ static void on_button_event(button_event_t event)
 
         case BUTTON_EVENT_HOLD:
             // Long press to clear all Bluetooth bonds
-            printf("[app:usb2usb] Button hold - clearing all Bluetooth bonds...\n");
-            btd_linkkey_delete_all();
-            printf("[app:usb2usb] All Bluetooth bonds cleared. Devices will need to re-pair.\n");
+            btstack_host_delete_all_bonds();
             break;
 
         default:
@@ -129,9 +124,6 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 void app_init(void)
 {
     printf("[app:usb2usb] Initializing USB2USB v%s\n", APP_VERSION);
-
-    // Initialize Bluetooth transport (for USB BT dongle support)
-    bt_init(&bt_transport_usb);
 
     // Initialize button service
     button_init();
@@ -179,9 +171,6 @@ void app_task(void)
 {
     // Process button input
     button_task();
-
-    // Run Bluetooth transport tasks (including HID device drivers)
-    bt_task();
 
     // Route feedback from USB device output to USB host input controllers
     // The output interface receives rumble/LED from the console/host

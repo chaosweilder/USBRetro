@@ -10,6 +10,7 @@
 #include "core/input_event.h"
 #include "core/router/router.h"
 #include "core/buttons.h"
+#include "core/services/players/manager.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -106,28 +107,33 @@ static uint8_t scale_trigger_10to8(uint16_t val)
 // DRIVER IMPLEMENTATION
 // ============================================================================
 
-static bool xbox_match(const char* device_name, const uint8_t* class_of_device)
+static bool xbox_match(const char* device_name, const uint8_t* class_of_device,
+                       uint16_t vendor_id, uint16_t product_id)
 {
     (void)class_of_device;
+    (void)product_id;
 
-    if (!device_name) {
-        return false;
+    // VID match - Microsoft vendor ID = 0x045E
+    // Many Xbox controller PIDs exist, so just match VID
+    if (vendor_id == 0x045E) {
+        return true;
     }
 
-    // Match known Xbox controller names
-    if (strstr(device_name, "Xbox Wireless Controller") != NULL) {
-        return true;
-    }
-    if (strstr(device_name, "Xbox Elite") != NULL) {
-        return true;
-    }
-    if (strstr(device_name, "Xbox Adaptive") != NULL) {
-        return true;
-    }
-    // Some controllers might use different names
-    if (strstr(device_name, "Microsoft") != NULL &&
-        strstr(device_name, "Controller") != NULL) {
-        return true;
+    // Name-based match (fallback)
+    if (device_name) {
+        if (strstr(device_name, "Xbox Wireless Controller") != NULL) {
+            return true;
+        }
+        if (strstr(device_name, "Xbox Elite") != NULL) {
+            return true;
+        }
+        if (strstr(device_name, "Xbox Adaptive") != NULL) {
+            return true;
+        }
+        if (strstr(device_name, "Microsoft") != NULL &&
+            strstr(device_name, "Controller") != NULL) {
+            return true;
+        }
     }
 
     return false;
@@ -273,6 +279,11 @@ static void xbox_disconnect(bthid_device_t* device)
 
     xbox_bt_data_t* xbox = (xbox_bt_data_t*)device->driver_data;
     if (xbox) {
+        // Clear router state first (sends zeroed input report)
+        router_device_disconnected(xbox->event.dev_addr, xbox->event.instance);
+        // Remove player assignment
+        remove_players_by_address(xbox->event.dev_addr, xbox->event.instance);
+
         init_input_event(&xbox->event);
         xbox->initialized = false;
     }

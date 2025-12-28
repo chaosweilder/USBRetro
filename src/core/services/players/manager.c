@@ -4,6 +4,7 @@
 // Configurable player slot management supporting both SHIFT and FIXED modes.
 
 #include "manager.h"
+#include "feedback.h"
 #include "core/services/profiles/profile_indicator.h"
 #include "core/router/router.h"
 #include <stdio.h>
@@ -62,6 +63,7 @@ void players_init(void)
   playersCount = 0;
 
   // Initialize feedback subsystem (rumble and player LED patterns)
+  feedback_init();
   profile_indicator_init();
 }
 
@@ -94,6 +96,7 @@ void players_init_with_config(const player_config_t* config)
   playersCount = 0;
 
   // Initialize feedback subsystem (rumble and player LED patterns)
+  feedback_init();
   profile_indicator_init();
 }
 
@@ -129,7 +132,7 @@ player_slot_mode_t players_get_slot_mode(void)
 // ============================================================================
 
 // Find player by dev_addr and instance
-int __not_in_flash_func(find_player_index)(int dev_addr, int instance)
+int find_player_index(int dev_addr, int instance)
 {
   for(int i = 0; i < MAX_PLAYERS; i++)
   {
@@ -145,48 +148,35 @@ int __not_in_flash_func(find_player_index)(int dev_addr, int instance)
 }
 
 // Add player to array
-int __not_in_flash_func(add_player)(int dev_addr, int instance)
+int add_player(int dev_addr, int instance, input_transport_t transport)
 {
-  int player_index = -1;
+  int player_index = 0;
 
   if (current_slot_mode == PLAYER_SLOT_SHIFT) {
-    // SHIFT MODE: Add to end (original behavior)
     if (playersCount >= MAX_PLAYERS) {
-      printf("[players] ERROR: All %d slots full (SHIFT mode)\n", MAX_PLAYERS);
       return -1;
     }
-
     player_index = playersCount;
     playersCount++;
-
   } else {
-    // FIXED MODE: Find first empty slot (dev_addr == -1)
+    // FIXED MODE: Find first empty slot
     for (int i = 0; i < MAX_PLAYERS; i++) {
       if (players[i].dev_addr == -1) {
         player_index = i;
         break;
       }
     }
-
-    if (player_index < 0) {
-      printf("[players] ERROR: All %d slots full (FIXED mode)\n", MAX_PLAYERS);
-      return -1;
-    }
-
-    // Update playersCount to highest occupied slot + 1
+    // Update playersCount for LED indication
     if (player_index >= playersCount) {
       playersCount = player_index + 1;
     }
   }
 
-  // Initialize the player slot
+  // Write to players[]
   players[player_index].dev_addr = dev_addr;
   players[player_index].instance = instance;
   players[player_index].player_number = player_index + 1;
-
-  printf("[players] Player %d assigned (dev_addr=%d, instance=%d, mode=%s)\n",
-      players[player_index].player_number, dev_addr, instance,
-      current_slot_mode == PLAYER_SLOT_SHIFT ? "SHIFT" : "FIXED");
+  players[player_index].transport = transport;
 
   return player_index;
 }
@@ -267,3 +257,4 @@ void remove_players_by_address(int dev_addr, int instance)
     router_reset_outputs();
   }
 }
+

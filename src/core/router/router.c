@@ -14,6 +14,9 @@
 // AUTO-ASSIGN CONFIGURATION
 // ============================================================================
 
+// Log tag for consistent logging
+#define LOG_TAG "[ROUTER]"
+
 // Threshold for analog stick movement to trigger player auto-assign
 // Value is distance from center (128). Range 0-127.
 // 50 means stick must move to < 78 or > 178 to trigger (about 40% deflection)
@@ -94,24 +97,24 @@ static router_tap_callback_t output_taps[MAX_OUTPUTS] = {NULL};
 
 void router_init(const router_config_t* config) {
     if (!config) {
-        printf("[router] ERROR: NULL config\n");
+        printf(LOG_TAG "ERROR: NULL config\n");
         return;
     }
 
     // Copy configuration
     router_config = *config;
 
-    printf("[router] Initializing router\n");
-    printf("[router]   Mode: %s\n",
+    printf(LOG_TAG "Initializing router\n");
+    printf(LOG_TAG "  Mode: %s\n",
         config->mode == ROUTING_MODE_SIMPLE ? "SIMPLE" :
         config->mode == ROUTING_MODE_MERGE ? "MERGE" :
         config->mode == ROUTING_MODE_BROADCAST ? "BROADCAST" : "CONFIGURABLE");
 
     if (config->mode == ROUTING_MODE_MERGE) {
-        printf("[router]   Merge mode: %s\n",
+        printf(LOG_TAG "  Merge mode: %s\n",
             config->merge_mode == MERGE_PRIORITY ? "PRIORITY" :
             config->merge_mode == MERGE_BLEND ? "BLEND" : "ALL");
-        printf("[router]   Merge all inputs: %s\n", config->merge_all_inputs ? "YES" : "NO");
+        printf(LOG_TAG "  Merge all inputs: %s\n", config->merge_all_inputs ? "YES" : "NO");
     }
 
     // Initialize output states
@@ -146,17 +149,17 @@ void router_init(const router_config_t* config) {
     // Initialize routing table
     router_clear_routes();
 
-    printf("[router] Initialized successfully\n");
+    printf(LOG_TAG "Initialized successfully\n");
     if (config->transform_flags) {
-        printf("[router]   Transformations enabled: 0x%02x\n", config->transform_flags);
+        printf(LOG_TAG "  Transformations enabled: 0x%02x\n", config->transform_flags);
         if (config->transform_flags & TRANSFORM_MOUSE_TO_ANALOG) {
-            printf("[router]     - Mouse-to-analog (target_x=%d, target_y=%d, drain=%d)\n",
+            printf(LOG_TAG "    - Mouse-to-analog (target_x=%d, target_y=%d, drain=%d)\n",
                    config->mouse_target_x, config->mouse_target_y, config->mouse_drain_rate);
         }
         if (config->transform_flags & TRANSFORM_MERGE_INSTANCES)
-            printf("[router]     - Instance merging\n");
+            printf(LOG_TAG "    - Instance merging\n");
         if (config->transform_flags & TRANSFORM_SPINNER)
-            printf("[router]     - Spinner accumulation\n");
+            printf(LOG_TAG "    - Spinner accumulation\n");
     }
 }
 
@@ -267,7 +270,7 @@ static void apply_transformations(input_event_t* event, output_target_t output, 
 // Add simple route (input → output)
 bool router_add_route(input_source_t input, output_target_t output, uint8_t priority) {
     if (route_count >= MAX_ROUTES) {
-        printf("[router] ERROR: Routing table full (%d routes)\n", MAX_ROUTES);
+        printf(LOG_TAG "ERROR: Routing table full (%d routes)\n", MAX_ROUTES);
         return false;
     }
 
@@ -280,7 +283,7 @@ bool router_add_route(input_source_t input, output_target_t output, uint8_t prio
     routing_table[route_count].output_player_id = 0xFF; // Auto-assign
 
     route_count++;
-    printf("[router] Route added: %s → %s (priority=%d)\n",
+    printf(LOG_TAG "Route added: %s → %s (priority=%d)\n",
         input == INPUT_SOURCE_USB_HOST ? "USB" : "?",
         output == OUTPUT_TARGET_GAMECUBE ? "GameCube" :
         output == OUTPUT_TARGET_PCENGINE ? "PCEngine" :
@@ -295,7 +298,7 @@ bool router_add_route(input_source_t input, output_target_t output, uint8_t prio
 // Add route with filters (advanced)
 bool router_add_route_filtered(const route_entry_t* route) {
     if (!route || route_count >= MAX_ROUTES) {
-        printf("[router] ERROR: Cannot add filtered route\n");
+        printf(LOG_TAG "ERROR: Cannot add filtered route\n");
         return false;
     }
 
@@ -303,7 +306,7 @@ bool router_add_route_filtered(const route_entry_t* route) {
     routing_table[route_count].active = true;
     route_count++;
 
-    printf("[router] Filtered route added (dev_addr=%d, instance=%d, player=%d)\n",
+    printf(LOG_TAG "Filtered route added (dev_addr=%d, instance=%d, player=%d)\n",
         route->input_dev_addr, route->input_instance, route->output_player_id);
 
     return true;
@@ -314,7 +317,7 @@ void router_remove_route(uint8_t route_index) {
     if (route_index >= MAX_ROUTES || !routing_table[route_index].active) return;
 
     routing_table[route_index].active = false;
-    printf("[router] Route %d removed\n", route_index);
+    printf(LOG_TAG "Route %d removed\n", route_index);
 }
 
 // Clear all routes
@@ -323,7 +326,7 @@ void router_clear_routes(void) {
         routing_table[i].active = false;
     }
     route_count = 0;
-    printf("[router] All routes cleared\n");
+    printf(LOG_TAG "All routes cleared\n");
 }
 
 // Get number of active routes
@@ -390,11 +393,10 @@ static inline void router_simple_mode(const input_event_t* event, output_target_
         uint32_t buttons_pressed = event->buttons | event->keys;
         bool analog_active = analog_beyond_threshold(event);
         if (buttons_pressed || analog_active) {
-            player_index = add_player(event->dev_addr, event->instance);
+            player_index = add_player(event->dev_addr, event->instance, event->transport);
             if (player_index >= 0) {
-                printf("[router] Player %d assigned (dev_addr=%d, instance=%d, trigger=%s)\n",
-                    player_index + 1, event->dev_addr, event->instance,
-                    buttons_pressed ? "button" : "analog");
+                printf(LOG_TAG "Player %d assigned (dev_addr=%d, instance=%d)\n",
+                    player_index + 1, event->dev_addr, event->instance);
             }
         }
     }
@@ -409,7 +411,7 @@ static inline void router_simple_mode(const input_event_t* event, output_target_
         // Store transformed event (atomic write)
         router_outputs[output][player_index].current_state = transformed;
         router_outputs[output][player_index].updated = true;
-        router_outputs[output][player_index].source = INPUT_SOURCE_USB_HOST;  // Default for now
+        router_outputs[output][player_index].source = INPUT_SOURCE_USB_HOST;
 
         // Notify tap if registered (for push-based outputs like UART)
         if (output_taps[output]) {
@@ -417,6 +419,7 @@ static inline void router_simple_mode(const input_event_t* event, output_target_
         }
     }
 }
+
 
 // MERGE MODE: Multiple inputs → single output
 static inline void router_merge_mode(const input_event_t* event, output_target_t output) {
@@ -426,11 +429,10 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
         uint32_t buttons_pressed = event->buttons | event->keys;
         bool analog_active = analog_beyond_threshold(event);
         if (buttons_pressed || analog_active || event->type == INPUT_TYPE_MOUSE) {
-            player_index = add_player(event->dev_addr, event->instance);
+            player_index = add_player(event->dev_addr, event->instance, event->transport);
             if (player_index >= 0) {
-                printf("[router] Player %d assigned in merge mode (dev_addr=%d, instance=%d, trigger=%s)\n",
-                    player_index + 1, event->dev_addr, event->instance,
-                    buttons_pressed ? "button" : (analog_active ? "analog" : "mouse"));
+                printf(LOG_TAG "Player %d assigned in merge mode (dev_addr=%d, instance=%d)\n",
+                    player_index + 1, event->dev_addr, event->instance);
             }
         }
     }
@@ -486,6 +488,7 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
                 output_state_t* out = &router_outputs[output][0];
 
                 // Start with neutral state (all buttons released)
+                // Note: deltas are cleared here but accumulated fresh from blend devices
                 init_input_event(&out->current_state);
 
                 // Blend all active devices
@@ -520,9 +523,11 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
                         }
                     }
 
-                    // Mouse deltas: accumulate from all
+                    // Mouse deltas: accumulate from all, then clear device to prevent re-adding
                     out->current_state.delta_x += dev->delta_x;
                     out->current_state.delta_y += dev->delta_y;
+                    dev->delta_x = 0;
+                    dev->delta_y = 0;
 
                     // Motion: use first device that has motion data
                     if (dev->has_motion && !out->current_state.has_motion) {
@@ -578,33 +583,17 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
 }
 
 // Main input submission function (called by input drivers)
-void __not_in_flash_func(router_submit_input)(const input_event_t* event) {
+void router_submit_input(const input_event_t* event) {
     if (!event) return;
+    if (route_count == 0) return;
 
-    // Determine output target from routing table (configured by apps)
-    // Apps call router_add_route() during app_init() to set up routing
-    output_target_t output;
-
-    // Use first active route to determine output
-    // Apps are responsible for configuring at least one route
-    if (route_count > 0) {
-        // Find first active route
-        bool found = false;
-        for (uint8_t i = 0; i < MAX_ROUTES; i++) {
-            if (routing_table[i].active) {
-                output = routing_table[i].output;
-                found = true;
-                break;
-            }
+    // Find first active route to determine output target
+    output_target_t output = OUTPUT_TARGET_USB_DEVICE;
+    for (uint8_t i = 0; i < MAX_ROUTES; i++) {
+        if (routing_table[i].active) {
+            output = routing_table[i].output;
+            break;
         }
-        if (!found) {
-            // No active routes - this is an error, app should have configured routes
-            return;
-        }
-    } else {
-        // No routes configured - app didn't call router_add_route()
-        // This is a fatal error - app must configure routing
-        return;
     }
 
     // Route based on mode
@@ -618,37 +607,28 @@ void __not_in_flash_func(router_submit_input)(const input_event_t* event) {
             break;
 
         case ROUTING_MODE_BROADCAST:
-            // Broadcast: 1:N - single input to multiple outputs
-            // Used for multi-output products (e.g., USB → GC + USB Device + BLE)
             if (active_output_count > 0) {
-                // Route to all active outputs
                 for (uint8_t i = 0; i < active_output_count; i++) {
                     router_simple_mode(event, active_outputs[i]);
                 }
             } else {
-                // No active outputs configured, fall back to first route
                 router_simple_mode(event, output);
             }
             break;
 
         case ROUTING_MODE_CONFIGURABLE:
-            // N:M configurable routing - full flexibility
-            // Each route can specify: input filters, output target, player slot
             {
                 route_entry_t matches[MAX_ROUTES];
                 uint8_t match_count = router_find_routes(event, matches, MAX_ROUTES);
 
                 if (match_count == 0) {
-                    // No routes found - fall back to first configured route
                     router_simple_mode(event, output);
                 } else {
-                    // Route to all matching outputs
                     for (uint8_t i = 0; i < match_count; i++) {
                         output_target_t target = matches[i].output;
                         uint8_t target_player = matches[i].output_player_id;
 
                         if (target_player != 0xFF && target_player < MAX_PLAYERS_PER_OUTPUT) {
-                            // Fixed player slot assignment
                             input_event_t transformed = *event;
                             apply_transformations(&transformed, target, target_player);
 
@@ -656,12 +636,10 @@ void __not_in_flash_func(router_submit_input)(const input_event_t* event) {
                             router_outputs[target][target_player].updated = true;
                             router_outputs[target][target_player].source = INPUT_SOURCE_USB_HOST;
 
-                            // Notify tap if registered
                             if (output_taps[target]) {
                                 output_taps[target](target, target_player, &transformed);
                             }
                         } else {
-                            // Auto-assign player slot (standard behavior)
                             router_simple_mode(event, target);
                         }
                     }
@@ -669,16 +647,14 @@ void __not_in_flash_func(router_submit_input)(const input_event_t* event) {
             }
             break;
     }
-
-    // Signal Core 1 that new data is available
-    // Note: In current architecture, update_output() is called by post_input_event()
-    // which we're replacing. For now, Core 1 will poll router_get_output().
-    // Future: Add explicit signaling mechanism.
 }
 
 // ============================================================================
 // OUTPUT RETRIEVAL (Core 1 - Poll or Event Driven)
 // ============================================================================
+
+// Static buffer for returning copies (so we can clear original deltas)
+static input_event_t router_output_copy[MAX_OUTPUTS][MAX_PLAYERS_PER_OUTPUT];
 
 const input_event_t* __not_in_flash_func(router_get_output)(output_target_t output, uint8_t player_id) {
     if (output >= MAX_OUTPUTS || player_id >= MAX_PLAYERS_PER_OUTPUT) {
@@ -687,11 +663,19 @@ const input_event_t* __not_in_flash_func(router_get_output)(output_target_t outp
 
     if (router_outputs[output][player_id].updated) {
         router_outputs[output][player_id].updated = false;  // Mark as read
-        return &router_outputs[output][player_id].current_state;
+        
+        // Copy to static buffer so caller gets the deltas
+        router_output_copy[output][player_id] = router_outputs[output][player_id].current_state;
+        
+        // Clear deltas from original (they've been consumed)
+        router_outputs[output][player_id].current_state.delta_x = 0;
+        router_outputs[output][player_id].current_state.delta_y = 0;
+        
+        return &router_output_copy[output][player_id];
     }
 
-    // Return current state even if not updated (for continuous polling)
-    return &router_outputs[output][player_id].current_state;
+    // No update - return NULL (don't re-process same deltas)
+    return NULL;
 }
 
 bool router_has_updates(output_target_t output) {
@@ -719,7 +703,7 @@ uint8_t router_get_player_count(output_target_t output) {
 
 void router_set_merge_mode(output_target_t output, merge_mode_t mode) {
     router_config.merge_mode = mode;
-    printf("[router] Merge mode set: %s\n",
+    printf(LOG_TAG "Merge mode set: %s\n",
         mode == MERGE_PRIORITY ? "PRIORITY" :
         mode == MERGE_BLEND ? "BLEND" : "ALL");
 }
@@ -732,7 +716,7 @@ void router_set_active_outputs(output_target_t* outputs, uint8_t count) {
         active_outputs[i] = outputs[i];
     }
 
-    printf("[router] Active outputs set: count=%d\n", count);
+    printf(LOG_TAG "Active outputs set: count=%d\n", count);
 }
 
 output_target_t router_get_primary_output(void) {
@@ -758,7 +742,7 @@ output_target_t router_get_primary_output(void) {
 void router_set_tap(output_target_t output, router_tap_callback_t callback) {
     if (output >= 0 && output < MAX_OUTPUTS) {
         output_taps[output] = callback;
-        printf("[router] Tap %s for output %d\n",
+        printf(LOG_TAG "Tap %s for output %d\n",
                callback ? "registered" : "unregistered", output);
     }
 }
@@ -774,7 +758,7 @@ output_state_t* router_get_state_ptr(output_target_t output) {
 
 // Reset all output states to neutral (call when all controllers disconnect)
 void router_reset_outputs(void) {
-    printf("[router] Resetting all outputs to neutral\n");
+    printf(LOG_TAG "Resetting all outputs to neutral\n");
 
     // Reset all output states
     for (uint8_t output = 0; output < MAX_OUTPUTS; output++) {
@@ -789,6 +773,95 @@ void router_reset_outputs(void) {
             blend_devices[output][i].dev_addr = 0;
             blend_devices[output][i].instance = -1;
             init_input_event(&blend_devices[output][i].state);
+        }
+    }
+}
+
+// Clean up router state when a device disconnects
+void router_device_disconnected(uint8_t dev_addr, int8_t instance) {
+    printf(LOG_TAG "Device disconnected: dev_addr=%d, instance=%d\n", dev_addr, instance);
+
+    // Find the player index for this device
+    int player_index = find_player_index(dev_addr, instance);
+
+    // Find first active route to determine output target
+    output_target_t output = OUTPUT_TARGET_USB_DEVICE;
+    for (uint8_t i = 0; i < MAX_ROUTES; i++) {
+        if (routing_table[i].active) {
+            output = routing_table[i].output;
+            break;
+        }
+    }
+
+    // Clear blend device tracking for this device (MERGE_BLEND mode)
+    for (uint8_t out = 0; out < MAX_OUTPUTS; out++) {
+        for (uint8_t i = 0; i < MAX_BLEND_DEVICES; i++) {
+            if (blend_devices[out][i].active &&
+                blend_devices[out][i].dev_addr == dev_addr &&
+                blend_devices[out][i].instance == instance) {
+                blend_devices[out][i].active = false;
+                blend_devices[out][i].dev_addr = 0;
+                blend_devices[out][i].instance = -1;
+                init_input_event(&blend_devices[out][i].state);
+                printf(LOG_TAG "Cleared blend device slot %d for output %d\n", i, out);
+            }
+        }
+    }
+
+    // For MERGE mode, all inputs go to player 0 - re-blend remaining devices
+    if (router_config.mode == ROUTING_MODE_MERGE) {
+        output_state_t* out_state = &router_outputs[output][0];
+        init_input_event(&out_state->current_state);
+
+        if (router_config.merge_mode == MERGE_BLEND) {
+            // Re-blend all remaining active devices
+            for (uint8_t i = 0; i < MAX_BLEND_DEVICES; i++) {
+                if (!blend_devices[output][i].active) continue;
+
+                input_event_t* dev = &blend_devices[output][i].state;
+
+                // Buttons: OR together
+                out_state->current_state.buttons |= dev->buttons;
+                out_state->current_state.keys |= dev->keys;
+
+                // Analog: use furthest from center for sticks, max for triggers
+                for (int j = 0; j < 8; j++) {
+                    if (j == 4 || j == 7) continue;
+                    if (j >= 5) {
+                        if (dev->analog[j] > out_state->current_state.analog[j]) {
+                            out_state->current_state.analog[j] = dev->analog[j];
+                        }
+                    } else {
+                        int8_t cur_delta = (int8_t)(out_state->current_state.analog[j] - 128);
+                        int8_t dev_delta = (int8_t)(dev->analog[j] - 128);
+                        if (abs(dev_delta) > abs(cur_delta)) {
+                            out_state->current_state.analog[j] = dev->analog[j];
+                        }
+                    }
+                }
+            }
+        }
+
+        out_state->updated = true;
+
+        // Always notify tap with current state (zeroed or re-blended)
+        if (output_taps[output]) {
+            output_taps[output](output, 0, &out_state->current_state);
+        }
+
+        printf(LOG_TAG "Updated merged output (player 0)\n");
+    } else {
+        // SIMPLE/BROADCAST mode: clear this player's specific output state
+        if (player_index >= 0 && player_index < MAX_PLAYERS_PER_OUTPUT) {
+            init_input_event(&router_outputs[output][player_index].current_state);
+            router_outputs[output][player_index].updated = true;
+
+            // Notify tap if registered (sends zeroed state to USB/UART output)
+            if (output_taps[output]) {
+                output_taps[output](output, player_index, &router_outputs[output][player_index].current_state);
+            }
+
+            printf(LOG_TAG "Cleared output state for player %d\n", player_index);
         }
     }
 }

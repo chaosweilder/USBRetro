@@ -10,7 +10,10 @@
 #include "devices/vendors/sony/ds4_bt.h"
 #include "devices/vendors/sony/ds5_bt.h"
 #include "devices/vendors/nintendo/switch_pro_bt.h"
+#include "devices/vendors/nintendo/switch2_ble.h"
 #include "devices/vendors/microsoft/xbox_bt.h"
+#include "devices/vendors/microsoft/xbox_ble.h"
+#include "devices/vendors/google/stadia_bt.h"
 
 void bthid_registry_init(void)
 {
@@ -27,9 +30,14 @@ void bthid_registry_init(void)
 
     // Nintendo controllers
     switch_pro_bt_register();
+    switch2_ble_register();  // Switch 2 BLE controllers (Pro2, Joy-Con 2, GC NSO)
 
-    // Microsoft controllers
+    // Microsoft controllers (BLE first since it's more specific)
+    xbox_ble_register();
     xbox_bt_register();
+
+    // Google controllers
+    stadia_bt_register();
 
     // Generic gamepad driver (fallback, lowest priority)
     bthid_gamepad_register();

@@ -36,7 +36,7 @@ jobs:
           context: .
           push: false
           load: true
-          tags: usbretro:latest
+          tags: joypad:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -53,63 +53,130 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e GIT_COMMIT=${COMMIT_HASH} \
-            usbretro:latest /bin/bash -c "make all"
+            joypad:latest /bin/bash -c "make all"
 
           # Fix permissions (Docker creates files as root)
           sudo chown -R $(id -u):$(id -g) releases/
 
-      - name: Organize artifacts by board
+      - name: Organize artifacts by app
         run: |
           mkdir -p artifacts
           COMMIT_HASH=${{ steps.commit.outputs.hash }}
 
-          # Group files by board and create zip for each
-          for board in kb2040 pico rp2040zero feather_usbhost macropad qtpy; do
-            board_files=$(ls releases/usbr_*_${board}_*.uf2 2>/dev/null || true)
-            if [ -n "$board_files" ]; then
-              mkdir -p "artifacts/${board}"
-              cp $board_files "artifacts/${board}/"
-              echo "Created ${board} artifact with: $board_files"
+          # Known board suffixes (order matters - check longer suffixes first)
+          BOARDS="pico2_w pico_w rp2040zero kb2040 feather pico macropad"
+
+          # Group files by app name (extract app from joypad_<version>_<app>_<board>.uf2)
+          for file in releases/joypad_*.uf2; do
+            if [ -f "$file" ]; then
+              # Extract app_board: remove prefix "joypad_<hash>_"
+              basename=$(basename "$file" .uf2)
+              app_board=${basename#joypad_*_}
+
+              # Remove known board suffix to get app name
+              app="$app_board"
+              for board in $BOARDS; do
+                if [[ "$app_board" == *"_${board}" ]]; then
+                  app=${app_board%_${board}}
+                  break
+                fi
+              done
+
+              mkdir -p "artifacts/${app}"
+              cp "$file" "artifacts/${app}/"
+              echo "Added $file to ${app} artifact"
             fi
           done
 
           echo "Artifact structure:"
           find artifacts -type f -name "*.uf2"
 
-      - name: Upload kb2040 artifacts
+      - name: Upload app artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: usbretro_${{ steps.commit.outputs.hash }}_kb2040
-          path: artifacts/kb2040/*.uf2
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2pce
+          path: artifacts/usb2pce/*.uf2
           if-no-files-found: ignore
 
-      - name: Upload pico artifacts
+      - name: Upload usb2gc artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: usbretro_${{ steps.commit.outputs.hash }}_pico
-          path: artifacts/pico/*.uf2
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2gc
+          path: artifacts/usb2gc/*.uf2
           if-no-files-found: ignore
 
-      - name: Upload rp2040zero artifacts
+      - name: Upload usb2nuon artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: usbretro_${{ steps.commit.outputs.hash }}_rp2040zero
-          path: artifacts/rp2040zero/*.uf2
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2nuon
+          path: artifacts/usb2nuon/*.uf2
           if-no-files-found: ignore
 
-      - name: Upload feather_usbhost artifacts
+      - name: Upload usb2loopy artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: usbretro_${{ steps.commit.outputs.hash }}_feather_usbhost
-          path: artifacts/feather_usbhost/*.uf2
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2loopy
+          path: artifacts/usb2loopy/*.uf2
           if-no-files-found: ignore
 
-      - name: Upload macropad artifacts
+      - name: Upload usb23do artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: usbretro_${{ steps.commit.outputs.hash }}_macropad
-          path: artifacts/macropad/*.uf2
+          name: joypad_${{ steps.commit.outputs.hash }}_usb23do
+          path: artifacts/usb23do/*.uf2
           if-no-files-found: ignore
+
+      - name: Upload snes23do artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_snes23do
+          path: artifacts/snes23do/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload usb2uart artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2uart
+          path: artifacts/usb2uart/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload usb2usb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2usb
+          path: artifacts/usb2usb/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload bt2usb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_bt2usb
+          path: artifacts/bt2usb/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload snes2usb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_snes2usb
+          path: artifacts/snes2usb/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload controller artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_controllers
+          path: |
+            artifacts/controller_fisherprice/*.uf2
+            artifacts/controller_alpakka/*.uf2
+            artifacts/controller_macropad/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload all releases for release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-firmware
+          path: releases/*.uf2
+          if-no-files-found: error
 
       - name: Build summary
         run: |
@@ -209,35 +276,11 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code with submodules
-        uses: actions/checkout@v4
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
         with:
-          submodules: recursive
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Load Docker image from cache
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          load: true
-          tags: usbretro:latest
-          cache-from: type=gha
-
-      - name: Build release apps
-        run: |
-          VERSION="${{ needs.check-version.outputs.version }}"
-          echo "Building release apps for v${VERSION}..."
-
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e RELEASE_VERSION=${VERSION} \
-            usbretro:latest /bin/bash -c "make releases"
-
-          # Fix permissions
-          sudo chown -R $(id -u):$(id -g) releases/
+          name: release-firmware
+          path: releases/
 
       - name: Prepare release package
         run: |

@@ -1,6 +1,7 @@
 // hid.c - HID protocol handler (TinyUSB HID host callbacks)
 #include "tusb.h"
 #include "core/buttons.h"
+#include "core/output_interface.h"
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
 #include "core/services/profiles/profile_indicator.h"
@@ -61,19 +62,40 @@ void hid_task(void)
       case CONTROLLER_GAMECUBE: // send GameCube WiiU/Switch Adapter rumble
       case CONTROLLER_KEYBOARD: // send Keyboard LEDs
       case CONTROLLER_SWITCH: // send Switch Pro init, LED and rumble commands
+      case CONTROLLER_SWITCH2: // send Switch 2 Pro init, LED and rumble commands
         {
           // Get per-player feedback state
           feedback_state_t* fb = (player_index >= 0) ? feedback_get_state(player_index) : NULL;
 
-          // Override player_index during profile indication
-          int8_t display_player_index = profile_indicator_get_display_player_index(player_index);
+          // Derive player LED index from feedback pattern (for USB output passthrough)
+          // Pattern: 0x01=P1, 0x02=P2, 0x04=P3, 0x08=P4
+          int8_t led_player_index = -1;
+          if (fb && fb->led.pattern) {
+            if (fb->led.pattern & 0x01) led_player_index = 0;
+            else if (fb->led.pattern & 0x02) led_player_index = 1;
+            else if (fb->led.pattern & 0x04) led_player_index = 2;
+            else if (fb->led.pattern & 0x08) led_player_index = 3;
+          }
+
+          // Use feedback LED player if set, otherwise use profile indicator display
+          int8_t display_player_index = (led_player_index >= 0)
+            ? led_player_index
+            : profile_indicator_get_display_player_index(player_index);
+
+          // Get trigger threshold from output interface (profile-based adaptive triggers)
+          uint8_t trigger_threshold = 0;
+          if (active_output && active_output->get_trigger_threshold) {
+            trigger_threshold = active_output->get_trigger_threshold();
+          }
 
           // Build legacy device output configuration from feedback state
           device_output_config_t config = {
             .player_index = display_player_index,
             .rumble = fb ? (fb->rumble.left > fb->rumble.right ? fb->rumble.left : fb->rumble.right) : 0,
+            .rumble_left = fb ? fb->rumble.left : 0,
+            .rumble_right = fb ? fb->rumble.right : 0,
             .leds = fb ? fb->led.pattern : 0,
-            .trigger_threshold = fb ? fb->left_trigger.strength : 0,
+            .trigger_threshold = trigger_threshold,
             .test = test_counter
           };
 
@@ -151,6 +173,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
   {
   case CONTROLLER_DUALSHOCK3:
   case CONTROLLER_SWITCH:
+  case CONTROLLER_SWITCH2:
     device_interfaces[dev_type]->init(dev_addr, instance);
     break;
   case CONTROLLER_DUALSHOCK4:

@@ -358,24 +358,43 @@ void profile_check_player_switch_combo(uint8_t player_index, uint32_t buttons)
     if (!combo->p_select_was_held) {
         combo->p_select_hold_start = current_time;
         combo->p_select_was_held = true;
-        combo->p_dpad_up_was_pressed = dpad_up_pressed;
-        combo->p_dpad_down_was_pressed = dpad_down_pressed;
-        return;
+        // D-pad state will be tracked in the wait period below
     }
 
     uint32_t hold_duration = current_time - combo->p_select_hold_start;
     bool can_trigger = combo->p_initial_trigger_done || (hold_duration >= INITIAL_HOLD_TIME_MS);
 
-    if (!can_trigger) return;
+    if (!can_trigger) {
+        // Still waiting for initial hold
+        return;
+    }
 
     // Check if this player's feedback is still active
+    // But still track D-pad state to avoid missing edges
     feedback_state_t* fb = feedback_get_state(player_index);
     if (fb && fb->rumble.left > 0) {
+        combo->p_dpad_up_was_pressed = dpad_up_pressed;
+        combo->p_dpad_down_was_pressed = dpad_down_pressed;
         return;  // Still rumbling from last switch
     }
 
+    // Initial trigger: when 2-second hold completes, trigger immediately if D-pad is held
+    // Subsequent triggers: require rising edge (release and press again)
+    bool trigger_up = false;
+    bool trigger_down = false;
+
+    if (!combo->p_initial_trigger_done) {
+        // Initial trigger - just check if D-pad is currently pressed
+        trigger_up = dpad_up_pressed;
+        trigger_down = dpad_down_pressed;
+    } else {
+        // Subsequent triggers - require rising edge
+        trigger_up = dpad_up_pressed && !combo->p_dpad_up_was_pressed;
+        trigger_down = dpad_down_pressed && !combo->p_dpad_down_was_pressed;
+    }
+
     // D-pad Up - cycle profile forward
-    if (dpad_up_pressed && !combo->p_dpad_up_was_pressed) {
+    if (trigger_up) {
         uint8_t count = profile_get_count(output);
         if (count > 1) {
             profile_cycle_player_next(output, player_index);
@@ -385,7 +404,7 @@ void profile_check_player_switch_combo(uint8_t player_index, uint32_t buttons)
     combo->p_dpad_up_was_pressed = dpad_up_pressed;
 
     // D-pad Down - cycle profile backward
-    if (dpad_down_pressed && !combo->p_dpad_down_was_pressed) {
+    if (trigger_down && !trigger_up) {  // Don't trigger both directions
         uint8_t count = profile_get_count(output);
         if (count > 1) {
             profile_cycle_player_prev(output, player_index);
@@ -440,14 +459,9 @@ void profile_check_switch_combo(uint32_t buttons)
     uint32_t current_time = to_ms_since_boot(get_absolute_time());
 
     if (!select_was_held) {
-        // Select just pressed - start timer and reset D-pad state
+        // Select just pressed - start timer
         select_hold_start = current_time;
         select_was_held = true;
-        dpad_up_was_pressed = dpad_up_pressed;      // Capture current D-pad state
-        dpad_down_was_pressed = dpad_down_pressed;
-        dpad_left_was_pressed = dpad_left_pressed;
-        dpad_right_was_pressed = dpad_right_pressed;
-        return;  // Don't process D-pad on the same frame SELECT is pressed
     }
 
     uint32_t select_hold_duration = current_time - select_hold_start;
@@ -461,12 +475,32 @@ void profile_check_switch_combo(uint32_t buttons)
     }
 
     // Don't allow switching while feedback is still active
+    // But still track D-pad state to avoid missing edges
     if (leds_is_indicating() || profile_indicator_is_active()) {
+        dpad_up_was_pressed = dpad_up_pressed;
+        dpad_down_was_pressed = dpad_down_pressed;
+        dpad_left_was_pressed = dpad_left_pressed;
+        dpad_right_was_pressed = dpad_right_pressed;
         return;
     }
 
-    // D-pad Up - cycle profile forward on rising edge
-    if (dpad_up_pressed && !dpad_up_was_pressed) {
+    // Initial trigger: when 2-second hold completes, trigger immediately if D-pad is held
+    // Subsequent triggers: require rising edge (release and press again)
+    bool trigger_up = false;
+    bool trigger_down = false;
+
+    if (!initial_trigger_done) {
+        // Initial trigger - just check if D-pad is currently pressed
+        trigger_up = dpad_up_pressed;
+        trigger_down = dpad_down_pressed;
+    } else {
+        // Subsequent triggers - require rising edge
+        trigger_up = dpad_up_pressed && !dpad_up_was_pressed;
+        trigger_down = dpad_down_pressed && !dpad_down_was_pressed;
+    }
+
+    // D-pad Up - cycle profile forward
+    if (trigger_up) {
         uint8_t count = profile_get_count(output);
         if (count > 1) {
             profile_cycle_next(output);
@@ -475,8 +509,8 @@ void profile_check_switch_combo(uint32_t buttons)
     }
     dpad_up_was_pressed = dpad_up_pressed;
 
-    // D-pad Down - cycle profile backward on rising edge
-    if (dpad_down_pressed && !dpad_down_was_pressed) {
+    // D-pad Down - cycle profile backward
+    if (trigger_down && !trigger_up) {  // Don't trigger both directions
         uint8_t count = profile_get_count(output);
         if (count > 1) {
             profile_cycle_prev(output);
@@ -639,7 +673,16 @@ void profile_apply(const profile_t* profile,
 
             // Check if all combo inputs are pressed (active-high: pressed = bit set)
             // All bits in combo->inputs must be set in input_buttons
-            if ((input_buttons & combo->inputs) == combo->inputs) {
+            bool combo_inputs_pressed = ((input_buttons & combo->inputs) == combo->inputs);
+
+            // For exclusive combos, also check that NO other buttons are pressed
+            bool combo_active = combo_inputs_pressed;
+            if (combo_active && combo->exclusive) {
+                // Exclusive: input_buttons must be EXACTLY combo->inputs (no extra buttons)
+                combo_active = (input_buttons == combo->inputs);
+            }
+
+            if (combo_active) {
                 // Combo is active - add output button(s)
                 // Set output bits to 1 (pressed) for combo outputs
                 output->buttons |= combo->output;

@@ -1,0 +1,2523 @@
+// btstack_host.c - BTstack HID Host (BLE + Classic)
+//
+// Transport-agnostic BTstack integration for HID devices.
+// Uses BTstack's SM (Security Manager) for LE Secure Connections,
+// GATT client for HID over GATT Profile (HOGP), and
+// HID Host for Classic BT HID devices.
+
+#include "btstack_host.h"
+#include "btstack_config.h"
+// Include specific BTstack headers instead of umbrella btstack.h
+// (btstack.h pulls in audio codecs which need sbc_encoder.h)
+#include "btstack_defines.h"
+#include "btstack_event.h"
+#include "btstack_run_loop.h"
+
+// Run loop depends on transport: embedded for USB dongle, async_context for CYW43
+#ifndef BTSTACK_USE_CYW43
+#include "btstack_run_loop_embedded.h"
+#endif
+
+// Declare btstack_memory_init - can't include btstack_memory.h due to HID conflicts
+extern void btstack_memory_init(void);
+
+#include "bluetooth_data_types.h"
+#include "bluetooth_company_id.h"
+#include "bluetooth_sdp.h"
+#include "ad_parser.h"
+#include "gap.h"
+#include "hci.h"
+#include "l2cap.h"
+#include "ble/sm.h"
+#include "ble/gatt_client.h"
+#include "ble/le_device_db.h"
+#include "ble/gatt-service/hids_client.h"
+#include "classic/hid_host.h"
+#include "classic/sdp_client.h"
+#include "classic/sdp_server.h"
+#include "classic/sdp_util.h"
+#include "classic/device_id_server.h"
+
+// Link key storage: TLV (flash) based for all builds
+// USB dongle uses pico_flash_bank_instance(), CYW43 uses SDK's btstack_cyw43.c setup
+#ifndef BTSTACK_USE_CYW43
+#include "classic/btstack_link_key_db_tlv.h"
+#include "ble/le_device_db_tlv.h"
+#include "btstack_tlv_flash_bank.h"
+#include "pico/btstack_flash_bank.h"
+#endif
+
+#include "hci_dump.h"
+#include "hci_dump_embedded_stdout.h"
+
+// BTHID callbacks - for classic BT HID devices
+extern void bt_on_hid_ready(uint8_t conn_index);
+extern void bt_on_disconnect(uint8_t conn_index);
+extern void bt_on_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len);
+extern void bthid_update_device_info(uint8_t conn_index, const char* name,
+                                      uint16_t vendor_id, uint16_t product_id);
+
+#include <stdio.h>
+#include <string.h>
+
+// For rumble feedback passthrough
+// Note: manager.h includes tusb.h which conflicts with BTstack, so forward declare
+extern int find_player_index(int dev_addr, int instance);
+#include "core/services/players/feedback.h"
+
+// ============================================================================
+// BLE HID REPORT ROUTING
+// ============================================================================
+
+// Deferred processing to avoid stack overflow in BTstack callback
+static uint8_t pending_ble_report[64];  // 64 bytes for Switch 2 reports
+static uint16_t pending_ble_report_len = 0;
+static uint8_t pending_ble_conn_index = 0;
+static volatile bool ble_report_pending = false;
+
+// Forward declare the function to route BLE reports through bthid layer
+static void route_ble_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len);
+
+// Forward declare Switch 2 functions (defined later with state machine)
+static void switch2_retry_init_if_needed(void);
+static void switch2_handle_feedback(void);
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+#define MAX_BLE_CONNECTIONS 2
+#define SCAN_INTERVAL 0x00A0  // 100ms
+#define SCAN_WINDOW   0x0050  // 50ms
+
+// ============================================================================
+// STATE
+// ============================================================================
+
+typedef enum {
+    BLE_STATE_IDLE,
+    BLE_STATE_SCANNING,
+    BLE_STATE_CONNECTING,
+    BLE_STATE_CONNECTED,
+    BLE_STATE_DISCOVERING,
+    BLE_STATE_READY
+} ble_state_t;
+
+typedef struct {
+    bd_addr_t addr;
+    bd_addr_type_t addr_type;
+    hci_con_handle_t handle;
+    ble_state_t state;
+
+    // GATT discovery state
+    uint16_t hid_service_start;
+    uint16_t hid_service_end;
+    uint16_t report_char_handle;
+    uint16_t report_ccc_handle;
+
+    // Device info
+    char name[32];
+    bool is_xbox;
+    bool is_switch2;
+    uint16_t vid;
+    uint16_t pid;
+
+    // Connection index for bthid layer (offset by MAX_CLASSIC_CONNECTIONS)
+    uint8_t conn_index;
+    bool hid_ready;
+} ble_connection_t;
+
+// BLE conn_index offset (BLE devices use conn_index >= this value)
+#define BLE_CONN_INDEX_OFFSET MAX_CLASSIC_CONNECTIONS
+
+typedef enum {
+    GATT_IDLE,
+    GATT_DISCOVERING_SERVICES,
+    GATT_DISCOVERING_HID_CHARACTERISTICS,
+    GATT_ENABLING_NOTIFICATIONS,
+    GATT_READY
+} gatt_state_t;
+
+static struct {
+    bool initialized;
+    bool powered_on;
+    ble_state_t state;
+
+    // HCI transport (provided by caller)
+    const hci_transport_t* hci_transport;
+
+    // Scanning
+    bool scan_active;
+
+    // Pending connection
+    bd_addr_t pending_addr;
+    bd_addr_type_t pending_addr_type;
+    char pending_name[32];
+    bool pending_is_switch2;
+    uint16_t pending_vid;
+    uint16_t pending_pid;
+
+    // Last connected device (for reconnection)
+    bd_addr_t last_connected_addr;
+    bd_addr_type_t last_connected_addr_type;
+    char last_connected_name[32];
+    bool has_last_connected;
+    uint32_t reconnect_attempt_time;
+    uint8_t reconnect_attempts;
+
+    // Connections
+    ble_connection_t connections[MAX_BLE_CONNECTIONS];
+
+    // GATT discovery state
+    gatt_state_t gatt_state;
+    hci_con_handle_t gatt_handle;
+    uint16_t hid_service_start;
+    uint16_t hid_service_end;
+    gatt_client_characteristic_t report_characteristic;  // Full HID Report characteristic
+
+    // Callbacks
+    btstack_host_report_callback_t report_callback;
+    btstack_host_connect_callback_t connect_callback;
+
+    // HIDS Client
+    uint16_t hids_cid;
+
+} hid_state;
+
+// HID descriptor storage (shared across connections)
+static uint8_t hid_descriptor_storage[512];
+
+static btstack_packet_callback_registration_t hci_event_callback_registration;
+static btstack_packet_callback_registration_t sm_event_callback_registration;
+
+// Direct notification listener for Xbox HID reports (bypasses HIDS client)
+static gatt_client_notification_t xbox_hid_notification_listener;
+static gatt_client_characteristic_t xbox_hid_characteristic;  // Fake characteristic for listener
+static void xbox_hid_notification_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+
+// Direct notification listener for Switch 2 HID reports
+static gatt_client_notification_t switch2_hid_notification_listener;
+static gatt_client_characteristic_t switch2_hid_characteristic;
+static void switch2_hid_notification_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+
+// ============================================================================
+// CLASSIC BT HID HOST STATE
+// ============================================================================
+
+#define MAX_CLASSIC_CONNECTIONS 4
+#define INQUIRY_DURATION 5  // Inquiry duration in 1.28s units
+
+typedef struct {
+    bool active;
+    uint16_t hid_cid;           // BTstack HID connection ID
+    bd_addr_t addr;
+    char name[32];
+    uint8_t class_of_device[3];
+    uint16_t vendor_id;
+    uint16_t product_id;
+    bool hid_ready;
+} classic_connection_t;
+
+static struct {
+    bool inquiry_active;
+    classic_connection_t connections[MAX_CLASSIC_CONNECTIONS];
+    // Pending incoming connection info (from HCI_EVENT_CONNECTION_REQUEST)
+    bd_addr_t pending_addr;
+    uint32_t pending_cod;
+    char pending_name[64];
+    uint16_t pending_vid;
+    uint16_t pending_pid;
+    bool pending_valid;
+    // Pending HID connect (deferred until encryption completes)
+    bd_addr_t pending_hid_addr;
+    hci_con_handle_t pending_hid_handle;
+    bool pending_hid_connect;
+} classic_state;
+
+// SDP query state
+static uint8_t sdp_attribute_value[32];
+static const uint16_t sdp_attribute_value_buffer_size = sizeof(sdp_attribute_value);
+
+// Classic HID descriptor storage
+static uint8_t classic_hid_descriptor_storage[512];
+
+// SDP Device ID record buffer (needed for DS4/DS5 reconnection)
+static uint8_t device_id_sdp_service_buffer[100];
+
+// Find classic connection by hid_cid
+static classic_connection_t* find_classic_connection_by_cid(uint16_t hid_cid) {
+    for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+        if (classic_state.connections[i].active && classic_state.connections[i].hid_cid == hid_cid) {
+            return &classic_state.connections[i];
+        }
+    }
+    return NULL;
+}
+
+// Get conn_index for classic connection
+static int get_classic_conn_index(uint16_t hid_cid) {
+    for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+        if (classic_state.connections[i].active && classic_state.connections[i].hid_cid == hid_cid) {
+            return i;  // conn_index matches array index
+        }
+    }
+    return -1;
+}
+
+// Find free classic connection slot
+static classic_connection_t* find_free_classic_connection(void) {
+    for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+        if (!classic_state.connections[i].active) {
+            return &classic_state.connections[i];
+        }
+    }
+    return NULL;
+}
+
+// ============================================================================
+// BLE CONNECTION HELPERS
+// ============================================================================
+
+// Get BLE connection by conn_index
+static ble_connection_t* find_ble_connection_by_conn_index(uint8_t conn_index) {
+    if (conn_index < BLE_CONN_INDEX_OFFSET) return NULL;
+    uint8_t ble_index = conn_index - BLE_CONN_INDEX_OFFSET;
+    if (ble_index >= MAX_BLE_CONNECTIONS) return NULL;
+    if (hid_state.connections[ble_index].handle == 0) return NULL;
+    return &hid_state.connections[ble_index];
+}
+
+// Get conn_index for BLE connection
+static int get_ble_conn_index_by_handle(hci_con_handle_t handle) {
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (hid_state.connections[i].handle == handle) {
+            return BLE_CONN_INDEX_OFFSET + i;
+        }
+    }
+    return -1;
+}
+
+// Route BLE HID report through bthid layer
+static void route_ble_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len)
+{
+    // Build BTHID-compatible packet: DATA|INPUT header + report
+    // Buffer needs to hold 1 byte header + up to 64 bytes of report data
+    static uint8_t hid_packet[65];
+    hid_packet[0] = 0xA1;  // DATA | INPUT header
+    if (len <= sizeof(hid_packet) - 1) {
+        memcpy(hid_packet + 1, data, len);
+        bt_on_hid_report(conn_index, hid_packet, len + 1);
+    }
+}
+
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+
+static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+static void hids_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
+static ble_connection_t* find_connection_by_handle(hci_con_handle_t handle);
+static ble_connection_t* find_free_connection(void);
+static void start_hids_client(ble_connection_t *conn);
+static void register_ble_hid_listener(hci_con_handle_t con_handle);
+static void register_switch2_hid_listener(hci_con_handle_t con_handle);
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+// Internal function to set up HID handlers (used by both init paths)
+static void setup_hid_handlers(void)
+{
+    printf("[BTSTACK_HOST] Init L2CAP...\n");
+    l2cap_init();
+
+    printf("[BTSTACK_HOST] Init SM...\n");
+    sm_init();
+
+    // Configure SM - bonding like Bluepad32
+    sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+    sm_set_authentication_requirements(SM_AUTHREQ_BONDING);
+    sm_set_encryption_key_size_range(7, 16);
+
+    printf("[BTSTACK_HOST] Init GATT client...\n");
+    gatt_client_init();
+
+    printf("[BTSTACK_HOST] Init HIDS client...\n");
+    hids_client_init(hid_descriptor_storage, sizeof(hid_descriptor_storage));
+
+    printf("[BTSTACK_HOST] Init LE Device DB...\n");
+    le_device_db_init();
+
+    // Initialize classic BT HID Host
+    printf("[BTSTACK_HOST] Init Classic HID Host...\n");
+    memset(&classic_state, 0, sizeof(classic_state));
+    // Set security level BEFORE hid_host_init (it registers L2CAP services with this level)
+    gap_set_security_level(LEVEL_0);  // DS3 doesn't support SSP
+    hid_host_init(classic_hid_descriptor_storage, sizeof(classic_hid_descriptor_storage));
+    hid_host_register_packet_handler(hid_host_packet_handler);
+
+    // SDP server - needed for DS4/DS5 reconnection (they query Device ID)
+    sdp_init();
+    device_id_create_sdp_record(device_id_sdp_service_buffer, 0x10003,
+                                DEVICE_ID_VENDOR_ID_SOURCE_BLUETOOTH,
+                                BLUETOOTH_COMPANY_ID_BLUEKITCHEN_GMBH, 1, 1);
+    sdp_register_service(device_id_sdp_service_buffer);
+    printf("[BTSTACK_HOST] SDP server initialized\n");
+
+    // Allow sniff mode and role switch for classic BT (improves compatibility)
+    gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_SNIFF_MODE | LM_LINK_POLICY_ENABLE_ROLE_SWITCH);
+
+    // Register for HCI events
+    printf("[BTSTACK_HOST] Register event handlers...\n");
+    hci_event_callback_registration.callback = packet_handler;
+    hci_add_event_handler(&hci_event_callback_registration);
+
+    // Register for SM events
+    sm_event_callback_registration.callback = sm_packet_handler;
+    sm_add_event_handler(&sm_event_callback_registration);
+
+    hid_state.initialized = true;
+    printf("[BTSTACK_HOST] HID handlers initialized (BLE + Classic)\n");
+}
+
+// btstack_host_init is only used for USB dongle transport
+// For CYW43, use btstack_host_init_hid_handlers() after btstack_cyw43_init()
+#ifndef BTSTACK_USE_CYW43
+
+// TLV context for flash-based link key storage (must be static/persistent)
+static btstack_tlv_flash_bank_t btstack_tlv_flash_bank_context;
+
+// Set up TLV (flash) storage for persistent link keys and BLE bonding
+static void setup_tlv_storage(void) {
+    printf("[BTSTACK_HOST] Setting up flash-based TLV storage...\n");
+
+    // Get the Pico SDK flash bank HAL instance
+    const hal_flash_bank_t *hal_flash_bank_impl = pico_flash_bank_instance();
+
+    // Initialize BTstack TLV with flash bank
+    const btstack_tlv_t *btstack_tlv_impl = btstack_tlv_flash_bank_init_instance(
+            &btstack_tlv_flash_bank_context,
+            hal_flash_bank_impl,
+            NULL);
+
+    // Set global TLV instance
+    btstack_tlv_set_instance(btstack_tlv_impl, &btstack_tlv_flash_bank_context);
+
+    // Set up Classic BT link key storage using TLV
+    const btstack_link_key_db_t *btstack_link_key_db = btstack_link_key_db_tlv_get_instance(
+            btstack_tlv_impl, &btstack_tlv_flash_bank_context);
+    hci_set_link_key_db(btstack_link_key_db);
+    printf("[BTSTACK_HOST] Classic BT link key DB configured (flash)\n");
+
+    // Configure BLE device DB for TLV storage
+    le_device_db_tlv_configure(btstack_tlv_impl, &btstack_tlv_flash_bank_context);
+    printf("[BTSTACK_HOST] BLE device DB configured (flash)\n");
+}
+
+void btstack_host_init(const void* transport)
+{
+    if (hid_state.initialized) {
+        printf("[BTSTACK_HOST] Already initialized\n");
+        return;
+    }
+
+    if (!transport) {
+        printf("[BTSTACK_HOST] ERROR: No HCI transport provided\n");
+        return;
+    }
+
+    printf("[BTSTACK_HOST] Initializing BTstack...\n");
+
+    memset(&hid_state, 0, sizeof(hid_state));
+    hid_state.hci_transport = (const hci_transport_t*)transport;
+
+    // HCI dump disabled - too verbose (logs every ACL packet)
+    // printf("[BTSTACK_HOST] Init HCI dump (for logging)...\n");
+    // hci_dump_init(hci_dump_embedded_stdout_get_instance());
+
+    printf("[BTSTACK_HOST] Init memory pools...\n");
+    btstack_memory_init();
+
+    printf("[BTSTACK_HOST] Init run loop...\n");
+    btstack_run_loop_init(btstack_run_loop_embedded_get_instance());
+
+    printf("[BTSTACK_HOST] Init HCI with provided transport...\n");
+    hci_init(transport, NULL);
+
+    // Set up flash-based TLV storage for persistent link keys and BLE bonds
+    setup_tlv_storage();
+
+    // Set up HID handlers
+    setup_hid_handlers();
+    printf("[BTSTACK_HOST] Initialized OK\n");
+}
+#endif
+
+void btstack_host_init_hid_handlers(void)
+{
+    if (hid_state.initialized) {
+        printf("[BTSTACK_HOST] HID handlers already initialized\n");
+        return;
+    }
+
+    printf("[BTSTACK_HOST] Initializing HID handlers (BTstack already initialized externally)...\n");
+
+    memset(&hid_state, 0, sizeof(hid_state));
+    // Note: hci_transport is not set here since BTstack was initialized externally
+
+    // Set up HID handlers (BTstack core already initialized by btstack_cyw43_init or similar)
+    setup_hid_handlers();
+    printf("[BTSTACK_HOST] HID handlers initialized OK\n");
+}
+
+void btstack_host_power_on(void)
+{
+    printf("[BTSTACK_HOST] power_on called, initialized=%d\n", hid_state.initialized);
+
+    if (!hid_state.initialized) {
+        printf("[BTSTACK_HOST] ERROR: Not initialized\n");
+        return;
+    }
+
+    printf("[BTSTACK_HOST] HCI state before power_on: %d\n", hci_get_state());
+    printf("[BTSTACK_HOST] Calling hci_power_control(HCI_POWER_ON)...\n");
+    int err = hci_power_control(HCI_POWER_ON);
+    printf("[BTSTACK_HOST] hci_power_control returned %d, state now: %d\n", err, hci_get_state());
+}
+
+// ============================================================================
+// SCANNING
+// ============================================================================
+
+void btstack_host_start_scan(void)
+{
+    if (!hid_state.powered_on) {
+        printf("[BTSTACK_HOST] Not powered on yet\n");
+        return;
+    }
+
+    if (hid_state.scan_active || classic_state.inquiry_active) {
+        return;  // Already scanning
+    }
+
+    printf("[BTSTACK_HOST] Starting BLE scan...\n");
+    gap_set_scan_params(1, SCAN_INTERVAL, SCAN_WINDOW, 0);
+    gap_start_scan();
+    hid_state.scan_active = true;
+    hid_state.state = BLE_STATE_SCANNING;
+
+    // Also start classic BT inquiry
+    printf("[BTSTACK_HOST] Starting Classic inquiry...\n");
+    gap_inquiry_start(INQUIRY_DURATION);
+    classic_state.inquiry_active = true;
+}
+
+void btstack_host_stop_scan(void)
+{
+    if (hid_state.scan_active) {
+        printf("[BTSTACK_HOST] Stopping BLE scan\n");
+        gap_stop_scan();
+        hid_state.scan_active = false;
+        hid_state.state = BLE_STATE_IDLE;
+    }
+
+    if (classic_state.inquiry_active) {
+        printf("[BTSTACK_HOST] Stopping Classic inquiry\n");
+        gap_inquiry_stop();
+        classic_state.inquiry_active = false;
+    }
+}
+
+// ============================================================================
+// CONNECTION
+// ============================================================================
+
+void btstack_host_connect_ble(bd_addr_t addr, bd_addr_type_t addr_type)
+{
+    printf("[BTSTACK_HOST] Connecting to %02X:%02X:%02X:%02X:%02X:%02X\n",
+           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+
+    // Stop scanning first
+    btstack_host_stop_scan();
+
+    // Save pending connection info
+    memcpy(hid_state.pending_addr, addr, 6);
+    hid_state.pending_addr_type = addr_type;
+    hid_state.state = BLE_STATE_CONNECTING;
+
+    // Create connection
+    uint8_t status = gap_connect(addr, addr_type);
+    printf("[BTSTACK_HOST] gap_connect returned status=%d\n", status);
+}
+
+// ============================================================================
+// CALLBACKS
+// ============================================================================
+
+void btstack_host_register_report_callback(btstack_host_report_callback_t callback)
+{
+    hid_state.report_callback = callback;
+}
+
+void btstack_host_register_connect_callback(btstack_host_connect_callback_t callback)
+{
+    hid_state.connect_callback = callback;
+}
+
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
+
+
+// Transport-specific process function (weak, overridden by transport)
+__attribute__((weak)) void btstack_host_transport_process(void) {
+    // Default: no-op, transport should override
+}
+
+void btstack_host_process(void)
+{
+    if (!hid_state.initialized) return;
+
+    // Process transport-specific tasks (e.g., USB polling, CYW43 async context)
+    btstack_host_transport_process();
+
+#ifndef BTSTACK_USE_CYW43
+    // Process BTstack run loop multiple times to let packets flow through HCI->L2CAP->ATT->GATT
+    // Note: CYW43 uses async_context run loop, processed by cyw43_arch_poll() in transport
+    for (int i = 0; i < 5; i++) {
+        btstack_run_loop_embedded_execute_once();
+    }
+#endif
+
+    // Process any pending BLE HID report (deferred from BTstack callback to avoid stack overflow)
+    if (ble_report_pending) {
+        ble_report_pending = false;
+        route_ble_hid_report(pending_ble_conn_index, pending_ble_report, pending_ble_report_len);
+    }
+
+    // Retry Switch 2 init if stuck (no ACK received)
+    switch2_retry_init_if_needed();
+
+    // Handle Switch 2 rumble/LED feedback passthrough
+    switch2_handle_feedback();
+}
+
+// ============================================================================
+// SDP QUERY CALLBACK (for VID/PID detection)
+// ============================================================================
+
+static void sdp_query_vid_pid_callback(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    switch (hci_event_packet_get_type(packet)) {
+        case SDP_EVENT_QUERY_ATTRIBUTE_VALUE: {
+            uint16_t attr_len = sdp_event_query_attribute_byte_get_attribute_length(packet);
+            if (attr_len <= sdp_attribute_value_buffer_size) {
+                uint16_t offset = sdp_event_query_attribute_byte_get_data_offset(packet);
+                sdp_attribute_value[offset] = sdp_event_query_attribute_byte_get_data(packet);
+
+                // Check if we got all bytes for this attribute
+                if (offset + 1 == attr_len) {
+                    uint16_t attr_id = sdp_event_query_attribute_byte_get_attribute_id(packet);
+                    uint16_t value;
+                    if (de_element_get_uint16(sdp_attribute_value, &value)) {
+                        if (attr_id == BLUETOOTH_ATTRIBUTE_VENDOR_ID) {
+                            classic_state.pending_vid = value;
+                            printf("[BTSTACK_HOST] SDP VID: 0x%04X\n", value);
+                        } else if (attr_id == BLUETOOTH_ATTRIBUTE_PRODUCT_ID) {
+                            classic_state.pending_pid = value;
+                            printf("[BTSTACK_HOST] SDP PID: 0x%04X\n", value);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case SDP_EVENT_QUERY_COMPLETE:
+            printf("[BTSTACK_HOST] SDP query complete: VID=0x%04X PID=0x%04X\n",
+                   classic_state.pending_vid, classic_state.pending_pid);
+
+            // Update the connection struct with VID/PID
+            if (classic_state.pending_vid || classic_state.pending_pid) {
+                for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+                    classic_connection_t* conn = &classic_state.connections[i];
+                    if (conn->active && memcmp(conn->addr, classic_state.pending_addr, 6) == 0) {
+                        conn->vendor_id = classic_state.pending_vid;
+                        conn->product_id = classic_state.pending_pid;
+                        printf("[BTSTACK_HOST] Updated conn[%d] VID/PID: 0x%04X/0x%04X\n",
+                               i, conn->vendor_id, conn->product_id);
+
+                        // Notify bthid to re-evaluate driver selection with new VID/PID
+                        bthid_update_device_info(i, conn->name,
+                                                  classic_state.pending_vid,
+                                                  classic_state.pending_pid);
+                        break;
+                    }
+                }
+            }
+            break;
+    }
+}
+
+// ============================================================================
+// HCI EVENT HANDLER
+// ============================================================================
+
+static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    uint8_t event_type = hci_event_packet_get_type(packet);
+
+    // Debug: catch GATT notifications at the global level
+    if (event_type == GATT_EVENT_NOTIFICATION) {
+        printf("[BTSTACK_HOST] >>> RAW GATT NOTIFICATION! len=%d\n", size);
+    }
+
+    switch (event_type) {
+        case BTSTACK_EVENT_STATE:
+            if (btstack_event_state_get_state(packet) == HCI_STATE_WORKING) {
+                printf("[BTSTACK_HOST] HCI working\n");
+                hid_state.powered_on = true;
+
+                // Reset scan state (in case of reconnect)
+                hid_state.scan_active = false;
+                classic_state.inquiry_active = false;
+
+                // Print our local BD_ADDR
+                bd_addr_t local_addr;
+                gap_local_bd_addr(local_addr);
+                printf("[BTSTACK_HOST] Local BD_ADDR: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                       local_addr[0], local_addr[1], local_addr[2],
+                       local_addr[3], local_addr[4], local_addr[5]);
+
+                // Print chip info (see hci_transport_h2_tinyusb.h for dongle compatibility guide)
+                uint16_t manufacturer = hci_get_manufacturer();
+                printf("[BTSTACK_HOST] Chip Manufacturer: 0x%04X", manufacturer);
+                switch (manufacturer) {
+                    case 0x000A: printf(" (CSR) - OK\n"); break;
+                    case 0x000D: printf(" (TI)\n"); break;
+                    case 0x000F: printf(" (Broadcom) - OK\n"); break;
+                    case 0x001D: printf(" (Qualcomm)\n"); break;
+                    case 0x0046: printf(" (MediaTek)\n"); break;
+                    case 0x005D: printf(" (Realtek) - NEEDS FIRMWARE!\n"); break;
+                    case 0x0002: printf(" (Intel)\n"); break;
+                    default: printf("\n"); break;
+                }
+
+                // Set local name (for devices that want to see us)
+                gap_set_local_name("Joypad Adapter");
+
+                // Set class of device to Computer (Desktop Workstation)
+                // This helps Sony controllers recognize us as a valid host
+                gap_set_class_of_device(0x000104);  // Major: Computer, Minor: Desktop
+
+                // Enable SSP (Secure Simple Pairing) on the controller
+                extern const hci_cmd_t hci_write_simple_pairing_mode;
+                hci_send_cmd(&hci_write_simple_pairing_mode, 1);
+
+                // Enable bonding for Classic BT
+                gap_set_bondable_mode(1);
+                // Set IO capability for "just works" pairing (no PIN required)
+                gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+                // Request bonding during SSP (required for BTstack to store link keys!)
+                gap_ssp_set_authentication_requirement(SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING);
+                // Auto-accept incoming SSP pairing requests
+                gap_ssp_set_auto_accept(1);
+
+                // Make host discoverable and connectable for incoming connections
+                // Required for Sony controllers (DS3, DS4, DS5) which initiate connections
+                gap_discoverable_control(1);
+                gap_connectable_control(1);
+
+                // Auto-start scanning
+                btstack_host_start_scan();
+            }
+            break;
+
+        case GAP_EVENT_ADVERTISING_REPORT: {
+            bd_addr_t addr;
+            gap_event_advertising_report_get_address(packet, addr);
+            bd_addr_type_t addr_type = gap_event_advertising_report_get_address_type(packet);
+            int8_t rssi = gap_event_advertising_report_get_rssi(packet);
+            uint8_t adv_len = gap_event_advertising_report_get_data_length(packet);
+            const uint8_t *adv_data = gap_event_advertising_report_get_data(packet);
+
+            // Parse name and manufacturer data from advertising data
+            char name[32] = {0};
+            bool is_switch2 = false;
+            uint16_t sw2_vid = 0;
+            uint16_t sw2_pid = 0;
+
+            ad_context_t context;
+            for (ad_iterator_init(&context, adv_len, adv_data); ad_iterator_has_more(&context); ad_iterator_next(&context)) {
+                uint8_t type = ad_iterator_get_data_type(&context);
+                uint8_t len = ad_iterator_get_data_len(&context);
+                const uint8_t *data = ad_iterator_get_data(&context);
+
+                if ((type == BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME ||
+                     type == BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME) && len < sizeof(name)) {
+                    memcpy(name, data, len);
+                    name[len] = 0;
+                }
+
+                // Check for Switch 2 controller via manufacturer data
+                // Company ID 0x0553 (Nintendo for Switch 2)
+                // BlueRetro uses data[1] for company ID, data[6] for VID - their data includes length byte
+                // BTstack iterator strips length+type, so we use data[0] for company ID, data[5] for VID
+                if (type == BLUETOOTH_DATA_TYPE_MANUFACTURER_SPECIFIC_DATA && len >= 2) {
+                    uint16_t company_id = data[0] | (data[1] << 8);
+                    if (company_id == 0x0553) {
+                        is_switch2 = true;
+                        // Debug: print raw manufacturer data
+                        printf("[SW2_BLE] Mfr data (%d bytes):", len);
+                        for (int i = 0; i < len && i < 12; i++) {
+                            printf(" %02X", data[i]);
+                        }
+                        printf("\n");
+                        if (len >= 9) {
+                            // VID at bytes 5-6, PID at bytes 7-8 (relative to after company ID)
+                            // This matches BlueRetro's offsets accounting for length byte difference
+                            sw2_vid = data[5] | (data[6] << 8);
+                            sw2_pid = data[7] | (data[8] << 8);
+                        }
+                        printf("[BTSTACK_HOST] Switch 2 controller detected! VID=0x%04X PID=0x%04X\n",
+                               sw2_vid, sw2_pid);
+                    }
+                }
+            }
+
+            // Log all BLE advertisements with names for debugging
+            if (name[0] != 0) {
+                printf("[BTSTACK_HOST] BLE adv: %02X:%02X:%02X:%02X:%02X:%02X name=\"%s\"\n",
+                       addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], name);
+            }
+
+            // Check for controllers by name or manufacturer data
+            bool is_xbox = (strstr(name, "Xbox") != NULL);
+            bool is_nintendo = (strstr(name, "Pro Controller") != NULL ||
+                               strstr(name, "Joy-Con") != NULL);
+            bool is_stadia = (strstr(name, "Stadia") != NULL);
+            bool is_controller = is_xbox || is_nintendo || is_stadia || is_switch2;
+
+            // Auto-connect to supported BLE controllers
+            if (hid_state.state == BLE_STATE_SCANNING && is_controller) {
+                if (is_xbox || is_stadia || is_switch2) {
+                    printf("[BTSTACK_HOST] BLE controller: %02X:%02X:%02X:%02X:%02X:%02X name=\"%s\"\n",
+                           addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], name);
+                    const char* type_str = is_switch2 ? "Switch 2" : (is_xbox ? "Xbox" : "Stadia");
+                    printf("[BTSTACK_HOST] Connecting to %s...\n", type_str);
+                    strncpy(hid_state.pending_name, name, sizeof(hid_state.pending_name) - 1);
+                    hid_state.pending_name[sizeof(hid_state.pending_name) - 1] = '\0';
+                    hid_state.pending_is_switch2 = is_switch2;
+                    hid_state.pending_vid = sw2_vid;
+                    hid_state.pending_pid = sw2_pid;
+                    btstack_host_connect_ble(addr, addr_type);
+                }
+            }
+            break;
+        }
+
+        // Classic BT inquiry result
+        case GAP_EVENT_INQUIRY_RESULT: {
+            bd_addr_t addr;
+            gap_event_inquiry_result_get_bd_addr(packet, addr);
+            uint32_t cod = gap_event_inquiry_result_get_class_of_device(packet);
+
+            // Parse name from extended inquiry response if available
+            char name[240] = {0};
+            if (gap_event_inquiry_result_get_name_available(packet)) {
+                int name_len = gap_event_inquiry_result_get_name_len(packet);
+                if (name_len > 0 && name_len < (int)sizeof(name)) {
+                    memcpy(name, gap_event_inquiry_result_get_name(packet), name_len);
+                    name[name_len] = 0;
+                }
+            }
+
+            // Class of Device: Major=0x05 (Peripheral), Minor bits indicate type
+            uint8_t major_class = (cod >> 8) & 0x1F;
+            uint8_t minor_class = (cod >> 2) & 0x3F;
+            bool is_gamepad = (major_class == 0x05) && ((minor_class & 0x0F) == 0x02);  // Gamepad
+            bool is_joystick = (major_class == 0x05) && ((minor_class & 0x0F) == 0x01); // Joystick
+
+            // Log all inquiry results for debugging (gamepads highlighted)
+            printf("[BTSTACK_HOST] Inquiry: %02X:%02X:%02X:%02X:%02X:%02X COD=0x%06X%s\n",
+                   addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
+                   (unsigned)cod, (is_gamepad || is_joystick) ? " [GAMEPAD]" : "");
+
+            // Auto-connect to gamepads
+            if ((is_gamepad || is_joystick) && classic_state.inquiry_active) {
+                printf("[BTSTACK_HOST] Classic gamepad found, connecting...\n");
+                btstack_host_stop_scan();  // Stop inquiry
+
+                uint16_t hid_cid;
+                uint8_t status = hid_host_connect(addr, HID_PROTOCOL_MODE_REPORT, &hid_cid);
+                if (status == ERROR_CODE_SUCCESS) {
+                    printf("[BTSTACK_HOST] hid_host_connect started, cid=0x%04X\n", hid_cid);
+
+                    // Allocate connection slot
+                    classic_connection_t* conn = find_free_classic_connection();
+                    if (conn) {
+                        memset(conn, 0, sizeof(*conn));
+                        conn->active = true;
+                        conn->hid_cid = hid_cid;
+                        memcpy(conn->addr, addr, 6);
+                        strncpy(conn->name, name, sizeof(conn->name) - 1);
+                        conn->class_of_device[0] = cod & 0xFF;
+                        conn->class_of_device[1] = (cod >> 8) & 0xFF;
+                        conn->class_of_device[2] = (cod >> 16) & 0xFF;
+                    }
+                } else {
+                    printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", status);
+                }
+            }
+            break;
+        }
+
+        case GAP_EVENT_INQUIRY_COMPLETE:
+            classic_state.inquiry_active = false;
+            // Restart inquiry after it completes (if we're still in scan mode)
+            if (hid_state.state == BLE_STATE_SCANNING) {
+                gap_inquiry_start(INQUIRY_DURATION);
+                classic_state.inquiry_active = true;
+            }
+            break;
+
+        // Classic BT incoming connection request (DS3 connects this way)
+        case HCI_EVENT_CONNECTION_REQUEST: {
+            bd_addr_t addr;
+            hci_event_connection_request_get_bd_addr(packet, addr);
+            uint32_t cod = hci_event_connection_request_get_class_of_device(packet);
+            uint8_t link_type = hci_event_connection_request_get_link_type(packet);
+            printf("[BTSTACK_HOST] Incoming connection: %02X:%02X:%02X:%02X:%02X:%02X COD=0x%06X link=%d\n",
+                   addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], (unsigned)cod, link_type);
+            // Save pending connection info for use when HID connection is established
+            memcpy(classic_state.pending_addr, addr, 6);
+            classic_state.pending_cod = cod;
+            classic_state.pending_name[0] = '\0';  // Clear, will be filled by remote name request
+            classic_state.pending_vid = 0;
+            classic_state.pending_pid = 0;
+            classic_state.pending_valid = true;
+            // BTstack should auto-accept via gap_ssp_set_auto_accept(1) set at init
+            break;
+        }
+
+        case HCI_EVENT_CONNECTION_COMPLETE: {
+            uint8_t status = hci_event_connection_complete_get_status(packet);
+            hci_con_handle_t handle = hci_event_connection_complete_get_connection_handle(packet);
+            bd_addr_t addr;
+            hci_event_connection_complete_get_bd_addr(packet, addr);
+            printf("[BTSTACK_HOST] Connection complete: status=%d handle=0x%04X addr=%02X:%02X:%02X:%02X:%02X:%02X\n",
+                   status, handle, addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+
+            // For incoming connections, request security level 2 after ACL is up
+            // This triggers authentication/pairing for devices that support it (DS4/DS5)
+            // while allowing DS3 (which doesn't support SSP) to work with L2CAP level 0
+            if (status == 0) {
+                if (classic_state.pending_valid &&
+                    bd_addr_cmp(addr, classic_state.pending_addr) == 0) {
+                    uint32_t cod = classic_state.pending_cod;
+                    printf("[BTSTACK_HOST] Incoming ACL complete, COD=0x%06X - requesting auth\n", cod);
+
+                    // For incoming connections, let the device initiate L2CAP/HID channels
+                    // DS3 (0x000508) and DS4/DS5 (0x002508) all initiate themselves on reconnect
+                    // We just need encryption to succeed, then wait for HID_SUBEVENT_INCOMING_CONNECTION
+                    // Keep pending_valid=true so COD is available in HID_SUBEVENT_INCOMING_CONNECTION
+
+                    // Request remote name for driver matching (we don't have it from inquiry)
+                    gap_remote_name_request(addr, 0, 0);
+
+                    // Query VID/PID via SDP (PnP Information service)
+                    sdp_client_query_uuid16(&sdp_query_vid_pid_callback, addr,
+                                            BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
+                }
+                // Request authentication (Bluepad32 pattern)
+                gap_request_security_level(handle, LEVEL_2);
+            }
+            break;
+        }
+
+        case L2CAP_EVENT_INCOMING_CONNECTION: {
+            uint16_t psm = l2cap_event_incoming_connection_get_psm(packet);
+            uint16_t cid = l2cap_event_incoming_connection_get_local_cid(packet);
+            hci_con_handle_t handle = l2cap_event_incoming_connection_get_handle(packet);
+            printf("[BTSTACK_HOST] L2CAP incoming: PSM=0x%04X cid=0x%04X handle=0x%04X\n", psm, cid, handle);
+            break;
+        }
+
+        case L2CAP_EVENT_CHANNEL_OPENED: {
+            uint8_t status = l2cap_event_channel_opened_get_status(packet);
+            uint16_t psm = l2cap_event_channel_opened_get_psm(packet);
+            uint16_t cid = l2cap_event_channel_opened_get_local_cid(packet);
+            printf("[BTSTACK_HOST] L2CAP opened: status=%d PSM=0x%04X cid=0x%04X\n", status, psm, cid);
+            break;
+        }
+
+        case HCI_EVENT_LE_META: {
+            uint8_t subevent = hci_event_le_meta_get_subevent_code(packet);
+
+            switch (subevent) {
+                case HCI_SUBEVENT_LE_CONNECTION_COMPLETE: {
+                    hci_con_handle_t handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                    uint8_t status = hci_subevent_le_connection_complete_get_status(packet);
+
+                    if (status != 0) {
+                        printf("[BTSTACK_HOST] Connection failed: 0x%02X\n", status);
+                        hid_state.state = BLE_STATE_IDLE;
+
+                        // If reconnection attempt failed, try again or resume scanning
+                        if (hid_state.has_last_connected && hid_state.reconnect_attempts < 5) {
+                            hid_state.reconnect_attempts++;
+                            printf("[BTSTACK_HOST] Retrying reconnection (attempt %d)...\n",
+                                   hid_state.reconnect_attempts);
+                            btstack_host_connect_ble(hid_state.last_connected_addr, hid_state.last_connected_addr_type);
+                        } else {
+                            printf("[BTSTACK_HOST] Reconnection failed, resuming scan\n");
+                            btstack_host_start_scan();
+                        }
+                        break;
+                    }
+
+                    printf("[BTSTACK_HOST] Connected! handle=0x%04X\n", handle);
+
+                    // Find or create connection entry
+                    ble_connection_t *conn = find_free_connection();
+                    if (conn) {
+                        memcpy(conn->addr, hid_state.pending_addr, 6);
+                        conn->addr_type = hid_state.pending_addr_type;
+                        conn->handle = handle;
+                        conn->state = BLE_STATE_CONNECTED;
+                        // Copy the name from pending connection
+                        strncpy(conn->name, hid_state.pending_name, sizeof(conn->name) - 1);
+                        conn->name[sizeof(conn->name) - 1] = '\0';
+                        conn->is_xbox = (strstr(conn->name, "Xbox") != NULL);
+                        conn->is_switch2 = hid_state.pending_is_switch2;
+                        conn->vid = hid_state.pending_vid;
+                        conn->pid = hid_state.pending_pid;
+
+                        printf("[BTSTACK_HOST] Connection stored: name='%s' switch2=%d vid=0x%04X pid=0x%04X\n",
+                               conn->name, conn->is_switch2, conn->vid, conn->pid);
+
+                        // Switch 2 uses custom pairing via ATT commands, not standard SM
+                        if (conn->is_switch2) {
+                            printf("[BTSTACK_HOST] Switch 2: Skipping SM pairing, using direct ATT setup\n");
+                            register_switch2_hid_listener(handle);
+                        } else {
+                            // Request pairing (SM will handle Secure Connections)
+                            printf("[BTSTACK_HOST] Requesting pairing...\n");
+                            sm_request_pairing(handle);
+                        }
+                    }
+
+                    hid_state.state = BLE_STATE_CONNECTED;
+                    break;
+                }
+
+                case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
+                    printf("[BTSTACK_HOST] Connection update complete\n");
+                    break;
+            }
+            break;
+        }
+
+        case HCI_EVENT_REMOTE_NAME_REQUEST_COMPLETE: {
+            bd_addr_t name_addr;
+            hci_event_remote_name_request_complete_get_bd_addr(packet, name_addr);
+            uint8_t name_status = hci_event_remote_name_request_complete_get_status(packet);
+
+            if (name_status == 0) {
+                const char* name = hci_event_remote_name_request_complete_get_remote_name(packet);
+                printf("[BTSTACK_HOST] Remote name: %s\n", name);
+
+                // Store name if this is our pending incoming connection
+                if (classic_state.pending_valid &&
+                    memcmp(name_addr, classic_state.pending_addr, 6) == 0) {
+                    strncpy(classic_state.pending_name, name, sizeof(classic_state.pending_name) - 1);
+                    classic_state.pending_name[sizeof(classic_state.pending_name) - 1] = '\0';
+                }
+
+                // Also update any active connection with this address
+                for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+                    classic_connection_t* conn = &classic_state.connections[i];
+                    if (conn->active && memcmp(conn->addr, name_addr, 6) == 0) {
+                        if (conn->name[0] == '\0') {
+                            strncpy(conn->name, name, sizeof(conn->name) - 1);
+                            conn->name[sizeof(conn->name) - 1] = '\0';
+                            printf("[BTSTACK_HOST] Updated conn[%d] name: %s\n", i, conn->name);
+                        }
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+
+        case HCI_EVENT_DISCONNECTION_COMPLETE: {
+            hci_con_handle_t handle = hci_event_disconnection_complete_get_connection_handle(packet);
+            uint8_t reason = hci_event_disconnection_complete_get_reason(packet);
+
+            printf("[BTSTACK_HOST] Disconnected: handle=0x%04X reason=0x%02X\n", handle, reason);
+
+            ble_connection_t *conn = find_connection_by_handle(handle);
+            if (conn && conn->conn_index > 0) {
+                // Notify bthid layer before clearing connection
+                // conn_index for BLE uses BLE_CONN_INDEX_OFFSET to distinguish from Classic
+                printf("[BTSTACK_HOST] BLE disconnect: notifying bthid (conn_index=%d)\n", conn->conn_index);
+                bt_on_disconnect(conn->conn_index);
+                memset(conn, 0, sizeof(*conn));
+            }
+
+            hid_state.state = BLE_STATE_IDLE;
+
+            // Try to reconnect to last connected device if we have one stored
+            if (hid_state.has_last_connected && hid_state.reconnect_attempts < 5) {
+                hid_state.reconnect_attempts++;
+                printf("[BTSTACK_HOST] Attempting reconnection to stored device (attempt %d)...\n",
+                       hid_state.reconnect_attempts);
+                printf("[BTSTACK_HOST] Connecting to %02X:%02X:%02X:%02X:%02X:%02X name='%s'\n",
+                       hid_state.last_connected_addr[5], hid_state.last_connected_addr[4],
+                       hid_state.last_connected_addr[3], hid_state.last_connected_addr[2],
+                       hid_state.last_connected_addr[1], hid_state.last_connected_addr[0],
+                       hid_state.last_connected_name);
+                // Copy stored name to pending so it's available when connection completes
+                strncpy(hid_state.pending_name, hid_state.last_connected_name, sizeof(hid_state.pending_name) - 1);
+                hid_state.pending_name[sizeof(hid_state.pending_name) - 1] = '\0';
+                btstack_host_connect_ble(hid_state.last_connected_addr, hid_state.last_connected_addr_type);
+            } else {
+                // Resume scanning for new devices
+                btstack_host_start_scan();
+            }
+            break;
+        }
+
+        case HCI_EVENT_LINK_KEY_REQUEST: {
+            bd_addr_t req_addr;
+            reverse_bytes(&packet[2], req_addr, 6);
+
+            // BTstack handles link key lookup via the registered link key DB (TLV flash storage)
+            // This is just for logging - hci.c will query the DB and send the appropriate reply
+            hci_connection_t *conn = hci_connection_for_bd_addr_and_type(req_addr, BD_ADDR_TYPE_ACL);
+            printf("[BTSTACK_HOST] Link key request: %02X:%02X:%02X:%02X:%02X:%02X conn=%s\n",
+                   req_addr[0], req_addr[1], req_addr[2], req_addr[3], req_addr[4], req_addr[5],
+                   conn ? "YES" : "NO");
+            break;
+        }
+
+        case HCI_EVENT_LINK_KEY_NOTIFICATION: {
+            bd_addr_t notif_addr;
+            reverse_bytes(&packet[2], notif_addr, 6);
+            link_key_type_t key_type = (link_key_type_t)packet[24];
+            // BTstack stores link key via the registered link key DB (TLV flash storage)
+            // This is just for logging - hci.c already stored the key
+            printf("[BTSTACK_HOST] Link key notification: %02X:%02X:%02X:%02X:%02X:%02X type=%d (stored to flash)\n",
+                   notif_addr[0], notif_addr[1], notif_addr[2], notif_addr[3], notif_addr[4], notif_addr[5], key_type);
+            break;
+        }
+
+        case HCI_EVENT_ENCRYPTION_CHANGE: {
+            hci_con_handle_t handle = hci_event_encryption_change_get_connection_handle(packet);
+            uint8_t status = hci_event_encryption_change_get_status(packet);
+            uint8_t enabled = hci_event_encryption_change_get_encryption_enabled(packet);
+
+            printf("[BTSTACK_HOST] Encryption change: handle=0x%04X status=0x%02X enabled=%d\n",
+                   handle, status, enabled);
+
+            if (status == 0 && enabled) {
+                // Check if we have a pending HID connect for this handle
+                if (classic_state.pending_hid_connect &&
+                    classic_state.pending_hid_handle == handle) {
+                    printf("[BTSTACK_HOST] Encryption complete, initiating HID connection\n");
+                    uint16_t hid_cid;
+                    uint8_t err = hid_host_connect(classic_state.pending_hid_addr,
+                                                   HID_PROTOCOL_MODE_REPORT, &hid_cid);
+                    if (err == ERROR_CODE_SUCCESS) {
+                        printf("[BTSTACK_HOST] hid_host_connect initiated, cid=0x%04X\n", hid_cid);
+                    } else {
+                        printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", err);
+                    }
+                    classic_state.pending_hid_connect = false;
+                }
+            }
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// SM EVENT HANDLER
+// ============================================================================
+
+static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    uint8_t event_type = hci_event_packet_get_type(packet);
+
+    switch (event_type) {
+        case SM_EVENT_JUST_WORKS_REQUEST:
+            printf("[BTSTACK_HOST] SM: Just Works request\n");
+            sm_just_works_confirm(sm_event_just_works_request_get_handle(packet));
+            break;
+
+        case SM_EVENT_PAIRING_STARTED:
+            printf("[BTSTACK_HOST] SM: Pairing started\n");
+            break;
+
+        case SM_EVENT_PAIRING_COMPLETE: {
+            hci_con_handle_t handle = sm_event_pairing_complete_get_handle(packet);
+            uint8_t status = sm_event_pairing_complete_get_status(packet);
+            printf("[BTSTACK_HOST] SM: Pairing complete, handle=0x%04X status=0x%02X\n", handle, status);
+
+            if (status == ERROR_CODE_SUCCESS) {
+                printf("[BTSTACK_HOST] SM: Pairing successful!\n");
+                ble_connection_t* conn = find_connection_by_handle(handle);
+                if (conn) {
+                    // Store for reconnection
+                    memcpy(hid_state.last_connected_addr, conn->addr, 6);
+                    hid_state.last_connected_addr_type = conn->addr_type;
+                    strncpy(hid_state.last_connected_name, conn->name, sizeof(hid_state.last_connected_name) - 1);
+                    hid_state.last_connected_name[sizeof(hid_state.last_connected_name) - 1] = '\0';
+                    hid_state.has_last_connected = true;
+                    hid_state.reconnect_attempts = 0;
+                    printf("[BTSTACK_HOST] Stored device for reconnection: %02X:%02X:%02X:%02X:%02X:%02X name='%s'\n",
+                           conn->addr[5], conn->addr[4], conn->addr[3], conn->addr[2], conn->addr[1], conn->addr[0],
+                           hid_state.last_connected_name);
+
+                    // Xbox/Switch2 controllers: use fast-path with known handles
+                    // Other controllers: do proper GATT discovery
+                    bool is_xbox = (strstr(conn->name, "Xbox") != NULL);
+                    if (is_xbox) {
+                        printf("[BTSTACK_HOST] Xbox detected - using fast-path HID listener\n");
+                        register_ble_hid_listener(handle);
+                    } else if (conn->is_switch2) {
+                        printf("[BTSTACK_HOST] Switch 2 detected - using fast-path notification enable\n");
+                        register_switch2_hid_listener(handle);
+                    } else {
+                        printf("[BTSTACK_HOST] Non-Xbox BLE controller - starting GATT discovery\n");
+                        start_hids_client(conn);
+                    }
+                }
+            } else {
+                printf("[BTSTACK_HOST] SM: Pairing FAILED\n");
+            }
+            break;
+        }
+
+        case SM_EVENT_REENCRYPTION_STARTED:
+            printf("[BTSTACK_HOST] SM: Re-encryption started\n");
+            break;
+
+        case SM_EVENT_REENCRYPTION_COMPLETE: {
+            hci_con_handle_t handle = sm_event_reencryption_complete_get_handle(packet);
+            uint8_t status = sm_event_reencryption_complete_get_status(packet);
+            printf("[BTSTACK_HOST] SM: Re-encryption complete, handle=0x%04X status=0x%02X\n", handle, status);
+            if (status == ERROR_CODE_SUCCESS) {
+                printf("[BTSTACK_HOST] SM: Re-encryption successful!\n");
+                ble_connection_t* conn = find_connection_by_handle(handle);
+                if (conn) {
+                    // Reset reconnect counter on successful re-encryption
+                    hid_state.reconnect_attempts = 0;
+
+                    // Update stored device info (in case address type changed or for reconnection)
+                    memcpy(hid_state.last_connected_addr, conn->addr, 6);
+                    hid_state.last_connected_addr_type = conn->addr_type;
+                    if (conn->name[0] != '\0') {
+                        strncpy(hid_state.last_connected_name, conn->name, sizeof(hid_state.last_connected_name) - 1);
+                        hid_state.last_connected_name[sizeof(hid_state.last_connected_name) - 1] = '\0';
+                    }
+                    hid_state.has_last_connected = true;
+
+                    bool is_xbox = (strstr(conn->name, "Xbox") != NULL);
+                    if (is_xbox) {
+                        printf("[BTSTACK_HOST] Xbox detected - using fast-path HID listener\n");
+                        register_ble_hid_listener(handle);
+                    } else if (conn->is_switch2) {
+                        printf("[BTSTACK_HOST] Switch 2 detected - using fast-path notification enable\n");
+                        register_switch2_hid_listener(handle);
+                    } else {
+                        printf("[BTSTACK_HOST] Non-Xbox BLE controller - starting GATT discovery\n");
+                        start_hids_client(conn);
+                    }
+                }
+            } else {
+                // Re-encryption failed - remote likely lost bonding info
+                // Delete local bonding and request fresh pairing
+                printf("[BTSTACK_HOST] SM: Re-encryption failed, deleting bond and re-pairing...\n");
+                bd_addr_t addr;
+                sm_event_reencryption_complete_get_address(packet, addr);
+                bd_addr_type_t addr_type = sm_event_reencryption_complete_get_addr_type(packet);
+                gap_delete_bonding(addr_type, addr);
+                sm_request_pairing(handle);
+            }
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// GATT CLIENT
+// ============================================================================
+
+static void gatt_client_callback(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    uint8_t event_type = hci_event_packet_get_type(packet);
+
+    switch (event_type) {
+        case GATT_EVENT_SERVICE_QUERY_RESULT: {
+            gatt_client_service_t service;
+            gatt_event_service_query_result_get_service(packet, &service);
+            printf("[BTSTACK_HOST] GATT: Service 0x%04X-0x%04X UUID=0x%04X\n",
+                   service.start_group_handle, service.end_group_handle,
+                   service.uuid16);
+            // Save HID service handles (UUID 0x1812)
+            if (service.uuid16 == 0x1812) {
+                hid_state.hid_service_start = service.start_group_handle;
+                hid_state.hid_service_end = service.end_group_handle;
+                printf("[BTSTACK_HOST] Found HID Service!\n");
+            }
+            break;
+        }
+
+        case GATT_EVENT_CHARACTERISTIC_QUERY_RESULT: {
+            gatt_client_characteristic_t characteristic;
+            gatt_event_characteristic_query_result_get_characteristic(packet, &characteristic);
+            printf("[BTSTACK_HOST] GATT: Char handle=0x%04X value=0x%04X end=0x%04X props=0x%02X UUID=0x%04X\n",
+                   characteristic.start_handle, characteristic.value_handle,
+                   characteristic.end_handle, characteristic.properties, characteristic.uuid16);
+            // Save first Report characteristic (UUID 0x2A4D) with Notify property
+            if (characteristic.uuid16 == 0x2A4D && (characteristic.properties & 0x10) &&
+                hid_state.report_characteristic.value_handle == 0) {
+                hid_state.report_characteristic = characteristic;
+                printf("[BTSTACK_HOST] Found HID Report characteristic!\n");
+            }
+            break;
+        }
+
+        case GATT_EVENT_QUERY_COMPLETE: {
+            uint8_t status = gatt_event_query_complete_get_att_status(packet);
+            printf("[BTSTACK_HOST] GATT: Query complete, status=0x%02X, gatt_state=%d\n",
+                   status, hid_state.gatt_state);
+
+            if (status != 0) break;
+
+            // State machine for GATT discovery
+            if (hid_state.gatt_state == GATT_DISCOVERING_SERVICES) {
+                if (hid_state.hid_service_start != 0) {
+                    // Found HID, now discover its characteristics
+                    printf("[BTSTACK_HOST] Discovering HID characteristics...\n");
+                    hid_state.gatt_state = GATT_DISCOVERING_HID_CHARACTERISTICS;
+                    gatt_client_discover_characteristics_for_handle_range_by_uuid16(
+                        gatt_client_callback, hid_state.gatt_handle,
+                        hid_state.hid_service_start, hid_state.hid_service_end,
+                        0x2A4D);  // HID Report UUID
+                } else {
+                    printf("[BTSTACK_HOST] No HID service found!\n");
+                }
+            } else if (hid_state.gatt_state == GATT_DISCOVERING_HID_CHARACTERISTICS) {
+                if (hid_state.report_characteristic.value_handle != 0) {
+                    // Found Report char, enable notifications
+                    printf("[BTSTACK_HOST] Enabling notifications on 0x%04X (end=0x%04X)...\n",
+                           hid_state.report_characteristic.value_handle,
+                           hid_state.report_characteristic.end_handle);
+                    hid_state.gatt_state = GATT_ENABLING_NOTIFICATIONS;
+                    gatt_client_write_client_characteristic_configuration(
+                        gatt_client_callback, hid_state.gatt_handle,
+                        &hid_state.report_characteristic,
+                        GATT_CLIENT_CHARACTERISTICS_CONFIGURATION_NOTIFICATION);
+                } else {
+                    printf("[BTSTACK_HOST] No HID Report characteristic found!\n");
+                }
+            } else if (hid_state.gatt_state == GATT_ENABLING_NOTIFICATIONS) {
+                printf("[BTSTACK_HOST] Notifications enabled! Ready for HID reports.\n");
+                hid_state.gatt_state = GATT_READY;
+            }
+            break;
+        }
+
+        case GATT_EVENT_NOTIFICATION: {
+            hci_con_handle_t con_handle = gatt_event_notification_get_handle(packet);
+            uint16_t value_handle = gatt_event_notification_get_value_handle(packet);
+            uint16_t value_length = gatt_event_notification_get_value_length(packet);
+            const uint8_t *value = gatt_event_notification_get_value(packet);
+
+            // BLE HID Report characteristic (Xbox uses handle 0x001E)
+            // Route through bthid layer
+            if (value_handle == 0x001E && value_length >= 1) {
+                int conn_index = get_ble_conn_index_by_handle(con_handle);
+                if (conn_index >= 0) {
+                    route_ble_hid_report(conn_index, value, value_length);
+                }
+            }
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// DIRECT XBOX HID NOTIFICATION HANDLER
+// ============================================================================
+
+// Handle notifications directly from gatt_client listener API
+static void ble_hid_notification_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != GATT_EVENT_NOTIFICATION) return;
+
+    hci_con_handle_t con_handle = gatt_event_notification_get_handle(packet);
+    uint16_t value_handle = gatt_event_notification_get_value_handle(packet);
+    uint16_t value_length = gatt_event_notification_get_value_length(packet);
+    const uint8_t *value = gatt_event_notification_get_value(packet);
+
+    // Debug: log all notifications to identify chatpad/keyboard reports
+    static uint16_t last_handle = 0;
+    static uint16_t last_len = 0;
+    if (value_handle != last_handle || value_length != last_len) {
+        printf("[BTSTACK_HOST] BLE notif: handle=0x%04X len=%d data=%02X %02X %02X %02X\n",
+               value_handle, value_length,
+               value_length > 0 ? value[0] : 0,
+               value_length > 1 ? value[1] : 0,
+               value_length > 2 ? value[2] : 0,
+               value_length > 3 ? value[3] : 0);
+        last_handle = value_handle;
+        last_len = value_length;
+    }
+
+    // Accept HID report notifications - filter by reasonable gamepad report length
+    if (value_length < 10 || value_length > sizeof(pending_ble_report)) return;
+
+    // Get conn_index for this BLE connection
+    int conn_index = get_ble_conn_index_by_handle(con_handle);
+    if (conn_index < 0) return;
+
+    // Defer processing to main loop to avoid stack overflow
+    memcpy(pending_ble_report, value, value_length);
+    pending_ble_report_len = value_length;
+    pending_ble_conn_index = (uint8_t)conn_index;
+    ble_report_pending = true;
+}
+
+// Register direct listener for BLE HID notifications and notify bthid layer
+static void register_ble_hid_listener(hci_con_handle_t con_handle)
+{
+    printf("[BTSTACK_HOST] Registering BLE HID listener for handle 0x%04X\n", con_handle);
+
+    // Find the BLE connection
+    ble_connection_t* conn = find_connection_by_handle(con_handle);
+    if (!conn) {
+        printf("[BTSTACK_HOST] ERROR: No connection for handle 0x%04X\n", con_handle);
+        return;
+    }
+
+    // Assign conn_index if not already set
+    int ble_index = -1;
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (&hid_state.connections[i] == conn) {
+            ble_index = i;
+            break;
+        }
+    }
+    if (ble_index < 0) return;
+
+    conn->conn_index = BLE_CONN_INDEX_OFFSET + ble_index;
+    conn->hid_ready = true;
+
+    // Set up a fake characteristic structure with just the value_handle
+    // Xbox BLE HID Report characteristic value handle is 0x001E
+    memset(&xbox_hid_characteristic, 0, sizeof(xbox_hid_characteristic));
+    xbox_hid_characteristic.value_handle = 0x001E;
+    xbox_hid_characteristic.end_handle = 0x001F;  // Approximate
+
+    // Register to listen for notifications on the HID report characteristic
+    gatt_client_listen_for_characteristic_value_updates(
+        &xbox_hid_notification_listener,
+        ble_hid_notification_handler,
+        con_handle,
+        &xbox_hid_characteristic);
+
+    printf("[BTSTACK_HOST] BLE HID listener registered, conn_index=%d\n", conn->conn_index);
+
+    // Notify bthid layer that device is ready
+    printf("[BTSTACK_HOST] Calling bt_on_hid_ready(%d) for BLE device '%s'\n", conn->conn_index, conn->name);
+    bt_on_hid_ready(conn->conn_index);
+}
+
+// ============================================================================
+// SWITCH 2 BLE HID NOTIFICATION HANDLER
+// ============================================================================
+
+// Switch 2 ATT handles (from protocol documentation)
+#define SW2_INPUT_REPORT_HANDLE     0x000A  // Input reports via notification
+#define SW2_CCC_HANDLE              0x000B  // Client Characteristic Configuration
+#define SW2_OUTPUT_REPORT_HANDLE    0x0012  // Rumble output
+#define SW2_CMD_HANDLE              0x0014  // Command output
+#define SW2_ACK_CCC_HANDLE          0x001B  // ACK notification CCC
+
+// Switch 2 command constants
+#define SW2_CMD_PAIRING             0x15
+#define SW2_CMD_SET_LED             0x09
+#define SW2_CMD_READ_SPI            0x02
+#define SW2_REQ_TYPE_REQ            0x91
+#define SW2_REQ_INT_BLE             0x01
+#define SW2_SUBCMD_SET_LED          0x07
+#define SW2_SUBCMD_READ_SPI         0x04
+// Pairing subcmds - sent in order: STEP1 -> STEP2 -> STEP3 -> STEP4
+// Note: Response ACK contains same subcmd as request
+#define SW2_SUBCMD_PAIRING_STEP1    0x01  // Send BD address
+#define SW2_SUBCMD_PAIRING_STEP2    0x04  // Send magic bytes 1
+#define SW2_SUBCMD_PAIRING_STEP3    0x02  // Send magic bytes 2
+#define SW2_SUBCMD_PAIRING_STEP4    0x03  // Complete pairing
+
+// Init state machine states (matching BlueRetro's sequence)
+typedef enum {
+    SW2_INIT_IDLE = 0,
+    SW2_INIT_READ_INFO,             // Read device info from SPI
+    SW2_INIT_READ_LTK,              // Read LTK to check if paired
+    SW2_INIT_PAIR_STEP1,            // Pairing step 1 (BD addr)
+    SW2_INIT_PAIR_STEP2,            // Pairing step 2
+    SW2_INIT_PAIR_STEP3,            // Pairing step 3
+    SW2_INIT_PAIR_STEP4,            // Pairing step 4
+    SW2_INIT_SET_LED,               // Set player LED
+    SW2_INIT_DONE                   // Init complete
+} sw2_init_state_t;
+
+// Handle Switch 2 HID notifications
+static void switch2_hid_notification_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != GATT_EVENT_NOTIFICATION) return;
+
+    hci_con_handle_t con_handle = gatt_event_notification_get_handle(packet);
+    uint16_t value_handle = gatt_event_notification_get_value_handle(packet);
+    uint16_t value_length = gatt_event_notification_get_value_length(packet);
+    const uint8_t *value = gatt_event_notification_get_value(packet);
+
+    // Debug first notification
+    static bool sw2_notif_debug = false;
+    if (!sw2_notif_debug) {
+        printf("[SW2_BLE] Notification: handle=0x%04X len=%d data=%02X %02X %02X %02X\n",
+               value_handle, value_length,
+               value_length > 0 ? value[0] : 0,
+               value_length > 1 ? value[1] : 0,
+               value_length > 2 ? value[2] : 0,
+               value_length > 3 ? value[3] : 0);
+        sw2_notif_debug = true;
+    }
+
+    // Switch 2 input reports are 64 bytes on handle 0x000A
+    if (value_handle != SW2_INPUT_REPORT_HANDLE) return;
+    if (value_length < 16 || value_length > sizeof(pending_ble_report)) return;
+
+    // Get conn_index for this BLE connection
+    int conn_index = get_ble_conn_index_by_handle(con_handle);
+    if (conn_index < 0) return;
+
+    // Defer processing to main loop to avoid stack overflow
+    memcpy(pending_ble_report, value, value_length);
+    pending_ble_report_len = value_length;
+    pending_ble_conn_index = (uint8_t)conn_index;
+    ble_report_pending = true;
+}
+
+// Forward declarations for Switch 2
+static void switch2_send_next_init_cmd(hci_con_handle_t con_handle);
+
+// CCC write completion handler for Switch 2 input reports
+static void switch2_ccc_write_callback(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != GATT_EVENT_QUERY_COMPLETE) return;
+
+    uint8_t status = gatt_event_query_complete_get_att_status(packet);
+    hci_con_handle_t handle = gatt_event_query_complete_get_handle(packet);
+
+    if (status == ATT_ERROR_SUCCESS) {
+        printf("[SW2_BLE] Input notifications enabled for handle 0x%04X\n", handle);
+
+        // Now register the notification listener
+        ble_connection_t* conn = find_connection_by_handle(handle);
+        if (conn) {
+            // Update bthid with VID/PID BEFORE calling bt_on_hid_ready
+            // so driver selection has correct info
+            printf("[SW2_BLE] Updating device info: VID=0x%04X PID=0x%04X\n", conn->vid, conn->pid);
+            bthid_update_device_info(conn->conn_index, conn->name, conn->vid, conn->pid);
+
+            // Notify bthid layer that device is ready
+            printf("[SW2_BLE] Calling bt_on_hid_ready(%d) for Switch 2 device\n", conn->conn_index);
+            bt_on_hid_ready(conn->conn_index);
+        }
+    } else {
+        printf("[SW2_BLE] Failed to enable input notifications: status=0x%02X\n", status);
+    }
+}
+
+// CCC write completion handler for Switch 2 ACK notifications
+static void switch2_ack_ccc_write_callback(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != GATT_EVENT_QUERY_COMPLETE) return;
+
+    uint8_t status = gatt_event_query_complete_get_att_status(packet);
+    hci_con_handle_t handle = gatt_event_query_complete_get_handle(packet);
+
+    if (status == ATT_ERROR_SUCCESS) {
+        printf("[SW2_BLE] ACK notifications enabled for handle 0x%04X\n", handle);
+
+        // Now enable input report notifications
+        static uint8_t ccc_enable[] = { 0x01, 0x00 };
+        printf("[SW2_BLE] Enabling input notifications on CCC handle 0x%04X\n", SW2_CCC_HANDLE);
+        gatt_client_write_value_of_characteristic(
+            switch2_ccc_write_callback, handle, SW2_CCC_HANDLE, sizeof(ccc_enable), ccc_enable);
+
+        // Start the pairing sequence
+        printf("[SW2_BLE] Starting pairing sequence\n");
+        switch2_send_next_init_cmd(handle);
+    } else {
+        printf("[SW2_BLE] Failed to enable ACK notifications: status=0x%02X\n", status);
+    }
+}
+
+// Switch 2 init state machine
+static sw2_init_state_t sw2_init_state = SW2_INIT_IDLE;
+static hci_con_handle_t sw2_init_handle = 0;
+
+// ACK notification listener for Switch 2 commands
+static gatt_client_notification_t switch2_ack_notification_listener;
+static gatt_client_characteristic_t switch2_ack_characteristic;
+
+// Forward declare
+static void switch2_send_init_cmd(hci_con_handle_t con_handle);
+
+static void switch2_ack_notification_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+    if (hci_event_packet_get_type(packet) != GATT_EVENT_NOTIFICATION) return;
+
+    uint16_t value_handle = gatt_event_notification_get_value_handle(packet);
+    uint16_t value_length = gatt_event_notification_get_value_length(packet);
+    const uint8_t *value = gatt_event_notification_get_value(packet);
+    hci_con_handle_t con_handle = gatt_event_notification_get_handle(packet);
+
+    // Debug: print all notifications (not just 0x001A) to see what's coming in
+    static bool ack_notif_debug = false;
+    if (!ack_notif_debug && value_handle != SW2_INPUT_REPORT_HANDLE) {
+        printf("[SW2_BLE] ACK listener got notification: handle=0x%04X len=%d\n",
+               value_handle, value_length);
+        ack_notif_debug = true;
+    }
+
+    if (value_handle != 0x001A) return;  // ACK handle
+
+    if (value_length < 4) return;
+    uint8_t cmd = value[0];
+    uint8_t subcmd = value[3];
+
+    printf("[SW2_BLE] ACK: cmd=0x%02X subcmd=0x%02X state=%d len=%d\n",
+           cmd, subcmd, sw2_init_state, value_length);
+
+    // Handle ACK based on current init state
+    switch (cmd) {
+        case SW2_CMD_READ_SPI:
+            if (sw2_init_state == SW2_INIT_READ_INFO) {
+                // Got device info, extract VID/PID if needed
+                if (value_length >= 34) {
+                    uint16_t vid = value[30] | (value[31] << 8);
+                    uint16_t pid = value[32] | (value[33] << 8);
+                    printf("[SW2_BLE] Device info: VID=0x%04X PID=0x%04X\n", vid, pid);
+                }
+                // Skip LTK check for now, go straight to pairing
+                sw2_init_state = SW2_INIT_PAIR_STEP1;
+                switch2_send_init_cmd(con_handle);
+            } else if (sw2_init_state == SW2_INIT_READ_LTK) {
+                // Check LTK, for now just proceed to pairing
+                sw2_init_state = SW2_INIT_PAIR_STEP1;
+                switch2_send_init_cmd(con_handle);
+            }
+            break;
+
+        case SW2_CMD_PAIRING:
+            switch (subcmd) {
+                case SW2_SUBCMD_PAIRING_STEP1:
+                    if (sw2_init_state == SW2_INIT_PAIR_STEP1) {
+                        sw2_init_state = SW2_INIT_PAIR_STEP2;
+                        switch2_send_init_cmd(con_handle);
+                    }
+                    break;
+                case SW2_SUBCMD_PAIRING_STEP2:
+                    if (sw2_init_state == SW2_INIT_PAIR_STEP2) {
+                        sw2_init_state = SW2_INIT_PAIR_STEP3;
+                        switch2_send_init_cmd(con_handle);
+                    }
+                    break;
+                case SW2_SUBCMD_PAIRING_STEP3:
+                    if (sw2_init_state == SW2_INIT_PAIR_STEP3) {
+                        sw2_init_state = SW2_INIT_PAIR_STEP4;
+                        switch2_send_init_cmd(con_handle);
+                    }
+                    break;
+                case SW2_SUBCMD_PAIRING_STEP4:
+                    if (sw2_init_state == SW2_INIT_PAIR_STEP4) {
+                        printf("[SW2_BLE] Pairing complete! Setting LED...\n");
+                        sw2_init_state = SW2_INIT_SET_LED;
+                        switch2_send_init_cmd(con_handle);
+                    }
+                    break;
+            }
+            break;
+
+        case SW2_CMD_SET_LED:
+            if (sw2_init_state == SW2_INIT_SET_LED) {
+                printf("[SW2_BLE] LED set! Init done.\n");
+                sw2_init_state = SW2_INIT_DONE;
+            }
+            break;
+    }
+}
+
+static void switch2_send_init_cmd(hci_con_handle_t con_handle)
+{
+    printf("[SW2_BLE] Sending init cmd, state=%d\n", sw2_init_state);
+
+    switch (sw2_init_state) {
+        case SW2_INIT_READ_INFO: {
+            // Read device info from SPI (BlueRetro's first step)
+            uint8_t read_info[] = {
+                SW2_CMD_READ_SPI,       // 0x02
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_READ_SPI,    // 0x04
+                0x00, 0x08, 0x00, 0x00,
+                0x40,                   // Read length
+                0x7e, 0x00, 0x00,       // Address type
+                0x00, 0x30, 0x01, 0x00  // SPI address
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(read_info), read_info);
+            printf("[SW2_BLE] READ_INFO sent\n");
+            break;
+        }
+
+        case SW2_INIT_PAIR_STEP1: {
+            // Pairing step 1: Send our BD address
+            bd_addr_t local_addr;
+            gap_local_bd_addr(local_addr);
+            printf("[SW2_BLE] Pair Step 1: BD addr = %02X:%02X:%02X:%02X:%02X:%02X\n",
+                   local_addr[5], local_addr[4], local_addr[3],
+                   local_addr[2], local_addr[1], local_addr[0]);
+
+            uint8_t pair1[] = {
+                SW2_CMD_PAIRING,        // 0x15
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_PAIRING_STEP1, // 0x01
+                0x00, 0x0e, 0x00, 0x00, 0x00, 0x02,
+                // 6 bytes: our BD addr
+                local_addr[0], local_addr[1], local_addr[2],
+                local_addr[3], local_addr[4], local_addr[5],
+                // 6 bytes: our BD addr - 1
+                (uint8_t)(local_addr[0] - 1), local_addr[1], local_addr[2],
+                local_addr[3], local_addr[4], local_addr[5],
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(pair1), pair1);
+            break;
+        }
+
+        case SW2_INIT_PAIR_STEP2: {
+            // Pairing step 2: Magic bytes (from BlueRetro)
+            uint8_t pair2[] = {
+                SW2_CMD_PAIRING,        // 0x15
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_PAIRING_STEP2, // 0x04
+                0x00, 0x11, 0x00, 0x00, 0x00,
+                0xea, 0xbd, 0x47, 0x13, 0x89, 0x35, 0x42, 0xc6,
+                0x79, 0xee, 0x07, 0xf2, 0x53, 0x2c, 0x6c, 0x31
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(pair2), pair2);
+            printf("[SW2_BLE] Pair Step 2 sent\n");
+            break;
+        }
+
+        case SW2_INIT_PAIR_STEP3: {
+            // Pairing step 3: More magic bytes
+            uint8_t pair3[] = {
+                SW2_CMD_PAIRING,        // 0x15
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_PAIRING_STEP3, // 0x02
+                0x00, 0x11, 0x00, 0x00, 0x00,
+                0x40, 0xb0, 0x8a, 0x5f, 0xcd, 0x1f, 0x9b, 0x41,
+                0x12, 0x5c, 0xac, 0xc6, 0x3f, 0x38, 0xa0, 0x73
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(pair3), pair3);
+            printf("[SW2_BLE] Pair Step 3 sent\n");
+            break;
+        }
+
+        case SW2_INIT_PAIR_STEP4: {
+            // Pairing step 4: Completion
+            uint8_t pair4[] = {
+                SW2_CMD_PAIRING,        // 0x15
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_PAIRING_STEP4, // 0x03
+                0x00, 0x01, 0x00, 0x00, 0x00
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(pair4), pair4);
+            printf("[SW2_BLE] Pair Step 4 sent\n");
+            break;
+        }
+
+        case SW2_INIT_SET_LED: {
+            // Set player LED
+            uint8_t led_cmd[] = {
+                SW2_CMD_SET_LED,        // 0x09
+                SW2_REQ_TYPE_REQ,       // 0x91
+                SW2_REQ_INT_BLE,        // 0x01
+                SW2_SUBCMD_SET_LED,     // 0x07
+                0x00, 0x08, 0x00, 0x00,
+                0x01,  // Player 1 LED pattern
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            };
+            gatt_client_write_value_of_characteristic_without_response(
+                con_handle, SW2_CMD_HANDLE, sizeof(led_cmd), led_cmd);
+            printf("[SW2_BLE] LED command sent\n");
+            break;
+        }
+
+        default:
+            printf("[SW2_BLE] Unknown init state: %d\n", sw2_init_state);
+            break;
+    }
+}
+
+static void switch2_send_next_init_cmd(hci_con_handle_t con_handle)
+{
+    // Start the init sequence with READ_INFO (like BlueRetro does)
+    if (sw2_init_state == SW2_INIT_IDLE) {
+        printf("[SW2_BLE] Starting init sequence with READ_INFO...\n");
+        sw2_init_state = SW2_INIT_READ_INFO;
+        switch2_send_init_cmd(con_handle);
+    } else if (sw2_init_state == SW2_INIT_DONE) {
+        printf("[SW2_BLE] Init already done\n");
+    } else {
+        // Init in progress, wait for ACK
+        printf("[SW2_BLE] Init in progress (state=%d)\n", sw2_init_state);
+    }
+}
+
+// Retry init if stuck (called from main loop)
+static void switch2_retry_init_if_needed(void)
+{
+    static uint32_t retry_counter = 0;
+    retry_counter++;
+
+    if (sw2_init_state != SW2_INIT_IDLE && sw2_init_state != SW2_INIT_DONE && sw2_init_handle != 0) {
+        // Retry every ~500ms (assuming ~120Hz main loop = 60 counts)
+        if (retry_counter % 60 == 0) {
+            printf("[SW2_BLE] Retrying init cmd (state=%d, attempt=%lu)\n",
+                   sw2_init_state, (unsigned long)(retry_counter / 60));
+            switch2_send_init_cmd(sw2_init_handle);
+        }
+    }
+}
+
+// ============================================================================
+// SWITCH 2 RUMBLE/HAPTICS
+// ============================================================================
+// Switch 2 Pro Controller uses LRA (Linear Resonant Actuator) haptics.
+// Output goes to ATT handle 0x0012.
+// LRA ops format: 5 bytes per op (4-byte bitfield + 1-byte hf_amp)
+// Each side (L/R) has 1 state byte + 3 ops = 16 bytes
+// Total output: 1 + 16 + 16 + 9 padding = 42 bytes
+
+// Rumble state tracking
+static uint8_t sw2_last_rumble_left = 0;
+static uint8_t sw2_last_rumble_right = 0;
+static uint8_t sw2_rumble_tid = 0;
+static uint32_t sw2_rumble_send_counter = 0;
+
+// Player LED state tracking
+static uint8_t sw2_last_player_led = 0;
+
+// Player LED patterns (cumulative, matching joypad-web)
+static const uint8_t SW2_PLAYER_LED_PATTERNS[] = {
+    0x01,  // Player 1: 1 LED
+    0x03,  // Player 2: 2 LEDs
+    0x07,  // Player 3: 3 LEDs
+    0x0F,  // Player 4: 4 LEDs
+};
+
+// Send player LED command to Switch 2 controller
+static void switch2_send_player_led(hci_con_handle_t con_handle, uint8_t pattern)
+{
+    uint8_t led_cmd[] = {
+        SW2_CMD_SET_LED,        // 0x09
+        SW2_REQ_TYPE_REQ,       // 0x91
+        SW2_REQ_INT_BLE,        // 0x01
+        SW2_SUBCMD_SET_LED,     // 0x07
+        0x00, 0x08, 0x00, 0x00,
+        pattern,  // Player LED pattern
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    gatt_client_write_value_of_characteristic_without_response(
+        con_handle, SW2_CMD_HANDLE, sizeof(led_cmd), led_cmd);
+}
+
+// Encode haptic data for one motor (5 bytes)
+// Based on joypad-web's encodeSwitch2Haptic() function
+// Format: [amplitude, frequency, amplitude, frequency, flags]
+// Key: Lower frequency = more felt, higher frequency = audible tones
+// freq 0x60 = felt rumble, freq 0xFE = audible (avoid this)
+static void encode_haptic(uint8_t* out, uint8_t intensity)
+{
+    if (intensity == 0) {
+        // Off state
+        out[0] = 0x00;
+        out[1] = 0x00;
+        out[2] = 0x00;
+        out[3] = 0x00;
+        out[4] = 0x00;
+    } else {
+        // Active rumble - use low frequency for felt vibration
+        // Amplitude: scale from 0x40 to 0xFF based on intensity
+        uint8_t amp = 0x40 + ((intensity * 0xBF) / 255);
+        // Frequency: use 0x40-0x60 range for low rumble (more felt, less audible)
+        // Lower values = lower frequency = more physical sensation
+        uint8_t freq = 0x40;  // Low frequency for maximum felt rumble
+        out[0] = amp;   // High band amplitude
+        out[1] = freq;  // High band frequency (low value = felt)
+        out[2] = amp;   // Low band amplitude
+        out[3] = freq;  // Low band frequency
+        out[4] = 0x00;  // Flags
+    }
+}
+
+// Send rumble command to Switch 2 controller via BLE
+// Based on joypad-web USB Report ID 0x02 format, adapted for BLE
+static void switch2_send_rumble(hci_con_handle_t con_handle, uint8_t left, uint8_t right)
+{
+    // Output buffer format (matching joypad-web):
+    // [0]: padding/report byte
+    // [1]: Counter (0x5X)
+    // [2-6]: Left haptic (5 bytes)
+    // [7-16]: padding
+    // [17]: Counter duplicate
+    // [18-22]: Right haptic (5 bytes)
+    // [23-63]: padding (64 bytes total for USB, may be shorter for BLE)
+    uint8_t buf[64];
+    memset(buf, 0, sizeof(buf));
+
+    // Counter with state bits
+    uint8_t counter = 0x50 | (sw2_rumble_tid & 0x0F);
+    sw2_rumble_tid++;
+
+    buf[1] = counter;
+    buf[17] = counter;  // Duplicate counter
+
+    // Encode left motor haptic (bytes 2-6)
+    encode_haptic(&buf[2], left);
+
+    // Encode right motor haptic (bytes 18-22)
+    encode_haptic(&buf[18], right);
+
+    gatt_client_write_value_of_characteristic_without_response(
+        con_handle, SW2_OUTPUT_REPORT_HANDLE, sizeof(buf), buf);
+}
+
+// Check feedback system and send rumble/LED if needed (called from task loop)
+static void switch2_handle_feedback(void)
+{
+    // Only process if we have an active Switch 2 connection
+    if (sw2_init_state != SW2_INIT_DONE || sw2_init_handle == 0) return;
+
+    sw2_rumble_send_counter++;
+
+    // Get conn_index from HCI handle
+    int conn_index = get_ble_conn_index_by_handle(sw2_init_handle);
+    if (conn_index < 0) return;
+
+    // Find player index for this device
+    int player_idx = find_player_index(conn_index, 0);
+    if (player_idx < 0) return;
+
+    // Get feedback state
+    feedback_state_t* fb = feedback_get_state(player_idx);
+    if (!fb) return;
+
+    // --- Handle Player LED ---
+    if (fb->led_dirty) {
+        // Determine LED pattern from feedback
+        uint8_t led_pattern = 0x01;  // Default to player 1
+
+        if (fb->led.pattern != 0) {
+            // Use pattern bits directly (0x01=P1, 0x02=P2, 0x04=P3, 0x08=P4)
+            // Convert to cumulative pattern for Switch 2
+            if (fb->led.pattern & 0x08) led_pattern = SW2_PLAYER_LED_PATTERNS[3];
+            else if (fb->led.pattern & 0x04) led_pattern = SW2_PLAYER_LED_PATTERNS[2];
+            else if (fb->led.pattern & 0x02) led_pattern = SW2_PLAYER_LED_PATTERNS[1];
+            else led_pattern = SW2_PLAYER_LED_PATTERNS[0];
+        } else {
+            // Use player index if no explicit pattern
+            int idx = (player_idx >= 0 && player_idx < 4) ? player_idx : 0;
+            led_pattern = SW2_PLAYER_LED_PATTERNS[idx];
+        }
+
+        if (led_pattern != sw2_last_player_led) {
+            sw2_last_player_led = led_pattern;
+            switch2_send_player_led(sw2_init_handle, led_pattern);
+        }
+    }
+
+    // --- Handle Rumble ---
+    bool value_changed = (fb->rumble.left != sw2_last_rumble_left ||
+                          fb->rumble.right != sw2_last_rumble_right);
+
+    // Send rumble if:
+    // 1. Values changed, OR
+    // 2. Rumble is active and we need periodic refresh (every ~50ms at 120Hz = 6 ticks)
+    bool need_refresh = (sw2_last_rumble_left > 0 || sw2_last_rumble_right > 0) &&
+                        (sw2_rumble_send_counter % 6 == 0);
+
+    if (fb->rumble_dirty || value_changed || need_refresh) {
+        sw2_last_rumble_left = fb->rumble.left;
+        sw2_last_rumble_right = fb->rumble.right;
+
+        switch2_send_rumble(sw2_init_handle, fb->rumble.left, fb->rumble.right);
+    }
+
+    // Clear dirty flags after processing
+    if (fb->rumble_dirty || fb->led_dirty) {
+        feedback_clear_dirty(player_idx);
+    }
+}
+
+// Register Switch 2 notification listener and enable notifications
+static void register_switch2_hid_listener(hci_con_handle_t con_handle)
+{
+    printf("[SW2_BLE] Registering Switch 2 HID listener for handle 0x%04X\n", con_handle);
+
+    // Find the BLE connection
+    ble_connection_t* conn = find_connection_by_handle(con_handle);
+    if (!conn) {
+        printf("[SW2_BLE] ERROR: No connection for handle 0x%04X\n", con_handle);
+        return;
+    }
+
+    // Assign conn_index if not already set
+    int ble_index = -1;
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (&hid_state.connections[i] == conn) {
+            ble_index = i;
+            break;
+        }
+    }
+    if (ble_index < 0) return;
+
+    conn->conn_index = BLE_CONN_INDEX_OFFSET + ble_index;
+    conn->hid_ready = true;
+    sw2_init_handle = con_handle;
+    sw2_init_state = SW2_INIT_IDLE;
+
+    printf("[SW2_BLE] Connection: VID=0x%04X PID=0x%04X conn_index=%d\n",
+           conn->vid, conn->pid, conn->conn_index);
+
+    // Set up ACK notification listener (handle 0x001A)
+    memset(&switch2_ack_characteristic, 0, sizeof(switch2_ack_characteristic));
+    switch2_ack_characteristic.value_handle = 0x001A;
+    switch2_ack_characteristic.end_handle = 0x001A + 1;
+
+    gatt_client_listen_for_characteristic_value_updates(
+        &switch2_ack_notification_listener,
+        switch2_ack_notification_handler,
+        con_handle,
+        &switch2_ack_characteristic);
+
+    // Set up input report notification listener (handle 0x000A)
+    memset(&switch2_hid_characteristic, 0, sizeof(switch2_hid_characteristic));
+    switch2_hid_characteristic.value_handle = SW2_INPUT_REPORT_HANDLE;
+    switch2_hid_characteristic.end_handle = SW2_INPUT_REPORT_HANDLE + 1;
+
+    gatt_client_listen_for_characteristic_value_updates(
+        &switch2_hid_notification_listener,
+        switch2_hid_notification_handler,
+        con_handle,
+        &switch2_hid_characteristic);
+
+    printf("[SW2_BLE] Notification listeners registered\n");
+
+    // Enable notifications on ACK handle first (0x001B) - wait for confirmation
+    static uint8_t ccc_enable[] = { 0x01, 0x00 };
+    printf("[SW2_BLE] Enabling ACK notifications on CCC handle 0x%04X\n", SW2_ACK_CCC_HANDLE);
+    gatt_client_write_value_of_characteristic(
+        switch2_ack_ccc_write_callback, con_handle, SW2_ACK_CCC_HANDLE, sizeof(ccc_enable), ccc_enable);
+}
+
+static void start_hids_client(ble_connection_t *conn)
+{
+    printf("[BTSTACK_HOST] Connecting HIDS client...\n");
+
+    conn->state = BLE_STATE_DISCOVERING;
+    hid_state.gatt_handle = conn->handle;
+
+    uint8_t status = hids_client_connect(conn->handle, hids_client_handler,
+                                         HID_PROTOCOL_MODE_REPORT, &hid_state.hids_cid);
+
+    printf("[BTSTACK_HOST] hids_client_connect returned %d, cid=0x%04X\n",
+           status, hid_state.hids_cid);
+}
+
+static void hids_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(packet_type);  // hids_client passes HCI_EVENT_GATTSERVICE_META, not HCI_EVENT_PACKET
+    UNUSED(channel);
+    UNUSED(size);
+
+    // Check the event type in the packet itself
+    if (hci_event_packet_get_type(packet) != HCI_EVENT_GATTSERVICE_META) return;
+
+    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+        case GATTSERVICE_SUBEVENT_HID_SERVICE_CONNECTED: {
+            uint8_t status = gattservice_subevent_hid_service_connected_get_status(packet);
+            uint8_t num_instances = gattservice_subevent_hid_service_connected_get_num_instances(packet);
+            printf("[BTSTACK_HOST] HIDS connected! status=%d instances=%d\n", status, num_instances);
+
+            if (status == ERROR_CODE_SUCCESS) {
+                ble_connection_t *conn = find_connection_by_handle(hid_state.gatt_handle);
+                if (conn) {
+                    conn->state = BLE_STATE_READY;
+                    conn->hid_ready = true;
+
+                    // Assign conn_index if not already set
+                    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+                        if (&hid_state.connections[i] == conn) {
+                            conn->conn_index = BLE_CONN_INDEX_OFFSET + i;
+                            break;
+                        }
+                    }
+
+                    // Notify bthid layer that device is ready
+                    printf("[BTSTACK_HOST] Calling bt_on_hid_ready(%d) for BLE device '%s'\n",
+                           conn->conn_index, conn->name);
+                    bt_on_hid_ready(conn->conn_index);
+                }
+
+                // Explicitly enable notifications
+                printf("[BTSTACK_HOST] Enabling HID notifications...\n");
+                uint8_t result = hids_client_enable_notifications(hid_state.hids_cid);
+                printf("[BTSTACK_HOST] enable_notifications returned %d\n", result);
+            }
+            break;
+        }
+
+        case GATTSERVICE_SUBEVENT_HID_SERVICE_REPORTS_NOTIFICATION: {
+            uint8_t configuration = gattservice_subevent_hid_service_reports_notification_get_configuration(packet);
+            printf("[BTSTACK_HOST] HID Reports Notification configured: %d\n", configuration);
+            printf("[BTSTACK_HOST] Ready to receive HID reports!\n");
+            break;
+        }
+
+        case GATTSERVICE_SUBEVENT_HID_REPORT: {
+            uint16_t report_len = gattservice_subevent_hid_report_get_report_len(packet);
+            const uint8_t *report = gattservice_subevent_hid_report_get_report(packet);
+
+            // Route BLE HID report through bthid layer
+            int conn_index = get_ble_conn_index_by_handle(hid_state.gatt_handle);
+            if (conn_index >= 0) {
+                route_ble_hid_report(conn_index, report, report_len);
+            }
+
+            // Forward to callback if set
+            if (hid_state.report_callback) {
+                hid_state.report_callback(hid_state.gatt_handle, report, report_len);
+            }
+            break;
+        }
+
+        default:
+            printf("[BTSTACK_HOST] GATT service subevent: 0x%02X\n",
+                   hci_event_gattservice_meta_get_subevent_code(packet));
+            break;
+    }
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+static ble_connection_t* find_connection_by_handle(hci_con_handle_t handle)
+{
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (hid_state.connections[i].handle == handle) {
+            return &hid_state.connections[i];
+        }
+    }
+    return NULL;
+}
+
+static ble_connection_t* find_free_connection(void)
+{
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (hid_state.connections[i].handle == 0) {
+            return &hid_state.connections[i];
+        }
+    }
+    return NULL;
+}
+
+// ============================================================================
+// STATUS
+// ============================================================================
+
+bool btstack_host_is_initialized(void)
+{
+    return hid_state.initialized;
+}
+
+bool btstack_host_is_powered_on(void)
+{
+    return hid_state.powered_on;
+}
+
+bool btstack_host_is_scanning(void)
+{
+    return hid_state.scan_active || classic_state.inquiry_active;
+}
+
+// ============================================================================
+// CLASSIC BT HID HOST PACKET HANDLER
+// ============================================================================
+
+static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    uint8_t event_type = hci_event_packet_get_type(packet);
+    if (event_type != HCI_EVENT_HID_META) return;
+
+    uint8_t subevent = hci_event_hid_meta_get_subevent_code(packet);
+
+    switch (subevent) {
+        case HID_SUBEVENT_INCOMING_CONNECTION: {
+            // Accept incoming HID connections from devices
+            uint16_t hid_cid = hid_subevent_incoming_connection_get_hid_cid(packet);
+            printf("[BTSTACK_HOST] HID incoming connection, cid=0x%04X - accepting\n", hid_cid);
+            hid_host_accept_connection(hid_cid, HID_PROTOCOL_MODE_REPORT);
+
+            // Allocate connection slot if needed
+            if (!find_classic_connection_by_cid(hid_cid)) {
+                classic_connection_t* conn = find_free_classic_connection();
+                if (conn) {
+                    memset(conn, 0, sizeof(*conn));
+                    conn->active = true;
+                    conn->hid_cid = hid_cid;
+                    hid_subevent_incoming_connection_get_address(packet, conn->addr);
+
+                    // Use pending COD and name if address matches (from HCI_EVENT_CONNECTION_REQUEST)
+                    if (classic_state.pending_valid &&
+                        memcmp(conn->addr, classic_state.pending_addr, 6) == 0) {
+                        conn->class_of_device[0] = classic_state.pending_cod & 0xFF;
+                        conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
+                        conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                        // Copy name if we got it from remote name request
+                        if (classic_state.pending_name[0]) {
+                            strncpy(conn->name, classic_state.pending_name, sizeof(conn->name) - 1);
+                            conn->name[sizeof(conn->name) - 1] = '\0';
+                            printf("[BTSTACK_HOST] Using pending name: %s\n", conn->name);
+                        }
+                        // Copy VID/PID if we got them from SDP query
+                        if (classic_state.pending_vid || classic_state.pending_pid) {
+                            conn->vendor_id = classic_state.pending_vid;
+                            conn->product_id = classic_state.pending_pid;
+                            printf("[BTSTACK_HOST] Using pending VID/PID: 0x%04X/0x%04X\n",
+                                   conn->vendor_id, conn->product_id);
+                        }
+                        classic_state.pending_valid = false;
+                        printf("[BTSTACK_HOST] Using pending COD: 0x%06X\n", (unsigned)classic_state.pending_cod);
+                    }
+                }
+            }
+            break;
+        }
+
+        case HID_SUBEVENT_CONNECTION_OPENED: {
+            uint16_t hid_cid = hid_subevent_connection_opened_get_hid_cid(packet);
+            uint8_t status = hid_subevent_connection_opened_get_status(packet);
+
+            if (status != ERROR_CODE_SUCCESS) {
+                printf("[BTSTACK_HOST] HID connection failed, status=0x%02X\n", status);
+                // Remove connection slot
+                classic_connection_t* conn = find_classic_connection_by_cid(hid_cid);
+                if (conn) {
+                    memset(conn, 0, sizeof(*conn));
+                }
+                return;
+            }
+
+            printf("[BTSTACK_HOST] HID connection opened, cid=0x%04X\n", hid_cid);
+
+            // Mark connection as ready (HID channels established)
+            classic_connection_t* conn = find_classic_connection_by_cid(hid_cid);
+            if (conn) {
+                conn->hid_ready = true;
+
+                // For outgoing connections, query SDP for VID/PID if we don't have it yet
+                if (conn->vendor_id == 0 && conn->product_id == 0) {
+                    // Store pending info for SDP callback
+                    memcpy(classic_state.pending_addr, conn->addr, 6);
+                    classic_state.pending_vid = 0;
+                    classic_state.pending_pid = 0;
+
+                    // Query VID/PID via SDP (PnP Information service)
+                    sdp_client_query_uuid16(&sdp_query_vid_pid_callback, conn->addr,
+                                            BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
+
+                    // Also request remote name if we don't have it
+                    if (conn->name[0] == '\0') {
+                        gap_remote_name_request(conn->addr, 0, 0);
+                    }
+                }
+            }
+            break;
+        }
+
+        case HID_SUBEVENT_DESCRIPTOR_AVAILABLE: {
+            uint16_t hid_cid = hid_subevent_descriptor_available_get_hid_cid(packet);
+            uint8_t status = hid_subevent_descriptor_available_get_status(packet);
+
+            printf("[BTSTACK_HOST] HID descriptor available, cid=0x%04X status=0x%02X\n", hid_cid, status);
+
+            // Notify bthid layer that device is ready
+            int conn_index = get_classic_conn_index(hid_cid);
+            if (conn_index >= 0) {
+                printf("[BTSTACK_HOST] Calling bt_on_hid_ready(%d)\n", conn_index);
+                bt_on_hid_ready(conn_index);
+            }
+            break;
+        }
+
+        case HID_SUBEVENT_REPORT: {
+            uint16_t hid_cid = hid_subevent_report_get_hid_cid(packet);
+            const uint8_t* report = hid_subevent_report_get_report(packet);
+            uint16_t report_len = hid_subevent_report_get_report_len(packet);
+
+            // Debug: show raw BTstack report
+            static bool btstack_report_debug_done = false;
+            if (!btstack_report_debug_done && report_len >= 4) {
+                printf("[BTSTACK_HOST] Raw report len=%d: %02X %02X %02X %02X\n",
+                       report_len, report[0], report[1], report[2], report[3]);
+                btstack_report_debug_done = true;
+            }
+
+            // Route to bthid layer
+            // BTstack report already includes 0xA1 header (DATA|INPUT)
+            int conn_index = get_classic_conn_index(hid_cid);
+            if (conn_index >= 0 && report_len > 0) {
+                bt_on_hid_report(conn_index, report, report_len);
+            }
+            break;
+        }
+
+        case HID_SUBEVENT_CONNECTION_CLOSED: {
+            uint16_t hid_cid = hid_subevent_connection_closed_get_hid_cid(packet);
+            printf("[BTSTACK_HOST] HID connection closed, cid=0x%04X\n", hid_cid);
+
+            // Notify bthid layer
+            int conn_index = get_classic_conn_index(hid_cid);
+            if (conn_index >= 0) {
+                bt_on_disconnect(conn_index);
+            }
+
+            // Free connection slot
+            classic_connection_t* conn = find_classic_connection_by_cid(hid_cid);
+            if (conn) {
+                memset(conn, 0, sizeof(*conn));
+            }
+            break;
+        }
+
+        case HID_SUBEVENT_SET_PROTOCOL_RESPONSE: {
+            uint16_t hid_cid = hid_subevent_set_protocol_response_get_hid_cid(packet);
+            uint8_t handshake = hid_subevent_set_protocol_response_get_handshake_status(packet);
+            hid_protocol_mode_t mode = hid_subevent_set_protocol_response_get_protocol_mode(packet);
+            printf("[BTSTACK_HOST] HID set protocol response: cid=0x%04X handshake=%d mode=%d\n",
+                   hid_cid, handshake, mode);
+            break;
+        }
+
+        default:
+            printf("[BTSTACK_HOST] HID subevent: 0x%02X\n", subevent);
+            break;
+    }
+}
+
+// ============================================================================
+// CLASSIC BT OUTPUT REPORTS
+// ============================================================================
+
+// Send SET_REPORT on control channel with specified report type
+// report_type: 1=Input, 2=Output, 3=Feature
+bool btstack_classic_send_set_report_type(uint8_t conn_index, uint8_t report_type,
+                                           uint8_t report_id, const uint8_t* data, uint16_t len)
+{
+    if (conn_index >= MAX_CLASSIC_CONNECTIONS) return false;
+
+    classic_connection_t* conn = &classic_state.connections[conn_index];
+    if (!conn->active || !conn->hid_ready) return false;
+
+    // Map report type to BTstack enum
+    hid_report_type_t hid_type;
+    switch (report_type) {
+        case 1: hid_type = HID_REPORT_TYPE_INPUT; break;
+        case 2: hid_type = HID_REPORT_TYPE_OUTPUT; break;
+        case 3: hid_type = HID_REPORT_TYPE_FEATURE; break;
+        default: hid_type = HID_REPORT_TYPE_OUTPUT; break;
+    }
+
+    uint8_t status = hid_host_send_set_report(conn->hid_cid, hid_type, report_id, data, len);
+    if (status != ERROR_CODE_SUCCESS) {
+        printf("[BTSTACK_HOST] send_set_report failed: type=%d id=0x%02X status=%d\n",
+               report_type, report_id, status);
+    }
+    return status == ERROR_CODE_SUCCESS;
+}
+
+// Send SET_REPORT on control channel (default to OUTPUT type)
+bool btstack_classic_send_set_report(uint8_t conn_index, uint8_t report_id,
+                                      const uint8_t* data, uint16_t len)
+{
+    return btstack_classic_send_set_report_type(conn_index, 2, report_id, data, len);
+}
+
+// Send DATA on interrupt channel (for regular output reports)
+bool btstack_classic_send_report(uint8_t conn_index, uint8_t report_id,
+                                  const uint8_t* data, uint16_t len)
+{
+    if (conn_index >= MAX_CLASSIC_CONNECTIONS) return false;
+
+    classic_connection_t* conn = &classic_state.connections[conn_index];
+    if (!conn->active || !conn->hid_ready) return false;
+
+    return hid_host_send_report(conn->hid_cid, report_id, data, len) == ERROR_CODE_SUCCESS;
+}
+
+// Get connection info for bthid driver matching (Classic or BLE)
+bool btstack_classic_get_connection(uint8_t conn_index, btstack_classic_conn_info_t* info)
+{
+    if (!info) return false;
+
+    // Check if this is a BLE connection (conn_index >= BLE_CONN_INDEX_OFFSET)
+    if (conn_index >= BLE_CONN_INDEX_OFFSET) {
+        uint8_t ble_index = conn_index - BLE_CONN_INDEX_OFFSET;
+        if (ble_index >= MAX_BLE_CONNECTIONS) return false;
+
+        ble_connection_t* conn = &hid_state.connections[ble_index];
+        if (conn->handle == 0) return false;
+
+        info->active = true;
+        memcpy(info->bd_addr, conn->addr, 6);
+        strncpy(info->name, conn->name, sizeof(info->name) - 1);
+        info->name[sizeof(info->name) - 1] = '\0';
+        // BLE devices don't have class_of_device, set to zeros
+        memset(info->class_of_device, 0, 3);
+        // Use VID/PID from BLE manufacturer data (e.g., Switch 2)
+        info->vendor_id = conn->vid;
+        info->product_id = conn->pid;
+        info->hid_ready = conn->hid_ready;
+
+        return true;
+    }
+
+    // Classic connection
+    if (conn_index >= MAX_CLASSIC_CONNECTIONS) return false;
+
+    classic_connection_t* conn = &classic_state.connections[conn_index];
+    if (!conn->active) return false;
+
+    info->active = conn->active;
+    memcpy(info->bd_addr, conn->addr, 6);
+    strncpy(info->name, conn->name, sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    memcpy(info->class_of_device, conn->class_of_device, 3);
+    info->vendor_id = conn->vendor_id;
+    info->product_id = conn->product_id;
+    info->hid_ready = conn->hid_ready;
+
+    return true;
+}
+
+// Get number of active connections (Classic + BLE)
+uint8_t btstack_classic_get_connection_count(void)
+{
+    uint8_t count = 0;
+    for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+        if (classic_state.connections[i].active) {
+            count++;
+        }
+    }
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (hid_state.connections[i].handle != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// ============================================================================
+// BOND MANAGEMENT
+// ============================================================================
+
+void btstack_host_delete_all_bonds(void)
+{
+    printf("[BTSTACK_HOST] Deleting all Bluetooth bonds...\n");
+
+    // Delete all Classic BT link keys
+    gap_delete_all_link_keys();
+    printf("[BTSTACK_HOST] Classic BT link keys deleted\n");
+
+    // Delete all BLE bonds by re-initializing the LE device database
+    // le_device_db_init() clears all stored bonds
+    int ble_count = le_device_db_count();
+    le_device_db_init();
+    printf("[BTSTACK_HOST] BLE bonds deleted (was %d devices)\n", ble_count);
+
+    printf("[BTSTACK_HOST] All bonds cleared. Devices will need to re-pair.\n");
+}

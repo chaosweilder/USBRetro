@@ -4,8 +4,16 @@
 #include "core/services/players/manager.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
-#include "usb/usbh/btd/btd.h"
 #include "pico/time.h"
+
+// TODO: Get these from BTstack when BT dongle is connected
+static const uint8_t* btd_get_local_bd_addr(void) {
+    static uint8_t dummy_addr[6] = {0};
+    return dummy_addr;
+}
+static bool btd_is_available(void) {
+    return false;  // TODO: Check if BTstack has a dongle connected
+}
 #include "tusb.h"
 #include "host/usbh.h"
 
@@ -197,6 +205,10 @@ void input_sony_ds3(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
         .dev_addr = dev_addr,
         .instance = instance,
         .type = INPUT_TYPE_GAMEPAD,
+        .transport = INPUT_TRANSPORT_USB,
+        .transport = INPUT_TRANSPORT_USB,
+        .transport = INPUT_TRANSPORT_USB,
+        .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 10,  // PS3: Cross, Circle, Square, Triangle, L1, R1, L2, R2, L3, R3
         .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, analog_l, analog_r, 128},

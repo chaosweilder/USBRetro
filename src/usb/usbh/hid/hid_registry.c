@@ -16,10 +16,12 @@
 #include "devices/vendors/8bitdo/8bitdo_pce.h"
 #include "devices/vendors/nintendo/gamecube_adapter.h"
 #include "devices/vendors/nintendo/switch_pro.h"
+#include "devices/vendors/nintendo/switch2_pro.h"
 #include "devices/vendors/hori/hori_horipad.h"
 #include "devices/vendors/hori/hori_pokken.h"
 #include "devices/vendors/logitech/logitech_wingman.h"
 #include "devices/vendors/sega/sega_astrocity.h"
+#include "devices/vendors/google/google_stadia.h"
 // Include other devices here
 
 DeviceInterface* device_interfaces[CONTROLLER_TYPE_COUNT] = {0};
@@ -38,6 +40,8 @@ void register_devices() {
     device_interfaces[CONTROLLER_ASTROCITY] = &sega_astrocity_interface;
     device_interfaces[CONTROLLER_GAMECUBE] = &gamecube_adapter_interface;
     device_interfaces[CONTROLLER_SWITCH] = &switch_pro_interface;
+    device_interfaces[CONTROLLER_SWITCH2] = &switch2_pro_interface;
+    device_interfaces[CONTROLLER_STADIA] = &google_stadia_interface;
     device_interfaces[CONTROLLER_DINPUT] = &hid_gamepad_interface;
     device_interfaces[CONTROLLER_KEYBOARD] = &hid_keyboard_interface;
     device_interfaces[CONTROLLER_MOUSE] = &hid_mouse_interface;
