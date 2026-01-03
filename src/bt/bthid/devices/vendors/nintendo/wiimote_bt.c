@@ -69,7 +69,8 @@
 typedef enum {
     WII_EXT_NONE,
     WII_EXT_NUNCHUK,
-    WII_EXT_CLASSIC,
+    WII_EXT_CLASSIC,       // Classic Controller / Classic Controller Pro (has analog sticks)
+    WII_EXT_CLASSIC_MINI,  // NES/SNES Classic Controller (digital only, no sticks)
 } wiimote_ext_type_t;
 
 // Report IDs
@@ -306,8 +307,13 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                     // Byte 4-5: Buttons (inverted)
                     uint8_t lx = ext[0] & 0x3F;
                     uint8_t ly = ext[1] & 0x3F;
-                    uint8_t rx = ((ext[0] >> 6) & 0x03) | ((ext[1] >> 4) & 0x0C) | ((ext[2] >> 3) & 0x10);
+                    // RX is 5 bits spread across 3 bytes - assemble correctly:
+                    // Byte 0 bits 7:6 = RX[4:3], Byte 1 bits 7:6 = RX[2:1], Byte 2 bit 7 = RX[0]
+                    uint8_t rx = ((ext[0] >> 3) & 0x18) |  // RX[4:3] -> bits 4:3
+                                 ((ext[1] >> 5) & 0x06) |  // RX[2:1] -> bits 2:1
+                                 ((ext[2] >> 7) & 0x01);   // RX[0] -> bit 0
                     uint8_t ry = ext[2] & 0x1F;
+
                     uint8_t lt = ((ext[2] >> 5) & 0x03) | ((ext[3] >> 2) & 0x1C);
                     uint8_t rt = ext[3] & 0x1F;
 
@@ -329,10 +335,32 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                     if (cc_buttons & WII_CC_BTN_A)     buttons |= JP_BUTTON_B2;  // Right
                     if (cc_buttons & WII_CC_BTN_Y)     buttons |= JP_BUTTON_B3;  // Left
                     if (cc_buttons & WII_CC_BTN_X)     buttons |= JP_BUTTON_B4;  // Top
-                    if (cc_buttons & WII_CC_BTN_ZL)    buttons |= JP_BUTTON_L1;
-                    if (cc_buttons & WII_CC_BTN_ZR)    buttons |= JP_BUTTON_R1;
-                    if (cc_buttons & WII_CC_BTN_LT)    buttons |= JP_BUTTON_L2;
-                    if (cc_buttons & WII_CC_BTN_RT)    buttons |= JP_BUTTON_R2;
+                    if (cc_buttons & WII_CC_BTN_LT)    buttons |= JP_BUTTON_L1;
+                    if (cc_buttons & WII_CC_BTN_RT)    buttons |= JP_BUTTON_R1;
+                    if (cc_buttons & WII_CC_BTN_ZL)    buttons |= JP_BUTTON_L2;
+                    if (cc_buttons & WII_CC_BTN_ZR)    buttons |= JP_BUTTON_R2;
+                    if (cc_buttons & WII_CC_BTN_MINUS) buttons |= JP_BUTTON_S1;
+                    if (cc_buttons & WII_CC_BTN_PLUS)  buttons |= JP_BUTTON_S2;
+                    if (cc_buttons & WII_CC_BTN_HOME)  buttons |= JP_BUTTON_A1;
+                    if (cc_buttons & WII_CC_BTN_UP)    buttons |= JP_BUTTON_DU;
+                    if (cc_buttons & WII_CC_BTN_DOWN)  buttons |= JP_BUTTON_DD;
+                    if (cc_buttons & WII_CC_BTN_LEFT)  buttons |= JP_BUTTON_DL;
+                    if (cc_buttons & WII_CC_BTN_RIGHT) buttons |= JP_BUTTON_DR;
+
+                } else if (wii->ext_type == WII_EXT_CLASSIC_MINI) {
+                    // NES/SNES Classic Controller - same button format, no analog sticks
+                    // Byte 4-5: Buttons (inverted)
+                    uint16_t cc_buttons = ~((ext[4] << 0) | (ext[5] << 8));
+
+                    // Nintendo layout: B=bottom, A=right, Y=left, X=top
+                    if (cc_buttons & WII_CC_BTN_B)     buttons |= JP_BUTTON_B1;  // Bottom
+                    if (cc_buttons & WII_CC_BTN_A)     buttons |= JP_BUTTON_B2;  // Right
+                    if (cc_buttons & WII_CC_BTN_Y)     buttons |= JP_BUTTON_B3;  // Left
+                    if (cc_buttons & WII_CC_BTN_X)     buttons |= JP_BUTTON_B4;  // Top
+                    if (cc_buttons & WII_CC_BTN_LT)    buttons |= JP_BUTTON_L1;
+                    if (cc_buttons & WII_CC_BTN_RT)    buttons |= JP_BUTTON_R1;
+                    if (cc_buttons & WII_CC_BTN_ZL)    buttons |= JP_BUTTON_L2;
+                    if (cc_buttons & WII_CC_BTN_ZR)    buttons |= JP_BUTTON_R2;
                     if (cc_buttons & WII_CC_BTN_MINUS) buttons |= JP_BUTTON_S1;
                     if (cc_buttons & WII_CC_BTN_PLUS)  buttons |= JP_BUTTON_S2;
                     if (cc_buttons & WII_CC_BTN_HOME)  buttons |= JP_BUTTON_A1;
@@ -419,6 +447,8 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                 // Nunchuk:           00 00 A4 20 00 00  (or FF 00 when encrypted)
                 // Classic Controller: 00 00 A4 20 01 01  (or FD FD when encrypted)
                 // Classic Pro:       01 00 A4 20 01 01
+                // NES Classic:       02 00 A4 20 01 01
+                // SNES Classic:      03 00 A4 20 01 01
                 // Wii U Pro:         00 00 A4 20 01 20
                 // Key bytes are A4 20 at positions 2-3 (data[8-9])
 
@@ -428,8 +458,14 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                         wii->ext_type = WII_EXT_NUNCHUK;
                     }
                     else if (data[10] == 0x01 && data[11] == 0x01) {
-                        printf("[WIIMOTE] Classic Controller detected! (Pro=%d)\n", data[6] == 0x01);
-                        wii->ext_type = WII_EXT_CLASSIC;
+                        // Byte 0 distinguishes: 00=CC, 01=CC Pro, 02=NES, 03=SNES
+                        if (data[6] >= 0x02) {
+                            printf("[WIIMOTE] NES/SNES Classic Controller detected! (type=%02X)\n", data[6]);
+                            wii->ext_type = WII_EXT_CLASSIC_MINI;
+                        } else {
+                            printf("[WIIMOTE] Classic Controller detected! (Pro=%d)\n", data[6] == 0x01);
+                            wii->ext_type = WII_EXT_CLASSIC;
+                        }
                     }
                     else if (data[10] == 0x01 && data[11] == 0x20) {
                         printf("[WIIMOTE] Wii U Pro extension detected\n");
