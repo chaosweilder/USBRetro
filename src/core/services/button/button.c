@@ -11,6 +11,9 @@
 #include "hardware/sync.h"
 #include "hardware/structs/ioqspi.h"
 #include "hardware/structs/sio.h"
+#if PICO_RP2350
+#include "hardware/regs/sio.h"  // For SIO_GPIO_HI_IN_QSPI_CSN_BITS
+#endif
 #endif
 
 // ============================================================================
@@ -40,7 +43,7 @@ static bool double_click_fired = false; // Track if double-click was just fired
 
 #ifdef USE_BOOTSEL_BUTTON
 // Read BOOTSEL button state (on QSPI CS pin)
-// Based on pico-examples/picoboard/button/button.c
+// Based on pico-examples/picoboard/button/button.c and TinyUSB family.c
 static bool __no_inline_not_in_flash_func(get_bootsel_button)(void)
 {
     const uint CS_PIN_INDEX = 1;
@@ -57,7 +60,14 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void)
     for (volatile int i = 0; i < 1000; ++i);
 
     // Read pin state (button pulls low when pressed)
+    // The QSPI CSN bit is at different positions on RP2040 vs RP2350
+#if PICO_RP2350
+    // RP2350: QSPI CSN is at bit 27
+    bool button_state = !(sio_hw->gpio_hi_in & SIO_GPIO_HI_IN_QSPI_CSN_BITS);
+#else
+    // RP2040: QSPI CSN is at bit 1
     bool button_state = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
+#endif
 
     // Restore chip select to normal operation
     hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,

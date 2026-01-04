@@ -484,7 +484,6 @@ joypad_target_common(joypad_usb_rp2040zero)
 joypad_add_btstack(joypad_usb_rp2040zero)
 
 # --- USB to USB (Waveshare RP2350A) ---
-# Note: Button service disabled - RP2350 BOOTSEL reading requires different code than RP2040
 add_executable(joypad_usb_waveshare_rp2350a)
 target_compile_definitions(joypad_usb_waveshare_rp2350a PRIVATE
     CONFIG_USB=1
@@ -492,7 +491,7 @@ target_compile_definitions(joypad_usb_waveshare_rp2350a PRIVATE
     PICO_DEFAULT_PIO_USB_DP_PIN=12
     BOARD_TUH_RHPORT=1
     WS2812_PIN=16
-    DISABLE_BUTTON_SERVICE=1
+    USE_BOOTSEL_BUTTON=1
 )
 target_sources(joypad_usb_waveshare_rp2350a PUBLIC ${COMMON_SOURCES} ${USB_DEVICE_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c

@@ -387,15 +387,6 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                 uint8_t accel_y = data[4];
                 uint8_t accel_z = data[5];
 
-                // Debug: log accelerometer values periodically
-                static uint32_t last_accel_debug = 0;
-                if (time_us_32() - last_accel_debug > 1000000) {
-                    printf("[WIIMOTE] Accel: X=%d Y=%d Z=%d (x_dev=%d)\n",
-                           accel_x, accel_y, accel_z,
-                           accel_x > 128 ? accel_x - 128 : 128 - accel_x);
-                    last_accel_debug = time_us_32();
-                }
-
                 // Detect orientation from accelerometer (with hysteresis)
                 wiimote_orient_t new_orient = wiimote_detect_orientation(accel_x, wii->orientation);
 

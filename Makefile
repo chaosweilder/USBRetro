@@ -351,21 +351,26 @@ releases: $(RELEASE_APPS)
 # Flash target - flashes most recently built firmware
 .PHONY: flash
 flash:
-	@if [ ! -d "/Volumes/RPI-RP2" ]; then \
-		echo "$(YELLOW)⚠ RPI-RP2 drive not found at /Volumes/RPI-RP2$(NC)"; \
+	@# Check for either RPI-RP2 (RP2040) or RP2350 volume
+	@if [ -d "/Volumes/RP2350" ]; then \
+		VOLUME="/Volumes/RP2350"; \
+	elif [ -d "/Volumes/RPI-RP2" ]; then \
+		VOLUME="/Volumes/RPI-RP2"; \
+	else \
+		echo "$(YELLOW)⚠ No RP2040/RP2350 drive found$(NC)"; \
 		echo "$(YELLOW)  Please put device in bootloader mode:$(NC)"; \
-		echo "$(YELLOW)  - USB2PCE/GCUSB: Hold BOOT button while plugging in USB-C$(NC)"; \
+		echo "$(YELLOW)  - Hold BOOT button while plugging in USB-C$(NC)"; \
 		echo "$(YELLOW)  - Or unplug all USB devices and plug in USB-C$(NC)"; \
 		exit 1; \
-	fi
-	@LATEST_UF2=$$(ls -t $(RELEASE_DIR)/*.uf2 2>/dev/null | head -1); \
+	fi; \
+	LATEST_UF2=$$(ls -t $(RELEASE_DIR)/*.uf2 2>/dev/null | head -1); \
 	if [ -z "$$LATEST_UF2" ]; then \
 		echo "$(YELLOW)⚠ No UF2 files found in $(RELEASE_DIR)$(NC)"; \
 		echo "$(YELLOW)  Run 'make usb2pce' or another build target first$(NC)"; \
 		exit 1; \
 	fi; \
 	echo "$(YELLOW)Flashing $$(basename $$LATEST_UF2)...$(NC)"; \
-	cp "$$LATEST_UF2" /Volumes/RPI-RP2/ && \
+	cp "$$LATEST_UF2" "$$VOLUME/" && \
 	echo "$(GREEN)✓ Firmware flashed successfully!$(NC)" && \
 	echo "$(GREEN)  Device will reboot automatically$(NC)"
 
@@ -441,19 +446,25 @@ flash-controller_macropad:
 # Internal flash helper for specific app (finds most recent matching file)
 .PHONY: _flash_app
 _flash_app:
-	@if [ ! -d "/Volumes/RPI-RP2" ]; then \
-		echo "$(YELLOW)⚠ RPI-RP2 drive not found at /Volumes/RPI-RP2$(NC)"; \
+	@# Determine correct volume based on app name (RP2350 boards use different volume)
+	@if echo "$(APP_NAME)" | grep -q "rp2350"; then \
+		VOLUME="/Volumes/RP2350"; \
+	else \
+		VOLUME="/Volumes/RPI-RP2"; \
+	fi; \
+	if [ ! -d "$$VOLUME" ]; then \
+		echo "$(YELLOW)⚠ $$VOLUME drive not found$(NC)"; \
 		echo "$(YELLOW)  Please put device in bootloader mode$(NC)"; \
 		exit 1; \
-	fi
-	@FLASH_FILE=$$(ls -t $(RELEASE_DIR)/joypad_*$(APP_NAME).uf2 2>/dev/null | head -1); \
+	fi; \
+	FLASH_FILE=$$(ls -t $(RELEASE_DIR)/joypad_*$(APP_NAME).uf2 2>/dev/null | head -1); \
 	if [ -z "$$FLASH_FILE" ]; then \
 		echo "$(YELLOW)⚠ No $(APP_NAME) firmware found in $(RELEASE_DIR)$(NC)"; \
 		echo "$(YELLOW)  Build it first with 'make $(APP_NAME)'$(NC)"; \
 		exit 1; \
 	fi; \
 	echo "$(YELLOW)Flashing $$(basename $$FLASH_FILE)...$(NC)"; \
-	cp "$$FLASH_FILE" /Volumes/RPI-RP2/ && \
+	cp "$$FLASH_FILE" "$$VOLUME/" && \
 	echo "$(GREEN)✓ Firmware flashed successfully!$(NC)" && \
 	echo "$(GREEN)  Device will reboot automatically$(NC)"
 
