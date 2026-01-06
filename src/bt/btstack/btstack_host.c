@@ -2853,16 +2853,6 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                         bthid_update_device_info(conn_index, conn->name,
                                                  conn->vendor_id, conn->product_id);
 
-                        // Get L2CAP CIDs from HID Host for direct L2CAP sending
-                        // HID Host's send_report fails with 0x0C because SET_PROTOCOL fails on Wiimotes
-                        uint16_t ctrl_cid = 0, intr_cid = 0;
-                        if (hid_host_get_l2cap_cids(hid_cid, &ctrl_cid, &intr_cid) == ERROR_CODE_SUCCESS) {
-                            wiimote_conn.control_cid = ctrl_cid;
-                            wiimote_conn.interrupt_cid = intr_cid;
-                            printf("[BTSTACK_HOST] Wiimote: got L2CAP CIDs from HID Host: control=0x%04X interrupt=0x%04X\n",
-                                   ctrl_cid, intr_cid);
-                        }
-
                         printf("[BTSTACK_HOST] Wiimote: conn_index=%d control_cid=0x%04X interrupt_cid=0x%04X using_hid_host=%d\n",
                                conn_index, wiimote_conn.control_cid, wiimote_conn.interrupt_cid, wiimote_conn.using_hid_host);
 
