@@ -157,8 +157,8 @@ static void xbox_ble_process_report(bthid_device_t* device, const uint8_t* data,
     if (btn & XBOX_BLE_Y)              buttons |= JP_BUTTON_B4;
     if (btn & XBOX_BLE_LEFT_SHOULDER)  buttons |= JP_BUTTON_L1;
     if (btn & XBOX_BLE_RIGHT_SHOULDER) buttons |= JP_BUTTON_R1;
-    if (lt > 100)                      buttons |= JP_BUTTON_L2;
-    if (rt > 100)                      buttons |= JP_BUTTON_R2;
+    if (lt > 10)                       buttons |= JP_BUTTON_L2;
+    if (rt > 10)                       buttons |= JP_BUTTON_R2;
     if (btn & XBOX_BLE_BACK)           buttons |= JP_BUTTON_S1;
     if (btn & XBOX_BLE_START)          buttons |= JP_BUTTON_S2;
     if (btn & XBOX_BLE_LEFT_THUMB)     buttons |= JP_BUTTON_L3;
