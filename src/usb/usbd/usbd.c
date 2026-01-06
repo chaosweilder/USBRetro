@@ -27,6 +27,7 @@
 #include "tud_xinput.h"
 #include "tud_xbone.h"
 #include "cdc/cdc.h"
+#include "cdc/cdc_commands.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
 #include "core/buttons.h"
@@ -127,10 +128,62 @@ static uint32_t apply_usbd_profile(const input_event_t* event, profile_output_t*
 
     profile_apply(profile,
                   event->buttons,
-                  event->analog[ANALOG_X], event->analog[ANALOG_Y],
-                  event->analog[ANALOG_Z], event->analog[ANALOG_RX],
-                  event->analog[ANALOG_RZ], event->analog[ANALOG_SLIDER],
+                  event->analog[ANALOG_LX], event->analog[ANALOG_LY],
+                  event->analog[ANALOG_RX], event->analog[ANALOG_RY],
+                  event->analog[ANALOG_L2], event->analog[ANALOG_R2],
                   profile_out);
+
+    // If no built-in profile, apply custom profile button mapping (if active)
+    // Custom profiles work alongside built-in profiles: built-in first, then custom
+    // This allows usb2usb (no built-in profiles) to use custom profiles exclusively
+    if (!profile) {
+        const custom_profile_t* custom = flash_get_active_custom_profile();
+        if (custom) {
+            // Apply custom profile button mapping
+            uint32_t original_buttons = profile_out->buttons;
+            profile_out->buttons = custom_profile_apply_buttons(custom, profile_out->buttons);
+
+            // Debug: log button remapping (only when buttons change)
+            static uint32_t last_logged = 0;
+            if (original_buttons != profile_out->buttons && original_buttons != last_logged) {
+                printf("[usbd] Custom profile applied: 0x%08lX -> 0x%08lX\n",
+                       (unsigned long)original_buttons, (unsigned long)profile_out->buttons);
+                last_logged = original_buttons;
+            }
+
+            // Apply stick sensitivity
+            if (custom->left_stick_sens != 100) {
+                float sens = custom->left_stick_sens / 100.0f;
+                int16_t rel_x = (int16_t)profile_out->left_x - 128;
+                int16_t rel_y = (int16_t)profile_out->left_y - 128;
+                profile_out->left_x = (uint8_t)(128 + (int16_t)(rel_x * sens));
+                profile_out->left_y = (uint8_t)(128 + (int16_t)(rel_y * sens));
+            }
+            if (custom->right_stick_sens != 100) {
+                float sens = custom->right_stick_sens / 100.0f;
+                int16_t rel_x = (int16_t)profile_out->right_x - 128;
+                int16_t rel_y = (int16_t)profile_out->right_y - 128;
+                profile_out->right_x = (uint8_t)(128 + (int16_t)(rel_x * sens));
+                profile_out->right_y = (uint8_t)(128 + (int16_t)(rel_y * sens));
+            }
+
+            // Apply profile flags
+            if (custom->flags & PROFILE_FLAG_SWAP_STICKS) {
+                uint8_t tmp_x = profile_out->left_x;
+                uint8_t tmp_y = profile_out->left_y;
+                profile_out->left_x = profile_out->right_x;
+                profile_out->left_y = profile_out->right_y;
+                profile_out->right_x = tmp_x;
+                profile_out->right_y = tmp_y;
+            }
+            if (custom->flags & PROFILE_FLAG_INVERT_LY) {
+                profile_out->left_y = 255 - profile_out->left_y;
+            }
+            if (custom->flags & PROFILE_FLAG_INVERT_RY) {
+                profile_out->right_y = 255 - profile_out->right_y;
+            }
+        }
+    }
 
     // Copy motion data through (no remapping)
     profile_out->has_motion = event->has_motion;
@@ -150,6 +203,15 @@ static uint32_t apply_usbd_profile(const input_event_t* event, profile_output_t*
             profile_out->pressure[i] = event->pressure[i];
         }
     }
+
+    // Stream output to CDC for web config (if enabled)
+    // This shows the processed output values after profile mapping
+    uint8_t output_axes[6] = {
+        profile_out->left_x, profile_out->left_y,
+        profile_out->right_x, profile_out->right_y,
+        profile_out->l2_analog, profile_out->r2_analog
+    };
+    cdc_commands_send_output_event(profile_out->buttons, output_axes);
 
     return profile_out->buttons;
 }
@@ -347,6 +409,12 @@ static void usbd_on_input(output_target_t output, uint8_t player_index, const in
 
     if (player_index >= USB_MAX_PLAYERS || !event) {
         return;
+    }
+
+    // Check for profile switch combo (SELECT + D-pad Up/Down after 2s hold)
+    // This enables hotkey profile cycling for both built-in and custom profiles
+    if (player_index == 0) {
+        profile_check_switch_combo(event->buttons);
     }
 
     // Queue the event for sending when USB is ready

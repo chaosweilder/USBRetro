@@ -102,7 +102,7 @@ void process_8bitdo_m30(uint8_t dev_addr, uint8_t instance, uint8_t const* repor
       .layout = LAYOUT_SEGA_6BUTTON,  // Genesis/Saturn: Top [X][Y][Z], Bottom [A][B][C]
       .buttons = buttons,
       .button_count = 10,  // A, B, C, X, Y, Z (6 face) + L2, R2, L3, R3
-      .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, 0, 0, 128},
+      .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

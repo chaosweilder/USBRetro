@@ -388,9 +388,9 @@ void __not_in_flash_func(update_output)(void)
     profile_output_t output;
     profile_apply(profile,
                   event->buttons,
-                  event->analog[0], event->analog[1],  // left stick
-                  event->analog[2], event->analog[3],  // right stick
-                  event->analog[5], event->analog[6],  // triggers
+                  event->analog[ANALOG_LX], event->analog[ANALOG_LY],  // left stick
+                  event->analog[ANALOG_RX], event->analog[ANALOG_RY],  // right stick
+                  event->analog[ANALOG_L2], event->analog[ANALOG_R2],  // triggers
                   &output);
 
     // Map profile output to GameCube report

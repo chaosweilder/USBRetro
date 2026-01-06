@@ -309,14 +309,14 @@ static void ds4_process_report(bthid_device_t* device, const uint8_t* data, uint
     ds4->event.buttons = buttons;
 
     // Analog sticks (HID convention: 0=up, 255=down)
-    ds4->event.analog[ANALOG_X] = rpt->x;
-    ds4->event.analog[ANALOG_Y] = rpt->y;
-    ds4->event.analog[ANALOG_Z] = rpt->z;
-    ds4->event.analog[ANALOG_RX] = rpt->rz;
+    ds4->event.analog[ANALOG_LX] = rpt->x;
+    ds4->event.analog[ANALOG_LY] = rpt->y;
+    ds4->event.analog[ANALOG_RX] = rpt->z;
+    ds4->event.analog[ANALOG_RY] = rpt->rz;
 
     // Triggers
-    ds4->event.analog[ANALOG_RZ] = rpt->l2_trigger;
-    ds4->event.analog[ANALOG_SLIDER] = rpt->r2_trigger;
+    ds4->event.analog[ANALOG_L2] = rpt->l2_trigger;
+    ds4->event.analog[ANALOG_R2] = rpt->r2_trigger;
 
     // Motion data (DS4 has full 3-axis gyro and accel)
     // Only available in full report mode (report_len includes gyro/accel)

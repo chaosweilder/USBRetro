@@ -166,12 +166,12 @@ static void stadia_process_report(bthid_device_t* device, const uint8_t* data, u
 
     // Update event
     sd->event.buttons = buttons;
-    sd->event.analog[0] = report.left_x;   // Left stick X
-    sd->event.analog[1] = report.left_y;   // Left stick Y
-    sd->event.analog[2] = report.right_x;  // Right stick X
-    sd->event.analog[3] = report.right_y;  // Right stick Y
-    sd->event.analog[5] = report.l2_trigger;  // L2 analog
-    sd->event.analog[6] = report.r2_trigger;  // R2 analog
+    sd->event.analog[ANALOG_LX] = report.left_x;
+    sd->event.analog[ANALOG_LY] = report.left_y;
+    sd->event.analog[ANALOG_RX] = report.right_x;
+    sd->event.analog[ANALOG_RY] = report.right_y;
+    sd->event.analog[ANALOG_L2] = report.l2_trigger;
+    sd->event.analog[ANALOG_R2] = report.r2_trigger;
 
     // Submit to router
     router_submit_input(&sd->event);

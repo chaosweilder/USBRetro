@@ -473,10 +473,10 @@ static uint8_t parse_extension_to_router(uint8_t* buffer, size_t buffer_size) {
       uint32_t buttons = 0x00000000;
 
       // Analog axes (bytes 3-6)
-      event.analog[ANALOG_X] = buffer[offset + 3];
-      event.analog[ANALOG_Y] = buffer[offset + 4];
-      event.analog[ANALOG_Z] = buffer[offset + 5];
-      event.analog[ANALOG_RX] = buffer[offset + 6];
+      event.analog[ANALOG_LX] = buffer[offset + 3];
+      event.analog[ANALOG_LY] = buffer[offset + 4];
+      event.analog[ANALOG_RX] = buffer[offset + 5];
+      event.analog[ANALOG_RY] = buffer[offset + 6];
 
       // Byte 7: [Left][Right][Down][Up][C][B][A][FIRE]
       uint8_t byte7 = buffer[offset + 7];
@@ -814,12 +814,12 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index) {
   if (event->type == INPUT_TYPE_NONE) return;
 
   uint32_t buttons = event->buttons;
-  uint8_t ax = event->analog[ANALOG_X];   // Left stick X
-  uint8_t ay = event->analog[ANALOG_Y];   // Left stick Y
-  uint8_t az = event->analog[ANALOG_Z];   // Right stick X
-  uint8_t at = event->analog[ANALOG_RX];  // Right stick Y
-  uint8_t l2 = event->analog[ANALOG_RZ];    // L2 trigger (stored in RZ)
-  uint8_t r2 = event->analog[ANALOG_SLIDER]; // R2 trigger (stored in SLIDER)
+  uint8_t ax = event->analog[ANALOG_LX];   // Left stick X
+  uint8_t ay = event->analog[ANALOG_LY];   // Left stick Y
+  uint8_t az = event->analog[ANALOG_RX];   // Right stick X
+  uint8_t at = event->analog[ANALOG_RY];  // Right stick Y
+  uint8_t l2 = event->analog[ANALOG_L2];    // L2 trigger (stored in RZ)
+  uint8_t r2 = event->analog[ANALOG_R2]; // R2 trigger (stored in SLIDER)
 
   // Apply profile remapping
   const profile_t* profile = profile_get_active(OUTPUT_TARGET_3DO);

@@ -109,7 +109,7 @@ void process_logitech_wingman(uint8_t dev_addr, uint8_t instance, uint8_t const*
       .layout = LAYOUT_SEGA_6BUTTON,  // Genesis style: Top [X][Y][Z], Bottom [A][B][C]
       .buttons = buttons,
       .button_count = 7,  // A, B, C, X, Y, Z, L (no R shoulder)
-      .analog = {analog_x1, analog_y1, analog_x2, analog_y2, 128, 0, 0, 128},
+      .analog = {analog_x1, analog_y1, analog_x2, analog_y2, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

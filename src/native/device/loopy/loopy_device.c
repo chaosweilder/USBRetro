@@ -104,27 +104,27 @@ void __not_in_flash_func(core1_task)(void)
 
     if (event1 && playersCount >= 1) {
       profile_apply(profile, event1->buttons,
-                    event1->analog[0], event1->analog[1],
-                    event1->analog[2], event1->analog[3],
-                    event1->analog[5], event1->analog[6], &mapped1);
+                    event1->analog[ANALOG_LX], event1->analog[ANALOG_LY],
+                    event1->analog[ANALOG_RX], event1->analog[ANALOG_RY],
+                    event1->analog[ANALOG_L2], event1->analog[ANALOG_R2], &mapped1);
     }
     if (event2 && playersCount >= 2) {
       profile_apply(profile, event2->buttons,
-                    event2->analog[0], event2->analog[1],
-                    event2->analog[2], event2->analog[3],
-                    event2->analog[5], event2->analog[6], &mapped2);
+                    event2->analog[ANALOG_LX], event2->analog[ANALOG_LY],
+                    event2->analog[ANALOG_RX], event2->analog[ANALOG_RY],
+                    event2->analog[ANALOG_L2], event2->analog[ANALOG_R2], &mapped2);
     }
     if (event3 && playersCount >= 3) {
       profile_apply(profile, event3->buttons,
-                    event3->analog[0], event3->analog[1],
-                    event3->analog[2], event3->analog[3],
-                    event3->analog[5], event3->analog[6], &mapped3);
+                    event3->analog[ANALOG_LX], event3->analog[ANALOG_LY],
+                    event3->analog[ANALOG_RX], event3->analog[ANALOG_RY],
+                    event3->analog[ANALOG_L2], event3->analog[ANALOG_R2], &mapped3);
     }
     if (event4 && playersCount >= 4) {
       profile_apply(profile, event4->buttons,
-                    event4->analog[0], event4->analog[1],
-                    event4->analog[2], event4->analog[3],
-                    event4->analog[5], event4->analog[6], &mapped4);
+                    event4->analog[ANALOG_LX], event4->analog[ANALOG_LY],
+                    event4->analog[ANALOG_RX], event4->analog[ANALOG_RY],
+                    event4->analog[ANALOG_L2], event4->analog[ANALOG_R2], &mapped4);
     }
 
     // Loopy hardware expects active-low (0 = pressed), so invert for output

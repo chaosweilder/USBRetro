@@ -111,7 +111,7 @@ void process_8bitdo_bta(uint8_t dev_addr, uint8_t instance, uint8_t const* repor
         .transport = INPUT_TRANSPORT_USB,
       .buttons = buttons,
       .button_count = 10,  // A, B, X, Y, L, R, L2, R2, L3, R3
-      .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, l2_trigger, r2_trigger, 128},
+      .analog = {analog_1x, analog_1y, analog_2x, analog_2y, l2_trigger, r2_trigger},
       .keys = 0,
     };
     router_submit_input(&event);

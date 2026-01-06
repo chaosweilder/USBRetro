@@ -71,7 +71,7 @@ typedef struct {
     int16_t accum_x;        // Accumulated X delta
     int16_t accum_y;        // Accumulated Y delta
     uint8_t drain_rate;     // How fast to drain per frame (0 = NO drain/hold, >0 = drain rate)
-    uint8_t target_x;       // Target analog axis for X (ANALOG_X, ANALOG_Z, etc.)
+    uint8_t target_x;       // Target analog axis for X (ANALOG_LX, ANALOG_RX, etc.)
     uint8_t target_y;       // Target analog axis for Y (0xFF = disabled)
 } mouse_accumulator_t;
 
@@ -101,7 +101,7 @@ typedef struct {
     // Input transformations (Phase 5)
     uint8_t transform_flags;                      // Which transformations to enable (bitfield)
     uint8_t mouse_drain_rate;                     // Mouse accumulator drain rate (0 = NO drain/hold, >0 = drain)
-    uint8_t mouse_target_x;                       // Target axis for mouse X (default: ANALOG_X)
+    uint8_t mouse_target_x;                       // Target axis for mouse X (default: ANALOG_LX)
     uint8_t mouse_target_y;                       // Target axis for mouse Y (MOUSE_AXIS_DISABLED to disable)
 } router_config_t;
 

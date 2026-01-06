@@ -65,6 +65,10 @@ static absolute_time_t last_change_time;
 static flash_t pending_settings;
 static uint32_t current_sequence = 0;  // Current sequence number
 
+// Runtime settings (loaded on init, updated on save)
+static flash_t runtime_settings;
+static bool runtime_settings_loaded = false;
+
 // Check if BT has active connections
 static bool bt_is_active(void)
 {
@@ -130,6 +134,17 @@ void flash_init(void)
     } else {
         current_sequence = 0;
     }
+
+    // Load runtime settings
+    if (!flash_load(&runtime_settings)) {
+        // No valid settings - initialize defaults
+        memset(&runtime_settings, 0, sizeof(flash_t));
+        runtime_settings.magic = SETTINGS_MAGIC;
+        runtime_settings.sequence = 0;
+        runtime_settings.active_profile_index = 0;  // Default profile
+        runtime_settings.custom_profile_count = 0;
+    }
+    runtime_settings_loaded = true;
 }
 
 // Load settings from flash (returns true if valid settings found)
@@ -323,4 +338,172 @@ void flash_on_bt_disconnect(void)
 bool flash_has_pending_write(void)
 {
     return save_pending || erase_pending;
+}
+
+// ============================================================================
+// Custom Profile Helpers
+// ============================================================================
+
+// Initialize a custom profile to default values (passthrough)
+void custom_profile_init(custom_profile_t* profile, const char* name)
+{
+    if (!profile) return;
+
+    memset(profile, 0, sizeof(custom_profile_t));
+
+    // Copy name (null-terminated)
+    if (name) {
+        strncpy(profile->name, name, CUSTOM_PROFILE_NAME_LEN - 1);
+        profile->name[CUSTOM_PROFILE_NAME_LEN - 1] = '\0';
+    }
+
+    // All buttons passthrough (0x00)
+    memset(profile->button_map, BUTTON_MAP_PASSTHROUGH, CUSTOM_PROFILE_BUTTON_COUNT);
+
+    // Default sensitivities (100 = 1.0x)
+    profile->left_stick_sens = 100;
+    profile->right_stick_sens = 100;
+
+    // No flags set
+    profile->flags = 0;
+}
+
+// Apply button mapping from custom profile
+// Returns remapped buttons, or original if profile is NULL
+uint32_t custom_profile_apply_buttons(const custom_profile_t* profile, uint32_t buttons)
+{
+    if (!profile) return buttons;
+
+    uint32_t output = 0;
+
+    for (int i = 0; i < CUSTOM_PROFILE_BUTTON_COUNT; i++) {
+        // Check if this input button is pressed
+        if (buttons & (1u << i)) {
+            uint8_t mapping = profile->button_map[i];
+
+            if (mapping == BUTTON_MAP_PASSTHROUGH) {
+                // Keep original button
+                output |= (1u << i);
+            } else if (mapping == BUTTON_MAP_DISABLED) {
+                // Button disabled, don't output anything
+            } else if (mapping >= 1 && mapping <= CUSTOM_PROFILE_BUTTON_COUNT) {
+                // Remap to different button (1-based index in mapping)
+                output |= (1u << (mapping - 1));
+            }
+        }
+    }
+
+    return output;
+}
+
+// Get custom profile by index (0-3), returns NULL if index >= count
+const custom_profile_t* flash_get_custom_profile(const flash_t* settings, uint8_t index)
+{
+    if (!settings) return NULL;
+    if (index >= settings->custom_profile_count) return NULL;
+    if (index >= CUSTOM_PROFILE_MAX_COUNT) return NULL;
+
+    return &settings->profiles[index];
+}
+
+// ============================================================================
+// Custom Profile Runtime API
+// ============================================================================
+
+// Get the currently loaded flash settings (for runtime access)
+flash_t* flash_get_settings(void)
+{
+    if (!runtime_settings_loaded) {
+        return NULL;
+    }
+    return &runtime_settings;
+}
+
+// Get active custom profile index (0=Default/passthrough, 1-4=custom profiles)
+uint8_t flash_get_active_profile_index(void)
+{
+    if (!runtime_settings_loaded) {
+        return 0;
+    }
+    return runtime_settings.active_profile_index;
+}
+
+// Set active custom profile index (saves to flash with debouncing)
+void flash_set_active_profile_index(uint8_t index)
+{
+    if (!runtime_settings_loaded) {
+        return;
+    }
+
+    // Validate index (0=default, 1-N=custom profiles)
+    uint8_t max_index = runtime_settings.custom_profile_count;
+    if (index > max_index) {
+        index = max_index;
+    }
+
+    if (runtime_settings.active_profile_index != index) {
+        runtime_settings.active_profile_index = index;
+        flash_save(&runtime_settings);
+
+        printf("[flash] Active profile set to %d\n", index);
+    }
+}
+
+// Get total profile count (1 default + custom_profile_count)
+uint8_t flash_get_total_profile_count(void)
+{
+    if (!runtime_settings_loaded) {
+        return 1;  // At least the default profile
+    }
+    return 1 + runtime_settings.custom_profile_count;
+}
+
+// Get active custom profile (returns NULL for index 0/default or if invalid)
+const custom_profile_t* flash_get_active_custom_profile(void)
+{
+    if (!runtime_settings_loaded) {
+        return NULL;
+    }
+
+    uint8_t index = runtime_settings.active_profile_index;
+    if (index == 0) {
+        return NULL;  // Default profile (passthrough)
+    }
+
+    // Custom profiles are stored at indices 0-3 for user indices 1-4
+    return flash_get_custom_profile(&runtime_settings, index - 1);
+}
+
+// Cycle to next profile (wraps around)
+void flash_cycle_profile_next(void)
+{
+    if (!runtime_settings_loaded) {
+        return;
+    }
+
+    uint8_t total = flash_get_total_profile_count();
+    if (total <= 1) {
+        return;  // No custom profiles to cycle
+    }
+
+    uint8_t current = runtime_settings.active_profile_index;
+    uint8_t next = (current + 1) % total;
+    flash_set_active_profile_index(next);
+}
+
+// Cycle to previous profile (wraps around)
+void flash_cycle_profile_prev(void)
+{
+    if (!runtime_settings_loaded) {
+        return;
+    }
+
+    uint8_t total = flash_get_total_profile_count();
+    if (total <= 1) {
+        return;  // No custom profiles to cycle
+    }
+
+    uint8_t current = runtime_settings.active_profile_index;
+    uint8_t prev = (current == 0) ? (total - 1) : (current - 1);
+    flash_set_active_profile_index(prev);
 }

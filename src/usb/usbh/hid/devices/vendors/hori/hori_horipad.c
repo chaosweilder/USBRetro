@@ -108,7 +108,7 @@ void process_hori_horipad(uint8_t dev_addr, uint8_t instance, uint8_t const* rep
       .layout = LAYOUT_SEGA_6BUTTON,  // Switch 6-btn layout matches Genesis: Top [Y][X][R], Bottom [B][A][ZR]
       .buttons = buttons,
       .button_count = 10,  // B, A, Y, X, L, R, ZL, ZR, L3, R3
-      .analog = {axis_x, axis_y, axis_z, axis_rz, 128, 0, 0, 128},
+      .analog = {axis_x, axis_y, axis_z, axis_rz, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

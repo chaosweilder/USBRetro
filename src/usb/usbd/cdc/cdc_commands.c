@@ -320,6 +320,305 @@ static void cmd_input_stream(const char* json)
     send_ok();
 }
 
+// ============================================================================
+// CUSTOM PROFILE COMMANDS
+// ============================================================================
+
+// Parse JSON array of integers: [1,2,3,...]
+// Returns number of values parsed
+static int json_get_int_array(const char* json, const char* key,
+                               uint8_t* out, int max_count)
+{
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":[", key);
+
+    const char* start = strstr(json, search);
+    if (!start) return 0;
+
+    start += strlen(search);
+    int count = 0;
+
+    while (*start && count < max_count) {
+        // Skip whitespace
+        while (*start == ' ' || *start == '\t') start++;
+
+        if (*start == ']') break;
+
+        // Parse number
+        if (*start == '-' || (*start >= '0' && *start <= '9')) {
+            out[count++] = (uint8_t)atoi(start);
+            // Skip past number
+            while (*start == '-' || (*start >= '0' && *start <= '9')) start++;
+        }
+
+        // Skip comma
+        while (*start == ' ' || *start == '\t') start++;
+        if (*start == ',') start++;
+    }
+
+    return count;
+}
+
+// CPROFILE.LIST - List custom profiles
+static void cmd_cprofile_list(const char* json)
+{
+    (void)json;
+
+    // Use runtime settings for consistency
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        // No runtime settings - return empty list with just default
+        snprintf(response_buf, sizeof(response_buf),
+                 "{\"ok\":true,\"active\":0,\"profiles\":[{\"index\":0,\"name\":\"Default\",\"builtin\":true}]}");
+        send_json(response_buf);
+        return;
+    }
+
+    int pos = snprintf(response_buf, sizeof(response_buf),
+                       "{\"ok\":true,\"active\":%d,\"profiles\":[{\"index\":0,\"name\":\"Default\",\"builtin\":true}",
+                       settings->active_profile_index);
+
+    // Add custom profiles
+    for (int i = 0; i < settings->custom_profile_count && i < CUSTOM_PROFILE_MAX_COUNT; i++) {
+        const custom_profile_t* p = &settings->profiles[i];
+        if (pos < (int)sizeof(response_buf) - 60) {
+            pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
+                            ",{\"index\":%d,\"name\":\"%.11s\",\"builtin\":false}",
+                            i + 1, p->name);
+        }
+    }
+
+    snprintf(response_buf + pos, sizeof(response_buf) - pos, "]}");
+    send_json(response_buf);
+}
+
+// CPROFILE.GET - Get custom profile details
+static void cmd_cprofile_get(const char* json)
+{
+    int index;
+    if (!json_get_int(json, "index", &index)) {
+        send_error("missing index");
+        return;
+    }
+
+    // Index 0 = default (passthrough)
+    if (index == 0) {
+        snprintf(response_buf, sizeof(response_buf),
+                 "{\"ok\":true,\"index\":0,\"name\":\"Default\",\"builtin\":true,"
+                 "\"button_map\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"
+                 "\"left_stick_sens\":100,\"right_stick_sens\":100,\"flags\":0}");
+        send_json(response_buf);
+        return;
+    }
+
+    // Use runtime settings for consistency
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        send_error("flash not initialized");
+        return;
+    }
+
+    // Custom profiles are 1-indexed to user (0 = default)
+    int profile_idx = index - 1;
+    if (profile_idx < 0 || profile_idx >= settings->custom_profile_count) {
+        send_error("invalid index");
+        return;
+    }
+
+    const custom_profile_t* p = &settings->profiles[profile_idx];
+
+    // Build button map array string
+    char map_str[100];
+    int mpos = 0;
+    for (int i = 0; i < CUSTOM_PROFILE_BUTTON_COUNT; i++) {
+        if (i > 0) mpos += snprintf(map_str + mpos, sizeof(map_str) - mpos, ",");
+        mpos += snprintf(map_str + mpos, sizeof(map_str) - mpos, "%d", p->button_map[i]);
+    }
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"index\":%d,\"name\":\"%.11s\",\"builtin\":false,"
+             "\"button_map\":[%s],"
+             "\"left_stick_sens\":%d,\"right_stick_sens\":%d,\"flags\":%d}",
+             index, p->name, map_str,
+             p->left_stick_sens, p->right_stick_sens, p->flags);
+    send_json(response_buf);
+}
+
+// CPROFILE.SET - Create or update custom profile
+static void cmd_cprofile_set(const char* json)
+{
+    int index;
+    if (!json_get_int(json, "index", &index)) {
+        send_error("missing index");
+        return;
+    }
+
+    // Can't modify default profile
+    if (index == 0) {
+        send_error("cannot modify default profile");
+        return;
+    }
+
+    // Use runtime settings to keep in sync with active profile
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        send_error("flash not initialized");
+        return;
+    }
+
+    // Index 255 = create new
+    int profile_idx;
+    if (index == 255) {
+        if (settings->custom_profile_count >= CUSTOM_PROFILE_MAX_COUNT) {
+            send_error("max profiles reached");
+            return;
+        }
+        profile_idx = settings->custom_profile_count;
+        settings->custom_profile_count++;
+        index = profile_idx + 1;  // User-facing index
+    } else {
+        profile_idx = index - 1;
+        if (profile_idx < 0 || profile_idx >= settings->custom_profile_count) {
+            send_error("invalid index");
+            return;
+        }
+    }
+
+    custom_profile_t* p = &settings->profiles[profile_idx];
+
+    // Get name
+    int name_len;
+    const char* name = json_get_string(json, "name", &name_len);
+    if (name && name_len > 0) {
+        int copy_len = name_len < CUSTOM_PROFILE_NAME_LEN - 1 ? name_len : CUSTOM_PROFILE_NAME_LEN - 1;
+        memcpy(p->name, name, copy_len);
+        p->name[copy_len] = '\0';
+    } else if (profile_idx == settings->custom_profile_count - 1) {
+        // New profile without name
+        snprintf(p->name, CUSTOM_PROFILE_NAME_LEN, "Profile %d", index);
+    }
+
+    // Get button map
+    uint8_t button_map[CUSTOM_PROFILE_BUTTON_COUNT];
+    int map_count = json_get_int_array(json, "button_map", button_map, CUSTOM_PROFILE_BUTTON_COUNT);
+    if (map_count == CUSTOM_PROFILE_BUTTON_COUNT) {
+        memcpy(p->button_map, button_map, CUSTOM_PROFILE_BUTTON_COUNT);
+    } else if (map_count == 0 && profile_idx == settings->custom_profile_count - 1) {
+        // New profile - initialize to passthrough
+        memset(p->button_map, BUTTON_MAP_PASSTHROUGH, CUSTOM_PROFILE_BUTTON_COUNT);
+    }
+
+    // Get stick sensitivities
+    int sens;
+    if (json_get_int(json, "left_stick_sens", &sens)) {
+        p->left_stick_sens = (uint8_t)(sens > 200 ? 200 : (sens < 0 ? 0 : sens));
+    } else if (profile_idx == settings->custom_profile_count - 1) {
+        p->left_stick_sens = 100;
+    }
+
+    if (json_get_int(json, "right_stick_sens", &sens)) {
+        p->right_stick_sens = (uint8_t)(sens > 200 ? 200 : (sens < 0 ? 0 : sens));
+    } else if (profile_idx == settings->custom_profile_count - 1) {
+        p->right_stick_sens = 100;
+    }
+
+    // Get flags
+    int flags;
+    if (json_get_int(json, "flags", &flags)) {
+        p->flags = (uint8_t)flags;
+    }
+
+    // Save to flash (runtime settings are already updated)
+    flash_save(settings);
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"index\":%d,\"name\":\"%.11s\"}", index, p->name);
+    send_json(response_buf);
+}
+
+// CPROFILE.DELETE - Delete custom profile
+static void cmd_cprofile_delete(const char* json)
+{
+    int index;
+    if (!json_get_int(json, "index", &index)) {
+        send_error("missing index");
+        return;
+    }
+
+    if (index == 0) {
+        send_error("cannot delete default profile");
+        return;
+    }
+
+    // Use runtime settings to keep in sync
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        send_error("flash not initialized");
+        return;
+    }
+
+    int profile_idx = index - 1;
+    if (profile_idx < 0 || profile_idx >= settings->custom_profile_count) {
+        send_error("invalid index");
+        return;
+    }
+
+    // Shift remaining profiles down
+    for (int i = profile_idx; i < settings->custom_profile_count - 1; i++) {
+        memcpy(&settings->profiles[i], &settings->profiles[i + 1], sizeof(custom_profile_t));
+    }
+    settings->custom_profile_count--;
+
+    // Clear the last slot
+    memset(&settings->profiles[settings->custom_profile_count], 0, sizeof(custom_profile_t));
+
+    // Adjust active profile if needed
+    if (settings->active_profile_index > index) {
+        settings->active_profile_index--;
+    } else if (settings->active_profile_index == index) {
+        settings->active_profile_index = 0;  // Switch to default
+    }
+
+    // Save to flash (runtime settings are already updated)
+    flash_save(settings);
+    send_ok();
+}
+
+// CPROFILE.SELECT - Select active custom profile
+static void cmd_cprofile_select(const char* json)
+{
+    int index;
+    if (!json_get_int(json, "index", &index)) {
+        send_error("missing index");
+        return;
+    }
+
+    // Use runtime API for profile selection (keeps runtime state in sync)
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        send_error("flash not initialized");
+        return;
+    }
+
+    // Validate index (0 = default, 1-N = custom)
+    if (index < 0 || index > settings->custom_profile_count) {
+        send_error("invalid index");
+        return;
+    }
+
+    // Use the runtime API which updates runtime_settings and saves to flash
+    flash_set_active_profile_index((uint8_t)index);
+
+    const char* name = "Default";
+    if (index > 0 && index <= settings->custom_profile_count) {
+        name = settings->profiles[index - 1].name;
+    }
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"index\":%d,\"name\":\"%.11s\"}", index, name);
+    send_json(response_buf);
+}
+
 static void cmd_settings_get(const char* json)
 {
     (void)json;
@@ -434,6 +733,11 @@ static const cmd_entry_t commands[] = {
     {"PROFILE.GET", cmd_profile_get},
     {"PROFILE.SET", cmd_profile_set},
     {"PROFILE.LIST", cmd_profile_list},
+    {"CPROFILE.LIST", cmd_cprofile_list},
+    {"CPROFILE.GET", cmd_cprofile_get},
+    {"CPROFILE.SET", cmd_cprofile_set},
+    {"CPROFILE.DELETE", cmd_cprofile_delete},
+    {"CPROFILE.SELECT", cmd_cprofile_select},
     {"INPUT.STREAM", cmd_input_stream},
     {"SETTINGS.GET", cmd_settings_get},
     {"SETTINGS.RESET", cmd_settings_reset},
@@ -511,8 +815,21 @@ void cdc_commands_send_input_event(uint32_t buttons, const uint8_t* axes)
 {
     if (!protocol_ctx.input_streaming) return;
 
+    // Input axes from input_event_t (now contiguous):
+    // [0]=LX, [1]=LY, [2]=RX, [3]=RY, [4]=L2, [5]=R2
     snprintf(response_buf, sizeof(response_buf),
              "{\"type\":\"input\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d]}",
+             (unsigned long)buttons,
+             axes[0], axes[1], axes[2], axes[3], axes[4], axes[5]);
+    cdc_protocol_send_event(&protocol_ctx, response_buf);
+}
+
+void cdc_commands_send_output_event(uint32_t buttons, const uint8_t* axes)
+{
+    if (!protocol_ctx.input_streaming) return;
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"type\":\"output\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d]}",
              (unsigned long)buttons,
              axes[0], axes[1], axes[2], axes[3], axes[4], axes[5]);
     cdc_protocol_send_event(&protocol_ctx, response_buf);

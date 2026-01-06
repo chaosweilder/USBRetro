@@ -63,8 +63,11 @@ typedef enum {
 } controller_layout_t;
 
 // ============================================================================
-// Analog Axis Indices (matches USB HID usage order)
+// Analog Axis Indices (internal agnostic format)
 // ============================================================================
+//
+// All input drivers normalize controller data to this standard format.
+// This is independent of USB HID or any other protocol.
 //
 // INTERNAL Y-AXIS CONVENTION (IMPORTANT):
 // Joypad uses HID convention internally: Y-axis UP = 0, DOWN = 255
@@ -76,15 +79,15 @@ typedef enum {
 // No Y-axis inversion needed between internal format and HID output.
 
 typedef enum {
-    ANALOG_X = 0,       // Left stick X (0=left, 128=center, 255=right)
-    ANALOG_Y = 1,       // Left stick Y (0=up, 128=center, 255=down) [HID convention]
-    ANALOG_Z = 2,       // Right stick X (0=left, 128=center, 255=right)
-    ANALOG_RX = 3,      // Right stick Y (0=up, 128=center, 255=down) [HID convention]
-    ANALOG_RY = 4,      // Right stick Y (alt)
-    ANALOG_RZ = 5,      // Left trigger (0=released, 255=fully pressed)
-    ANALOG_SLIDER = 6,  // Right trigger (0=released, 255=fully pressed)
-    ANALOG_DIAL = 7,    // Extra slider / Clutch pedal
+    ANALOG_LX = 0,      // Left stick X (0=left, 128=center, 255=right)
+    ANALOG_LY = 1,      // Left stick Y (0=up, 128=center, 255=down) [HID convention]
+    ANALOG_RX = 2,      // Right stick X (0=left, 128=center, 255=right)
+    ANALOG_RY = 3,      // Right stick Y (0=up, 128=center, 255=down) [HID convention]
+    ANALOG_L2 = 4,      // Left trigger (0=released, 255=fully pressed)
+    ANALOG_R2 = 5,      // Right trigger (0=released, 255=fully pressed)
+    ANALOG_COUNT = 6,   // Number of standard analog axes
 } analog_axis_index_t;
+
 
 // ============================================================================
 // Unified Input Event Structure
@@ -102,17 +105,15 @@ typedef struct {
     uint32_t buttons;           // Button bitmap (JP_BUTTON_* defines from globals.h)
     uint32_t keys;              // Keyboard keys (modifier + scancodes)
 
-    // Absolute analog inputs (0-255, centered at 128)
+    // Absolute analog inputs (0-255, centered at 128 for sticks, 0 for triggers)
     // All values are normalized regardless of device type
-    uint8_t analog[8];          // 8 analog axes (see analog_axis_index_t)
-                                // [0] = X-axis (Left stick X / Flight stick X / Steering)
-                                // [1] = Y-axis (Left stick Y / Flight stick Y)
-                                // [2] = Z-axis (Right stick X / Rudder / Twist)
-                                // [3] = RX-axis (Right stick X alt / Throttle)
-                                // [4] = RY-axis (Right stick Y alt)
-                                // [5] = RZ-axis (Triggers / Brake)
-                                // [6] = Slider (Throttle / Gas pedal)
-                                // [7] = Dial (Extra slider / Clutch)
+    uint8_t analog[ANALOG_COUNT]; // Standard analog axes (see analog_axis_index_t)
+                                  // [0] = LX (Left stick X)
+                                  // [1] = LY (Left stick Y)
+                                  // [2] = RX (Right stick X)
+                                  // [3] = RY (Right stick Y)
+                                  // [4] = L2 (Left trigger)
+                                  // [5] = R2 (Right trigger)
 
     // Relative inputs (mouse, spinner, trackball)
     int8_t delta_x;             // Horizontal delta (-127 to +127)
@@ -161,14 +162,13 @@ static inline void init_input_event(input_event_t* event) {
 
     // Set analog axes to appropriate defaults:
     // - Sticks (0-3): centered at 128
-    // - Triggers (5-6): start at 0 (not pressed)
-    for (int i = 0; i < 8; i++) {
-        if (i == 5 || i == 6) {
-            event->analog[i] = 0;  // Triggers: 0 = not pressed
-        } else {
-            event->analog[i] = 128;  // Sticks: 128 = centered
-        }
-    }
+    // - Triggers (4-5): start at 0 (not pressed)
+    event->analog[ANALOG_LX] = 128;
+    event->analog[ANALOG_LY] = 128;
+    event->analog[ANALOG_RX] = 128;
+    event->analog[ANALOG_RY] = 128;
+    event->analog[ANALOG_L2] = 0;
+    event->analog[ANALOG_R2] = 0;
 
     // Set hat switches to centered
     for (int i = 0; i < 4; i++) {
@@ -220,12 +220,12 @@ static inline void gamepad_to_input_event(
     event->keys = keys;
 
     // Map to standard gamepad layout
-    event->analog[ANALOG_X] = analog_1x;      // Left stick X
-    event->analog[ANALOG_Y] = analog_1y;      // Left stick Y
-    event->analog[ANALOG_Z] = analog_2x;      // Right stick X
-    event->analog[ANALOG_RX] = analog_2y;     // Right stick Y
-    event->analog[ANALOG_RZ] = analog_l;      // Left trigger
-    event->analog[ANALOG_SLIDER] = analog_r;  // Right trigger
+    event->analog[ANALOG_LX] = analog_1x;
+    event->analog[ANALOG_LY] = analog_1y;
+    event->analog[ANALOG_RX] = analog_2x;
+    event->analog[ANALOG_RY] = analog_2y;
+    event->analog[ANALOG_L2] = analog_l;
+    event->analog[ANALOG_R2] = analog_r;
 }
 
 // Convert old post_mouse_globals() parameters to input_event_t (for migration)

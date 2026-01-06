@@ -326,12 +326,12 @@ void uart_device_queue_input(const input_event_t* event, uint8_t player_index)
 
         // Check analog axes
         if (!changed) {
-            if (event->analog[ANALOG_X] != prev_analog[player_index][0] ||
-                event->analog[ANALOG_Y] != prev_analog[player_index][1] ||
-                event->analog[ANALOG_Z] != prev_analog[player_index][2] ||
-                event->analog[ANALOG_RX] != prev_analog[player_index][3] ||
-                event->analog[ANALOG_RZ] != prev_analog[player_index][4] ||
-                event->analog[ANALOG_SLIDER] != prev_analog[player_index][5]) {
+            if (event->analog[ANALOG_LX] != prev_analog[player_index][0] ||
+                event->analog[ANALOG_LY] != prev_analog[player_index][1] ||
+                event->analog[ANALOG_RX] != prev_analog[player_index][2] ||
+                event->analog[ANALOG_RY] != prev_analog[player_index][3] ||
+                event->analog[ANALOG_L2] != prev_analog[player_index][4] ||
+                event->analog[ANALOG_R2] != prev_analog[player_index][5]) {
                 changed = true;
             }
         }
@@ -340,12 +340,12 @@ void uart_device_queue_input(const input_event_t* event, uint8_t player_index)
 
         // Update previous state
         prev_buttons[player_index] = event->buttons;
-        prev_analog[player_index][0] = event->analog[ANALOG_X];
-        prev_analog[player_index][1] = event->analog[ANALOG_Y];
-        prev_analog[player_index][2] = event->analog[ANALOG_Z];
-        prev_analog[player_index][3] = event->analog[ANALOG_RX];
-        prev_analog[player_index][4] = event->analog[ANALOG_RZ];
-        prev_analog[player_index][5] = event->analog[ANALOG_SLIDER];
+        prev_analog[player_index][0] = event->analog[ANALOG_LX];
+        prev_analog[player_index][1] = event->analog[ANALOG_LY];
+        prev_analog[player_index][2] = event->analog[ANALOG_RX];
+        prev_analog[player_index][3] = event->analog[ANALOG_RY];
+        prev_analog[player_index][4] = event->analog[ANALOG_L2];
+        prev_analog[player_index][5] = event->analog[ANALOG_R2];
     }
 
     // Build UART event
@@ -353,12 +353,12 @@ void uart_device_queue_input(const input_event_t* event, uint8_t player_index)
     uart_event.player_index = player_index;
     uart_event.device_type = event->type;
     uart_event.buttons = event->buttons;
-    uart_event.analog[0] = event->analog[ANALOG_X];
-    uart_event.analog[1] = event->analog[ANALOG_Y];
-    uart_event.analog[2] = event->analog[ANALOG_Z];
-    uart_event.analog[3] = event->analog[ANALOG_RX];
-    uart_event.analog[4] = event->analog[ANALOG_RZ];
-    uart_event.analog[5] = event->analog[ANALOG_SLIDER];
+    uart_event.analog[0] = event->analog[ANALOG_LX];
+    uart_event.analog[1] = event->analog[ANALOG_LY];
+    uart_event.analog[2] = event->analog[ANALOG_RX];
+    uart_event.analog[3] = event->analog[ANALOG_RY];
+    uart_event.analog[4] = event->analog[ANALOG_L2];
+    uart_event.analog[5] = event->analog[ANALOG_R2];
     uart_event.delta_x = event->delta_x;
     uart_event.delta_y = event->delta_y;
 

@@ -211,7 +211,7 @@ void input_sony_ds3(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
         .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 10,  // PS3: Cross, Circle, Square, Triangle, L1, R1, L2, R2, L3, R3
-        .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, analog_l, analog_r, 128},
+        .analog = {analog_1x, analog_1y, analog_2x, analog_2y, analog_l, analog_r},
         .keys = 0,
         .has_motion = has_motion,
         .accel = {accel_x, accel_y, accel_z},

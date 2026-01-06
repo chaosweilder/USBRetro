@@ -180,10 +180,10 @@ void snes_host_task(void)
         event.instance = 0;
         event.type = INPUT_TYPE_GAMEPAD;
         event.buttons = buttons;
-        event.analog[ANALOG_X] = analog_1x;
-        event.analog[ANALOG_Y] = analog_1y;
-        event.analog[ANALOG_Z] = analog_2x;
-        event.analog[ANALOG_RX] = analog_2y;
+        event.analog[ANALOG_LX] = analog_1x;
+        event.analog[ANALOG_LY] = analog_1y;
+        event.analog[ANALOG_RX] = analog_2x;
+        event.analog[ANALOG_RY] = analog_2y;
 
         // Submit to router
         router_submit_input(&event);

@@ -153,7 +153,7 @@ static void process_google_stadia(uint8_t dev_addr, uint8_t instance, uint8_t co
             .transport = INPUT_TRANSPORT_USB,
             .buttons = buttons,
             .button_count = 14,  // A, B, X, Y, L1, R1, L2, R2, L3, R3, Select, Start, Guide, Capture
-            .analog = {axis_lx, axis_ly, axis_rx, axis_ry, 128, stadia_report.l2_trigger, stadia_report.r2_trigger, 128},
+            .analog = {axis_lx, axis_ly, axis_rx, axis_ry, stadia_report.l2_trigger, stadia_report.r2_trigger},
             .keys = 0,
         };
         router_submit_input(&event);

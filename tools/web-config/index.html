@@ -200,6 +200,26 @@
             transition: width 0.05s;
         }
 
+        .stream-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 900px) {
+            .stream-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .stream-section h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -260,6 +280,230 @@
             gap: 10px;
         }
 
+        /* Profile list */
+        .profile-list {
+            margin-top: 15px;
+        }
+
+        .profile-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: var(--bg-input);
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .profile-item.active {
+            border-left: 3px solid var(--accent);
+        }
+
+        .profile-item-info {
+            flex: 1;
+        }
+
+        .profile-item-name {
+            font-weight: 500;
+        }
+
+        .profile-item-details {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .profile-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .profile-item-actions button {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .modal-close:hover {
+            color: var(--text);
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            padding: 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .form-group input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .form-group input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Button mapping grid */
+        .button-map-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .button-map-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background: var(--bg-input);
+            border-radius: 6px;
+        }
+
+        .button-map-row .input-label {
+            width: 40px;
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .button-map-row select {
+            flex: 1;
+            min-width: 100px;
+            padding: 6px;
+            font-size: 13px;
+        }
+
+        /* Sensitivity sliders */
+        .sensitivity-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+
+        .sensitivity-row span:first-child {
+            width: 80px;
+            font-size: 14px;
+        }
+
+        .sensitivity-row input[type="range"] {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .sensitivity-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .sensitivity-row span:last-child {
+            width: 50px;
+            text-align: right;
+            font-size: 14px;
+        }
+
+        /* Checkbox styling */
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .checkbox-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        .checkbox-row label {
+            font-size: 14px;
+            margin: 0;
+        }
+
+        /* Danger button */
+        button.danger {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        button.danger:hover {
+            background: var(--accent);
+            color: white;
+        }
+
         @media (max-width: 600px) {
             .device-info {
                 grid-template-columns: 1fr;
@@ -273,6 +517,24 @@
 
             select {
                 width: 100%;
+            }
+
+            .button-map-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .profile-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .profile-item-actions {
+                width: 100%;
+            }
+
+            .profile-item-actions button {
+                flex: 1;
             }
         }
     </style>
@@ -361,6 +623,79 @@
                 </div>
             </div>
 
+            <!-- Custom Profiles -->
+            <div class="card" id="customProfilesCard">
+                <h2>Custom Profiles</h2>
+                <div class="card-content">
+                    <div class="row">
+                        <span class="label">Manage Profiles</span>
+                        <button id="newProfileBtn" class="secondary">+ New Profile</button>
+                    </div>
+                    <div id="profileList" class="profile-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profile Editor Modal -->
+            <div id="profileEditorModal" class="modal hidden">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="profileEditorTitle">Edit Profile</h3>
+                        <button class="modal-close" id="closeEditorBtn">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>Profile Name</label>
+                            <input type="text" id="profileNameInput" maxlength="11" placeholder="Profile name">
+                        </div>
+                        <div class="form-group">
+                            <label>Button Mapping</label>
+                            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+                                For each input button, select what output button it should produce.
+                            </p>
+                            <div id="buttonMapContainer" class="button-map-grid">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Stick Sensitivity</label>
+                            <div class="sensitivity-row">
+                                <span>Left Stick</span>
+                                <input type="range" id="leftStickSens" min="0" max="200" value="100">
+                                <span id="leftStickSensValue">100%</span>
+                            </div>
+                            <div class="sensitivity-row">
+                                <span>Right Stick</span>
+                                <input type="range" id="rightStickSens" min="0" max="200" value="100">
+                                <span id="rightStickSensValue">100%</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Options</label>
+                            <div class="checkbox-row">
+                                <input type="checkbox" id="flagSwapSticks">
+                                <label for="flagSwapSticks">Swap Left/Right Sticks</label>
+                            </div>
+                            <div class="checkbox-row">
+                                <input type="checkbox" id="flagInvertLY">
+                                <label for="flagInvertLY">Invert Left Y Axis</label>
+                            </div>
+                            <div class="checkbox-row">
+                                <input type="checkbox" id="flagInvertRY">
+                                <label for="flagInvertRY">Invert Right Y Axis</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="deleteProfileBtn" class="secondary danger">Delete</button>
+                        <div style="flex: 1;"></div>
+                        <button id="cancelEditorBtn" class="secondary">Cancel</button>
+                        <button id="saveProfileBtn">Save Profile</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Wiimote Settings -->
             <div class="card">
                 <h2>Wiimote</h2>
@@ -384,53 +719,110 @@
                 <h2>Input Test</h2>
                 <div class="card-content">
                     <div class="row">
-                        <span class="label">Live Input</span>
+                        <span class="label">Live Stream</span>
                         <button id="streamBtn" class="secondary">Start Streaming</button>
                     </div>
-                    <div class="input-display" id="inputDisplay">
-                        <div class="buttons" id="inputButtons">
-                            <span class="btn">B1</span>
-                            <span class="btn">B2</span>
-                            <span class="btn">B3</span>
-                            <span class="btn">B4</span>
-                            <span class="btn">L1</span>
-                            <span class="btn">R1</span>
-                            <span class="btn">L2</span>
-                            <span class="btn">R2</span>
-                            <span class="btn">S1</span>
-                            <span class="btn">S2</span>
-                            <span class="btn">L3</span>
-                            <span class="btn">R3</span>
-                            <span class="btn">DU</span>
-                            <span class="btn">DD</span>
-                            <span class="btn">DL</span>
-                            <span class="btn">DR</span>
-                            <span class="btn">A1</span>
+                    <div class="stream-container">
+                        <!-- Input (raw controller data) -->
+                        <div class="stream-section">
+                            <h4>Input (Raw)</h4>
+                            <div class="input-display" id="inputDisplay">
+                                <div class="buttons" id="inputButtons">
+                                    <span class="btn">B1</span>
+                                    <span class="btn">B2</span>
+                                    <span class="btn">B3</span>
+                                    <span class="btn">B4</span>
+                                    <span class="btn">L1</span>
+                                    <span class="btn">R1</span>
+                                    <span class="btn">L2</span>
+                                    <span class="btn">R2</span>
+                                    <span class="btn">S1</span>
+                                    <span class="btn">S2</span>
+                                    <span class="btn">L3</span>
+                                    <span class="btn">R3</span>
+                                    <span class="btn">DU</span>
+                                    <span class="btn">DD</span>
+                                    <span class="btn">DL</span>
+                                    <span class="btn">DR</span>
+                                    <span class="btn">A1</span>
+                                </div>
+                                <div class="axes">
+                                    <div class="axis">
+                                        <div>LX: <span id="axisLX">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisLXBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>LY: <span id="axisLY">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisLYBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>RX: <span id="axisRX">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisRXBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>RY: <span id="axisRY">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisRYBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>L2: <span id="axisL2">0</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisL2Bar" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>R2: <span id="axisR2">0</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisR2Bar" style="width: 0%"></div></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="axes">
-                            <div class="axis">
-                                <div>LX: <span id="axisLX">128</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisLXBar" style="width: 50%"></div></div>
-                            </div>
-                            <div class="axis">
-                                <div>LY: <span id="axisLY">128</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisLYBar" style="width: 50%"></div></div>
-                            </div>
-                            <div class="axis">
-                                <div>RX: <span id="axisRX">128</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisRXBar" style="width: 50%"></div></div>
-                            </div>
-                            <div class="axis">
-                                <div>RY: <span id="axisRY">128</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisRYBar" style="width: 50%"></div></div>
-                            </div>
-                            <div class="axis">
-                                <div>L2: <span id="axisL2">0</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisL2Bar" style="width: 0%"></div></div>
-                            </div>
-                            <div class="axis">
-                                <div>R2: <span id="axisR2">0</span></div>
-                                <div class="axis-bar"><div class="axis-bar-fill" id="axisR2Bar" style="width: 0%"></div></div>
+                        <!-- Output (after profile mapping) -->
+                        <div class="stream-section">
+                            <h4>Output (Mapped)</h4>
+                            <div class="input-display" id="outputDisplay">
+                                <div class="buttons" id="outputButtons">
+                                    <span class="btn">B1</span>
+                                    <span class="btn">B2</span>
+                                    <span class="btn">B3</span>
+                                    <span class="btn">B4</span>
+                                    <span class="btn">L1</span>
+                                    <span class="btn">R1</span>
+                                    <span class="btn">L2</span>
+                                    <span class="btn">R2</span>
+                                    <span class="btn">S1</span>
+                                    <span class="btn">S2</span>
+                                    <span class="btn">L3</span>
+                                    <span class="btn">R3</span>
+                                    <span class="btn">DU</span>
+                                    <span class="btn">DD</span>
+                                    <span class="btn">DL</span>
+                                    <span class="btn">DR</span>
+                                    <span class="btn">A1</span>
+                                </div>
+                                <div class="axes">
+                                    <div class="axis">
+                                        <div>LX: <span id="outAxisLX">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisLXBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>LY: <span id="outAxisLY">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisLYBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>RX: <span id="outAxisRX">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisRXBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>RY: <span id="outAxisRY">128</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisRYBar" style="width: 50%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>L2: <span id="outAxisL2">0</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisL2Bar" style="width: 0%"></div></div>
+                                    </div>
+                                    <div class="axis">
+                                        <div>R2: <span id="outAxisR2">0</span></div>
+                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisR2Bar" style="width: 0%"></div></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

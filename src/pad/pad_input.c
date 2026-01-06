@@ -318,8 +318,8 @@ static void pad_poll_device(uint8_t device_index) {
         if (dpad_up && !dpad_down) ry = 255;
         else if (dpad_down && !dpad_up) ry = 0;
 
-        event->analog[ANALOG_Z] = rx;   // Right stick X
-        event->analog[ANALOG_RX] = ry;  // Right stick Y
+        event->analog[ANALOG_RX] = rx;   // Right stick X
+        event->analog[ANALOG_RY] = ry;  // Right stick Y
     }
 
     // Face buttons
@@ -356,19 +356,19 @@ static void pad_poll_device(uint8_t device_index) {
     uint8_t dz = config->deadzone;
 
     if (config->adc_lx >= 0) {
-        event->analog[ANALOG_X] = apply_deadzone(
+        event->analog[ANALOG_LX] = apply_deadzone(
             pad_read_adc(config->adc_lx, config->invert_lx), dz);
     }
     if (config->adc_ly >= 0) {
-        event->analog[ANALOG_Y] = apply_deadzone(
+        event->analog[ANALOG_LY] = apply_deadzone(
             pad_read_adc(config->adc_ly, config->invert_ly), dz);
     }
     if (config->adc_rx >= 0) {
-        event->analog[ANALOG_Z] = apply_deadzone(
+        event->analog[ANALOG_RX] = apply_deadzone(
             pad_read_adc(config->adc_rx, config->invert_rx), dz);
     }
     if (config->adc_ry >= 0) {
-        event->analog[ANALOG_RX] = apply_deadzone(
+        event->analog[ANALOG_RY] = apply_deadzone(
             pad_read_adc(config->adc_ry, config->invert_ry), dz);
     }
 }

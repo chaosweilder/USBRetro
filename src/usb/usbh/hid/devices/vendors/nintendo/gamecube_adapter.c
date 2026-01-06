@@ -107,10 +107,8 @@ void input_gamecube_adapter(uint8_t dev_addr, uint8_t instance, uint8_t const* r
               255 - gamecube_report.port[i].y1,  // Invert Y (Nintendo: up=high, HID: up=low)
               gamecube_report.port[i].x2,
               255 - gamecube_report.port[i].y2,  // Invert Y (Nintendo: up=high, HID: up=low)
-              128,
               zl_axis,
-              zr_axis,
-              128
+              zr_axis
             },
             .keys = 0,
           };

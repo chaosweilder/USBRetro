@@ -274,12 +274,12 @@ static void switch2_ble_process_report(bthid_device_t* device, const uint8_t* da
 
     // Fill event struct
     sw2->event.buttons = buttons;
-    sw2->event.analog[ANALOG_X] = lx;
-    sw2->event.analog[ANALOG_Y] = ly;
-    sw2->event.analog[ANALOG_Z] = rx;
-    sw2->event.analog[ANALOG_RX] = ry;
-    sw2->event.analog[ANALOG_RZ] = lt;
-    sw2->event.analog[ANALOG_SLIDER] = rt;
+    sw2->event.analog[ANALOG_LX] = lx;
+    sw2->event.analog[ANALOG_LY] = ly;
+    sw2->event.analog[ANALOG_RX] = rx;
+    sw2->event.analog[ANALOG_RY] = ry;
+    sw2->event.analog[ANALOG_L2] = lt;
+    sw2->event.analog[ANALOG_R2] = rt;
 
     // Submit to router
     router_submit_input(&sw2->event);

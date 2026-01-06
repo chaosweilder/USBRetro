@@ -468,8 +468,8 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                     if (ext_buttons & WII_BTN_Z) buttons |= JP_BUTTON_L2;
                     if (ext_buttons & WII_BTN_C) buttons |= JP_BUTTON_L1;
 
-                    wii->event.analog[ANALOG_X] = ext[0];
-                    wii->event.analog[ANALOG_Y] = 255 - ext[1];  // Invert Y
+                    wii->event.analog[ANALOG_LX] = ext[0];
+                    wii->event.analog[ANALOG_LY] = 255 - ext[1];  // Invert Y
 
                 } else if (wii->ext_type == WII_EXT_CLASSIC) {
                     // Classic Controller format (6 bytes):
@@ -491,14 +491,14 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                     uint8_t rt = ext[3] & 0x1F;
 
                     // Scale 6-bit sticks (0-63) to 8-bit (0-255)
-                    wii->event.analog[ANALOG_X] = (lx << 2) | (lx >> 4);
-                    wii->event.analog[ANALOG_Y] = 255 - ((ly << 2) | (ly >> 4));  // Invert Y
+                    wii->event.analog[ANALOG_LX] = (lx << 2) | (lx >> 4);
+                    wii->event.analog[ANALOG_LY] = 255 - ((ly << 2) | (ly >> 4));  // Invert Y
                     // Scale 5-bit right stick (0-31) to 8-bit
-                    wii->event.analog[ANALOG_Z] = (rx << 3) | (rx >> 2);
-                    wii->event.analog[ANALOG_RX] = 255 - ((ry << 3) | (ry >> 2));  // Invert Y
+                    wii->event.analog[ANALOG_RX] = (rx << 3) | (rx >> 2);
+                    wii->event.analog[ANALOG_RY] = 255 - ((ry << 3) | (ry >> 2));  // Invert Y
                     // Scale 5-bit triggers (0-31) to 8-bit
-                    wii->event.analog[ANALOG_RZ] = (lt << 3) | (lt >> 2);      // Left trigger
-                    wii->event.analog[ANALOG_SLIDER] = (rt << 3) | (rt >> 2);  // Right trigger
+                    wii->event.analog[ANALOG_L2] = (lt << 3) | (lt >> 2);      // Left trigger
+                    wii->event.analog[ANALOG_R2] = (rt << 3) | (rt >> 2);  // Right trigger
 
                     // Buttons (inverted)
                     uint16_t cc_buttons = ~((ext[4] << 0) | (ext[5] << 8));
@@ -554,10 +554,10 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                     uint8_t whammy = ext[3] & 0x1F;
 
                     // Scale 6-bit stick (0-63) to 8-bit (0-255)
-                    wii->event.analog[ANALOG_X] = (stick_x << 2) | (stick_x >> 4);
-                    wii->event.analog[ANALOG_Y] = 255 - ((stick_y << 2) | (stick_y >> 4));  // Invert Y
+                    wii->event.analog[ANALOG_LX] = (stick_x << 2) | (stick_x >> 4);
+                    wii->event.analog[ANALOG_LY] = 255 - ((stick_y << 2) | (stick_y >> 4));  // Invert Y
                     // Scale 5-bit whammy (0-31) to 8-bit
-                    wii->event.analog[ANALOG_RZ] = (whammy << 3) | (whammy >> 2);
+                    wii->event.analog[ANALOG_L2] = (whammy << 3) | (whammy >> 2);
 
                     // Buttons (inverted)
                     uint16_t gh_buttons = ~((ext[4] << 0) | (ext[5] << 8));
@@ -630,12 +630,12 @@ static void wiimote_process_report(bthid_device_t* device, const uint8_t* data, 
                 } else {
                     // Extension disconnected - clear type and reset analogs to center
                     wii->ext_type = WII_EXT_NONE;
-                    wii->event.analog[ANALOG_X] = 128;
-                    wii->event.analog[ANALOG_Y] = 128;
-                    wii->event.analog[ANALOG_Z] = 128;
+                    wii->event.analog[ANALOG_LX] = 128;
+                    wii->event.analog[ANALOG_LY] = 128;
                     wii->event.analog[ANALOG_RX] = 128;
-                    wii->event.analog[ANALOG_RZ] = 0;
-                    wii->event.analog[ANALOG_SLIDER] = 0;
+                    wii->event.analog[ANALOG_RY] = 128;
+                    wii->event.analog[ANALOG_L2] = 0;
+                    wii->event.analog[ANALOG_R2] = 0;
                     router_submit_input(&wii->event);  // Update output immediately
                     wii->state = WII_STATE_SEND_REPORT_MODE;
                 }

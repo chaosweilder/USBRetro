@@ -134,7 +134,7 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
         .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 10,  // Xbox: A, B, X, Y, LB, RB, LT, RT, L3, R3
-        .analog = {analog_1x, analog_1y, analog_2x, analog_2y, 128, analog_l, analog_r, 128},
+        .analog = {analog_1x, analog_1y, analog_2x, analog_2y, analog_l, analog_r},
         .keys = 0,
         .chatpad = {xid_itf->chatpad_data[0], xid_itf->chatpad_data[1], xid_itf->chatpad_data[2]},
         .has_chatpad = xid_itf->chatpad_enabled && xid_itf->chatpad_inited

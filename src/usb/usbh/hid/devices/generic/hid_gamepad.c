@@ -512,7 +512,7 @@ void process_hid_gamepad(uint8_t dev_addr, uint8_t instance, uint8_t const* repo
       .transport = INPUT_TRANSPORT_USB,
       .buttons = buttons,
       .button_count = buttonCount,
-      .analog = {axis_x, axis_y, axis_z, axis_rz, 128, current.rx, current.ry, 128},
+      .analog = {axis_x, axis_y, axis_z, axis_rz, current.rx, current.ry},
       .keys = 0,
     };
     router_submit_input(&event);

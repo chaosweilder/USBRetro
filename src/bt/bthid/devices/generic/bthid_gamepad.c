@@ -134,10 +134,10 @@ static void gamepad_process_report(bthid_device_t* device, const uint8_t* data, 
     gp->event.buttons = buttons;
 
     // Axes (using analog[] array indices from input_event.h)
-    if (len >= 3) gp->event.analog[ANALOG_X] = data[2];   // Left stick X
-    if (len >= 4) gp->event.analog[ANALOG_Y] = data[3];   // Left stick Y
-    if (len >= 5) gp->event.analog[ANALOG_Z] = data[4];   // Right stick X
-    if (len >= 6) gp->event.analog[ANALOG_RX] = data[5];  // Right stick Y
+    if (len >= 3) gp->event.analog[ANALOG_LX] = data[2];   // Left stick X
+    if (len >= 4) gp->event.analog[ANALOG_LY] = data[3];   // Left stick Y
+    if (len >= 5) gp->event.analog[ANALOG_RX] = data[4];   // Right stick X
+    if (len >= 6) gp->event.analog[ANALOG_RY] = data[5];  // Right stick Y
 
     // Submit to router
     router_submit_input(&gp->event);

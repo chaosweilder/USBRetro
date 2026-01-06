@@ -167,12 +167,12 @@ static void xbox_ble_process_report(bthid_device_t* device, const uint8_t* data,
 
     // Fill event struct
     xbox->event.buttons = buttons;
-    xbox->event.analog[ANALOG_X] = lx;
-    xbox->event.analog[ANALOG_Y] = ly;
-    xbox->event.analog[ANALOG_Z] = rx;
-    xbox->event.analog[ANALOG_RX] = ry;
-    xbox->event.analog[ANALOG_RZ] = lt;
-    xbox->event.analog[ANALOG_SLIDER] = rt;
+    xbox->event.analog[ANALOG_LX] = lx;
+    xbox->event.analog[ANALOG_LY] = ly;
+    xbox->event.analog[ANALOG_RX] = rx;
+    xbox->event.analog[ANALOG_RY] = ry;
+    xbox->event.analog[ANALOG_L2] = lt;
+    xbox->event.analog[ANALOG_R2] = rt;
 
     // Submit to router
     router_submit_input(&xbox->event);

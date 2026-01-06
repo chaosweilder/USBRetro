@@ -473,9 +473,9 @@ void __not_in_flash_func(update_output)(void)
   const profile_t* profile = profile_get_active(OUTPUT_TARGET_NUON);
   profile_output_t mapped;
   profile_apply(profile, event->buttons,
-                event->analog[0], event->analog[1],
-                event->analog[2], event->analog[3],
-                event->analog[5], event->analog[6],  // ANALOG_RZ, ANALOG_SLIDER for L2/R2
+                event->analog[ANALOG_LX], event->analog[ANALOG_LY],
+                event->analog[ANALOG_RX], event->analog[ANALOG_RY],
+                event->analog[ANALOG_L2], event->analog[ANALOG_R2],
                 &mapped);
 
   // Map USBR buttons to Nuon button format

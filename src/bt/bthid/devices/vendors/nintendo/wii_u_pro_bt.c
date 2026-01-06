@@ -365,10 +365,10 @@ static void wii_u_process_report(bthid_device_t* device, const uint8_t* data, ui
 
         // Scale sticks to 8-bit
         // Y axes are inverted on Wii U Pro (up = higher value)
-        wii->event.analog[ANALOG_X] = scale_stick(lx);
-        wii->event.analog[ANALOG_Y] = 255 - scale_stick(ly);  // Invert Y
-        wii->event.analog[ANALOG_Z] = scale_stick(rx);
-        wii->event.analog[ANALOG_RX] = 255 - scale_stick(ry); // Invert Y
+        wii->event.analog[ANALOG_LX] = scale_stick(lx);
+        wii->event.analog[ANALOG_LY] = 255 - scale_stick(ly);  // Invert Y
+        wii->event.analog[ANALOG_RX] = scale_stick(rx);
+        wii->event.analog[ANALOG_RY] = 255 - scale_stick(ry); // Invert Y
 
         router_submit_input(&wii->event);
 
@@ -437,10 +437,10 @@ static void wii_u_process_report(bthid_device_t* device, const uint8_t* data, ui
 
         // Scale sticks to 8-bit
         // Y axes are inverted on Wii U Pro (up = higher value)
-        wii->event.analog[ANALOG_X] = scale_stick(lx);
-        wii->event.analog[ANALOG_Y] = 255 - scale_stick(ly);  // Invert Y
-        wii->event.analog[ANALOG_Z] = scale_stick(rx);
-        wii->event.analog[ANALOG_RX] = 255 - scale_stick(ry); // Invert Y
+        wii->event.analog[ANALOG_LX] = scale_stick(lx);
+        wii->event.analog[ANALOG_LY] = 255 - scale_stick(ly);  // Invert Y
+        wii->event.analog[ANALOG_RX] = scale_stick(rx);
+        wii->event.analog[ANALOG_RY] = 255 - scale_stick(ry); // Invert Y
 
         router_submit_input(&wii->event);
 
@@ -486,10 +486,10 @@ static void wii_u_process_report(bthid_device_t* device, const uint8_t* data, ui
         if (buttons_pressed & WIIU_BTN_RIGHT) buttons |= JP_BUTTON_DR;
 
         wii->event.buttons = buttons;
-        wii->event.analog[ANALOG_X] = scale_stick(lx);
-        wii->event.analog[ANALOG_Y] = 255 - scale_stick(ly);
-        wii->event.analog[ANALOG_Z] = scale_stick(rx);
-        wii->event.analog[ANALOG_RX] = 255 - scale_stick(ry);
+        wii->event.analog[ANALOG_LX] = scale_stick(lx);
+        wii->event.analog[ANALOG_LY] = 255 - scale_stick(ly);
+        wii->event.analog[ANALOG_RX] = scale_stick(rx);
+        wii->event.analog[ANALOG_RY] = 255 - scale_stick(ry);
 
         router_submit_input(&wii->event);
 

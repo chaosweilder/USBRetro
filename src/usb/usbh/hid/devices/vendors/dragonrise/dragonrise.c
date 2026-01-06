@@ -98,7 +98,7 @@ void process_dragonrise(uint8_t dev_addr, uint8_t instance, uint8_t const* repor
       .layout = LAYOUT_UNKNOWN,  // DragonRise uses same report across various controller shapes
       .buttons = buttons,
       .button_count = 8,  // B, A, Y, X, L, R, C, Z (generic clone with 8 buttons in report)
-      .analog = {axis_1x, axis_1y, axis_2x, axis_2y, 128, 0, 0, 128},
+      .analog = {axis_1x, axis_1y, axis_2x, axis_2y, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

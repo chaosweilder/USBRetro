@@ -89,12 +89,12 @@ static void process_packet(uint8_t type, const uint8_t* payload, uint8_t len)
             event.instance = 0;
             event.type = evt->device_type;
             event.buttons = evt->buttons;
-            event.analog[ANALOG_X] = evt->analog[0];
-            event.analog[ANALOG_Y] = evt->analog[1];
-            event.analog[ANALOG_Z] = evt->analog[2];
-            event.analog[ANALOG_RX] = evt->analog[3];
-            event.analog[ANALOG_RZ] = evt->analog[4];
-            event.analog[ANALOG_SLIDER] = evt->analog[5];
+            event.analog[ANALOG_LX] = evt->analog[0];
+            event.analog[ANALOG_LY] = evt->analog[1];
+            event.analog[ANALOG_RX] = evt->analog[2];
+            event.analog[ANALOG_RY] = evt->analog[3];
+            event.analog[ANALOG_L2] = evt->analog[4];
+            event.analog[ANALOG_R2] = evt->analog[5];
             event.delta_x = evt->delta_x;
             event.delta_y = evt->delta_y;
 
@@ -146,12 +146,12 @@ static void process_packet(uint8_t type, const uint8_t* payload, uint8_t len)
             // Convert to input_event_t
             init_input_event(&ai->injection);
             ai->injection.buttons = inject->buttons;
-            ai->injection.analog[ANALOG_X] = inject->analog[0];
-            ai->injection.analog[ANALOG_Y] = inject->analog[1];
-            ai->injection.analog[ANALOG_Z] = inject->analog[2];
-            ai->injection.analog[ANALOG_RX] = inject->analog[3];
-            ai->injection.analog[ANALOG_RZ] = inject->analog[4];
-            ai->injection.analog[ANALOG_SLIDER] = inject->analog[5];
+            ai->injection.analog[ANALOG_LX] = inject->analog[0];
+            ai->injection.analog[ANALOG_LY] = inject->analog[1];
+            ai->injection.analog[ANALOG_RX] = inject->analog[2];
+            ai->injection.analog[ANALOG_RY] = inject->analog[3];
+            ai->injection.analog[ANALOG_L2] = inject->analog[4];
+            ai->injection.analog[ANALOG_R2] = inject->analog[5];
             break;
         }
 

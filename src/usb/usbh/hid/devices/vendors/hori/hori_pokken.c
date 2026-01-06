@@ -92,7 +92,7 @@ void process_hori_pokken(uint8_t dev_addr, uint8_t instance, uint8_t const* repo
         .transport = INPUT_TRANSPORT_USB,
       .buttons = buttons,
       .button_count = 8,  // B, A, Y, X, L, R, ZL, ZR
-      .analog = {axis_x, axis_y, axis_z, axis_rz, 128, 0, 0, 128},
+      .analog = {axis_x, axis_y, axis_z, axis_rz, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

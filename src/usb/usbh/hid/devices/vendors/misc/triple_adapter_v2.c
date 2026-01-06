@@ -99,7 +99,7 @@ void process_triple_adapter_v2(uint8_t dev_addr, uint8_t instance, uint8_t const
         .transport = INPUT_TRANSPORT_USB,
       .buttons = buttons,
       .button_count = 6,  // B, A, Y, X, L, R (SNES-style)
-      .analog = {128, 128, 128, 128, 128, 0, 0, 128},
+      .analog = {128, 128, 128, 128, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

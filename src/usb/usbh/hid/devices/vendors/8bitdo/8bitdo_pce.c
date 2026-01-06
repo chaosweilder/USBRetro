@@ -78,7 +78,7 @@ void process_8bitdo_pce(uint8_t dev_addr, uint8_t instance, uint8_t const* repor
         .transport = INPUT_TRANSPORT_USB,
       .buttons = buttons,
       .button_count = 2,  // PCEngine 2-button: I, II
-      .analog = {128, 128, 128, 128, 128, 0, 0, 128},
+      .analog = {128, 128, 128, 128, 0, 0},
       .keys = 0,
     };
     router_submit_input(&event);

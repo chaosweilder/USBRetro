@@ -21,8 +21,11 @@ void cdc_commands_process(const cdc_packet_t* packet);
 // Get protocol context (for sending events)
 cdc_protocol_t* cdc_commands_get_protocol(void);
 
-// Send input event (if streaming enabled)
+// Send input event (if streaming enabled) - raw input before profile mapping
 void cdc_commands_send_input_event(uint32_t buttons, const uint8_t* axes);
+
+// Send output event (if streaming enabled) - processed output after profile mapping
+void cdc_commands_send_output_event(uint32_t buttons, const uint8_t* axes);
 
 // Send controller connect/disconnect event
 void cdc_commands_send_connect_event(uint8_t port, const char* name,

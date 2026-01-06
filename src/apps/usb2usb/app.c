@@ -156,7 +156,7 @@ void app_init(void)
         .transform_flags = TRANSFORM_FLAGS,
         // Mouse-to-analog: Map mouse to right stick for camera control
         // Useful for accessibility (mouthpad, head tracker) alongside gamepad
-        .mouse_target_x = ANALOG_Z,             // Right stick X
+        .mouse_target_x = ANALOG_RY,            // Right stick X
         .mouse_target_y = MOUSE_AXIS_DISABLED,  // Y disabled (X-only for camera pan)
         .mouse_drain_rate = 0,                  // No drain - hold position until head returns
     };

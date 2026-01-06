@@ -415,10 +415,10 @@ void tdo_host_task(void) {
             event.delta_y = ctrl->mouse_dy;
         } else if (ctrl->type == TDO_DEVICE_JOYSTICK) {
             event.type = INPUT_TYPE_FLIGHTSTICK;
-            event.analog[ANALOG_X] = ctrl->analog_x;
-            event.analog[ANALOG_Y] = ctrl->analog_y;
-            event.analog[ANALOG_Z] = ctrl->analog_z;
-            event.analog[ANALOG_RX] = ctrl->throttle;
+            event.analog[ANALOG_LX] = ctrl->analog_x;
+            event.analog[ANALOG_LY] = ctrl->analog_y;
+            event.analog[ANALOG_RX] = ctrl->analog_z;
+            event.analog[ANALOG_RY] = ctrl->throttle;
         } else {
             event.type = INPUT_TYPE_GAMEPAD;
         }

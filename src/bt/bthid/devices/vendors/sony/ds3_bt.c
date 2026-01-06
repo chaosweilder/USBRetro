@@ -302,14 +302,12 @@ static void ds3_process_report(bthid_device_t* device, const uint8_t* data, uint
 
     // Update event
     ds3->event.buttons = buttons;
-    ds3->event.analog[0] = lx;
-    ds3->event.analog[1] = ly;
-    ds3->event.analog[2] = rx;
-    ds3->event.analog[3] = ry;
-    ds3->event.analog[4] = 128;  // Unused
-    ds3->event.analog[5] = lt;
-    ds3->event.analog[6] = rt;
-    ds3->event.analog[7] = 128;  // Unused
+    ds3->event.analog[ANALOG_LX] = lx;
+    ds3->event.analog[ANALOG_LY] = ly;
+    ds3->event.analog[ANALOG_RX] = rx;
+    ds3->event.analog[ANALOG_RY] = ry;
+    ds3->event.analog[ANALOG_L2] = lt;
+    ds3->event.analog[ANALOG_R2] = rt;
 
     // Motion data
     ds3->event.has_motion = has_motion;

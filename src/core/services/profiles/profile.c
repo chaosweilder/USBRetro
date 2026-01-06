@@ -212,7 +212,26 @@ void profile_set_active(output_target_t output, uint8_t index)
 void profile_cycle_next(output_target_t output)
 {
     uint8_t count = profile_get_count(output);
-    if (count == 0) return;
+
+    // If no built-in profiles, fall back to custom profiles
+    if (count == 0) {
+        uint8_t custom_count = flash_get_total_profile_count();
+        if (custom_count > 1) {
+            flash_cycle_profile_next();
+
+            // Trigger feedback for custom profile switch
+            uint8_t new_index = flash_get_active_profile_index();
+            leds_indicate_profile(new_index);
+            uint8_t player_count = get_player_count ? get_player_count() : 0;
+            profile_indicator_trigger(new_index, player_count);
+
+            // Get profile name for logging
+            const custom_profile_t* custom = flash_get_active_custom_profile();
+            const char* name = custom ? custom->name : "Default";
+            printf("[profile] Custom profile switched to: %s (index=%d)\n", name, new_index);
+        }
+        return;
+    }
 
     uint8_t current = profile_get_active_index(output);
     uint8_t new_index = (current + 1) % count;
@@ -222,7 +241,26 @@ void profile_cycle_next(output_target_t output)
 void profile_cycle_prev(output_target_t output)
 {
     uint8_t count = profile_get_count(output);
-    if (count == 0) return;
+
+    // If no built-in profiles, fall back to custom profiles
+    if (count == 0) {
+        uint8_t custom_count = flash_get_total_profile_count();
+        if (custom_count > 1) {
+            flash_cycle_profile_prev();
+
+            // Trigger feedback for custom profile switch
+            uint8_t new_index = flash_get_active_profile_index();
+            leds_indicate_profile(new_index);
+            uint8_t player_count = get_player_count ? get_player_count() : 0;
+            profile_indicator_trigger(new_index, player_count);
+
+            // Get profile name for logging
+            const custom_profile_t* custom = flash_get_active_custom_profile();
+            const char* name = custom ? custom->name : "Default";
+            printf("[profile] Custom profile switched to: %s (index=%d)\n", name, new_index);
+        }
+        return;
+    }
 
     uint8_t current = profile_get_active_index(output);
     uint8_t new_index = (current == 0) ? (count - 1) : (current - 1);

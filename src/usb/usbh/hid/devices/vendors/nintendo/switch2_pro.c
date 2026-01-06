@@ -343,7 +343,7 @@ void input_switch2_pro(uint8_t dev_addr, uint8_t instance, uint8_t const* report
     .transport = INPUT_TRANSPORT_USB,
     .buttons = buttons,
     .button_count = 10,
-    .analog = {lx, ly, rx, ry, 128, 0, 0, 128},
+    .analog = {lx, ly, rx, ry, 0, 0},
     .keys = 0,
   };
   router_submit_input(&event);

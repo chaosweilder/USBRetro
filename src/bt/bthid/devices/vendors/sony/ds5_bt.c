@@ -401,14 +401,14 @@ static void ds5_process_report(bthid_device_t* device, const uint8_t* data, uint
     ds5->event.buttons = buttons;
 
     // Analog sticks (HID convention: 0=up, 255=down)
-    ds5->event.analog[ANALOG_X] = rpt->x1;
-    ds5->event.analog[ANALOG_Y] = rpt->y1;
-    ds5->event.analog[ANALOG_Z] = rpt->x2;
-    ds5->event.analog[ANALOG_RX] = rpt->y2;
+    ds5->event.analog[ANALOG_LX] = rpt->x1;
+    ds5->event.analog[ANALOG_LY] = rpt->y1;
+    ds5->event.analog[ANALOG_RX] = rpt->x2;
+    ds5->event.analog[ANALOG_RY] = rpt->y2;
 
     // Triggers
-    ds5->event.analog[ANALOG_RZ] = rpt->l2_trigger;
-    ds5->event.analog[ANALOG_SLIDER] = rpt->r2_trigger;
+    ds5->event.analog[ANALOG_L2] = rpt->l2_trigger;
+    ds5->event.analog[ANALOG_R2] = rpt->r2_trigger;
 
     // Motion data (DS5 has full 3-axis gyro and accel)
     // Check if we have enough data for motion

@@ -110,7 +110,7 @@ void process_hid_mouse(uint8_t dev_addr, uint8_t instance, uint8_t const* mouse_
         .transport = INPUT_TRANSPORT_USB,
         .transport = INPUT_TRANSPORT_USB,
     .buttons = buttons,
-    .analog = {128, 128, 128, 128, 128, 0, 0, 128},
+    .analog = {128, 128, 128, 128, 0, 0},
     .delta_x = local_x,
     .delta_y = local_y,
     .delta_wheel = report->wheel,

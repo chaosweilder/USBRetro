@@ -398,6 +398,27 @@ class CDCProtocol {
     async setWiimoteOrient(mode) {
         return this.sendCommand('WIIMOTE.ORIENT.SET', { mode });
     }
+
+    // Custom Profile methods
+    async listCustomProfiles() {
+        return this.sendCommand('CPROFILE.LIST');
+    }
+
+    async getCustomProfile(index) {
+        return this.sendCommand('CPROFILE.GET', { index });
+    }
+
+    async setCustomProfile(index, data) {
+        return this.sendCommand('CPROFILE.SET', { index, ...data });
+    }
+
+    async deleteCustomProfile(index) {
+        return this.sendCommand('CPROFILE.DELETE', { index });
+    }
+
+    async selectCustomProfile(index) {
+        return this.sendCommand('CPROFILE.SELECT', { index });
+    }
 }
 
 // Export for module use
