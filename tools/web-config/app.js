@@ -55,7 +55,6 @@ class JoypadConfigApp {
         this.connectPrompt = document.getElementById('connectPrompt');
         this.mainContent = document.getElementById('mainContent');
         this.modeSelect = document.getElementById('modeSelect');
-        this.profileSelect = document.getElementById('profileSelect');
         this.wiimoteOrientSelect = document.getElementById('wiimoteOrientSelect');
         this.streamBtn = document.getElementById('streamBtn');
         this.logEl = document.getElementById('log');
@@ -84,7 +83,6 @@ class JoypadConfigApp {
         this.connectBtn.addEventListener('click', () => this.toggleConnection());
         this.connectBtn2.addEventListener('click', () => this.connect());
         this.modeSelect.addEventListener('change', (e) => this.setMode(e.target.value));
-        this.profileSelect.addEventListener('change', (e) => this.setProfile(e.target.value));
         this.wiimoteOrientSelect.addEventListener('change', (e) => this.setWiimoteOrient(e.target.value));
         this.streamBtn.addEventListener('click', () => this.toggleStreaming());
 
@@ -184,7 +182,6 @@ class JoypadConfigApp {
             await this.loadDeviceInfo();
             await this.loadModes();
             await this.loadProfiles();
-            await this.loadCustomProfiles();
             await this.loadWiimoteOrient();
 
         } catch (e) {
@@ -245,25 +242,13 @@ class JoypadConfigApp {
     async loadProfiles() {
         try {
             const result = await this.protocol.listProfiles();
-            this.profileSelect.innerHTML = '';
+            this.customProfiles = result.profiles || [];
+            this.activeProfileIndex = result.active || 0;
+            this.renderProfileList();
 
-            if (!result.profiles || result.profiles.length === 0) {
-                const option = document.createElement('option');
-                option.value = '0';
-                option.textContent = 'Default';
-                this.profileSelect.appendChild(option);
-                return;
-            }
-
-            for (const profile of result.profiles) {
-                const option = document.createElement('option');
-                option.value = profile.id;
-                option.textContent = profile.name;
-                option.selected = profile.id === result.active;
-                this.profileSelect.appendChild(option);
-            }
-
-            this.log(`Loaded ${result.profiles.length} profiles, active: ${result.active}`);
+            const builtinCount = this.customProfiles.filter(p => p.builtin).length;
+            const customCount = this.customProfiles.filter(p => !p.builtin).length;
+            this.log(`Loaded ${builtinCount} built-in + ${customCount} custom profiles, active: ${result.active}`);
         } catch (e) {
             this.log(`Failed to load profiles: ${e.message}`, 'error');
         }
@@ -284,13 +269,15 @@ class JoypadConfigApp {
         }
     }
 
-    async setProfile(index) {
+    async selectProfile(index) {
         try {
-            this.log(`Setting profile to ${index}...`);
+            this.log(`Selecting profile ${index}...`);
             const result = await this.protocol.setProfile(parseInt(index));
+            this.activeProfileIndex = index;
+            this.renderProfileList();
             this.log(`Profile set to ${result.name}`, 'success');
         } catch (e) {
-            this.log(`Failed to set profile: ${e.message}`, 'error');
+            this.log(`Failed to select profile: ${e.message}`, 'error');
         }
     }
 
@@ -436,25 +423,13 @@ class JoypadConfigApp {
     }
 
     // ========================================================================
-    // CUSTOM PROFILES
+    // PROFILE MANAGEMENT (unified built-in + custom)
     // ========================================================================
-
-    async loadCustomProfiles() {
-        try {
-            const result = await this.protocol.listCustomProfiles();
-            this.customProfiles = result.profiles || [];
-            this.activeProfileIndex = result.active || 0;
-            this.renderProfileList();
-            this.log(`Loaded ${this.customProfiles.length} custom profiles`);
-        } catch (e) {
-            this.log(`Failed to load custom profiles: ${e.message}`, 'error');
-        }
-    }
 
     renderProfileList() {
         this.profileListEl.innerHTML = '';
 
-        // customProfiles already includes Default (index 0) from CPROFILE.LIST response
+        // customProfiles contains all profiles (built-in + custom) from unified PROFILE.LIST
         for (const profile of this.customProfiles) {
             const item = this.createProfileItem(profile, profile.index === this.activeProfileIndex);
             this.profileListEl.appendChild(item);
@@ -484,12 +459,10 @@ class JoypadConfigApp {
         name.textContent = profile.name;
         info.appendChild(name);
 
-        if (!profile.builtin) {
-            const details = document.createElement('div');
-            details.className = 'profile-item-details';
-            details.textContent = `Index ${profile.index}`;
-            info.appendChild(details);
-        }
+        const details = document.createElement('div');
+        details.className = 'profile-item-details';
+        details.textContent = profile.builtin ? 'Built-in' : 'Custom';
+        info.appendChild(details);
 
         item.appendChild(info);
 
@@ -500,11 +473,21 @@ class JoypadConfigApp {
             const selectBtn = document.createElement('button');
             selectBtn.className = 'secondary';
             selectBtn.textContent = 'Select';
-            selectBtn.addEventListener('click', () => this.selectCustomProfile(profile.index));
+            selectBtn.addEventListener('click', () => this.selectProfile(profile.index));
             actions.appendChild(selectBtn);
         }
 
-        if (!profile.builtin) {
+        // Clone button for built-in profiles
+        if (profile.builtin) {
+            const cloneBtn = document.createElement('button');
+            cloneBtn.className = 'secondary';
+            cloneBtn.textContent = 'Clone';
+            cloneBtn.addEventListener('click', () => this.cloneProfile(profile.index, profile.name));
+            actions.appendChild(cloneBtn);
+        }
+
+        // Edit button for editable (custom) profiles
+        if (profile.editable) {
             const editBtn = document.createElement('button');
             editBtn.className = 'secondary';
             editBtn.textContent = 'Edit';
@@ -516,15 +499,17 @@ class JoypadConfigApp {
         return item;
     }
 
-    async selectCustomProfile(index) {
+    async cloneProfile(index, originalName) {
+        // Generate clone name
+        const cloneName = (originalName + ' Copy').substring(0, 11);
+
         try {
-            this.log(`Selecting profile ${index}...`);
-            const result = await this.protocol.selectCustomProfile(index);
-            this.activeProfileIndex = index;
-            this.renderProfileList();
-            this.log(`Profile set to ${result.name}`, 'success');
+            this.log(`Cloning profile "${originalName}"...`);
+            const result = await this.protocol.cloneProfile(index, cloneName);
+            this.log(`Profile cloned as "${result.name}"`, 'success');
+            await this.loadProfiles();
         } catch (e) {
-            this.log(`Failed to select profile: ${e.message}`, 'error');
+            this.log(`Failed to clone profile: ${e.message}`, 'error');
         }
     }
 
@@ -549,9 +534,9 @@ class JoypadConfigApp {
             document.getElementById('flagInvertLY').checked = false;
             document.getElementById('flagInvertRY').checked = false;
         } else {
-            // Load existing profile
+            // Load existing profile using unified API
             try {
-                const profile = await this.protocol.getCustomProfile(index);
+                const profile = await this.protocol.getProfile(index);
                 this.profileNameInput.value = profile.name || '';
 
                 // Set button map
@@ -613,21 +598,30 @@ class JoypadConfigApp {
             flags
         };
 
+        // Use unified PROFILE.SAVE API
+        // index 255 means create new, otherwise update existing
         const index = this.editingProfileIndex === null ? 255 : this.editingProfileIndex;
 
         try {
             this.log(`Saving profile...`);
-            const result = await this.protocol.setCustomProfile(index, data);
+            const result = await this.protocol.saveProfile(index, data);
             this.log(`Profile "${result.name}" saved`, 'success');
             this.closeProfileEditor();
-            await this.loadCustomProfiles();
+            await this.loadProfiles();
         } catch (e) {
             this.log(`Failed to save profile: ${e.message}`, 'error');
         }
     }
 
     async deleteProfile() {
-        if (this.editingProfileIndex === null || this.editingProfileIndex === 0) {
+        if (this.editingProfileIndex === null) {
+            return;
+        }
+
+        // Check if this is a built-in profile (can't delete)
+        const profile = this.customProfiles.find(p => p.index === this.editingProfileIndex);
+        if (profile && profile.builtin) {
+            alert('Cannot delete built-in profiles');
             return;
         }
 
@@ -637,10 +631,10 @@ class JoypadConfigApp {
 
         try {
             this.log(`Deleting profile ${this.editingProfileIndex}...`);
-            await this.protocol.deleteCustomProfile(this.editingProfileIndex);
+            await this.protocol.deleteProfile(this.editingProfileIndex);
             this.log('Profile deleted', 'success');
             this.closeProfileEditor();
-            await this.loadCustomProfiles();
+            await this.loadProfiles();
         } catch (e) {
             this.log(`Failed to delete profile: ${e.message}`, 'error');
         }

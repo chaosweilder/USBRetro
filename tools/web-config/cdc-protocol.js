@@ -359,16 +359,29 @@ class CDCProtocol {
         return this.sendCommand('MODE.LIST');
     }
 
-    async getProfile() {
-        return this.sendCommand('PROFILE.GET');
+    // Unified Profile methods (supports both built-in and custom profiles)
+    async listProfiles() {
+        return this.sendCommand('PROFILE.LIST');
+    }
+
+    async getProfile(index) {
+        return this.sendCommand('PROFILE.GET', { index });
     }
 
     async setProfile(index) {
         return this.sendCommand('PROFILE.SET', { index });
     }
 
-    async listProfiles() {
-        return this.sendCommand('PROFILE.LIST');
+    async saveProfile(index, data) {
+        return this.sendCommand('PROFILE.SAVE', { index, ...data });
+    }
+
+    async deleteProfile(index) {
+        return this.sendCommand('PROFILE.DELETE', { index });
+    }
+
+    async cloneProfile(index, name) {
+        return this.sendCommand('PROFILE.CLONE', { index, name });
     }
 
     async getSettings() {
@@ -399,26 +412,6 @@ class CDCProtocol {
         return this.sendCommand('WIIMOTE.ORIENT.SET', { mode });
     }
 
-    // Custom Profile methods
-    async listCustomProfiles() {
-        return this.sendCommand('CPROFILE.LIST');
-    }
-
-    async getCustomProfile(index) {
-        return this.sendCommand('CPROFILE.GET', { index });
-    }
-
-    async setCustomProfile(index, data) {
-        return this.sendCommand('CPROFILE.SET', { index, ...data });
-    }
-
-    async deleteCustomProfile(index) {
-        return this.sendCommand('CPROFILE.DELETE', { index });
-    }
-
-    async selectCustomProfile(index) {
-        return this.sendCommand('CPROFILE.SELECT', { index });
-    }
 }
 
 // Export for module use
