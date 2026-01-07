@@ -14,6 +14,9 @@ extern "C" {
 // Initialize command handlers
 void cdc_commands_init(void);
 
+// Task function - call periodically to handle auto-stop rumble, etc.
+void cdc_commands_task(void);
+
 // Process a received command packet
 // Called by protocol layer when valid CMD packet received
 void cdc_commands_process(const cdc_packet_t* packet);

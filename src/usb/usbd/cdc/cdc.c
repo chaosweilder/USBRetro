@@ -195,6 +195,9 @@ void cdc_task(void)
 {
     cdc_protocol_t* proto = cdc_commands_get_protocol();
 
+    // Handle rumble auto-stop etc.
+    cdc_commands_task();
+
     // Process incoming data on the data port
     while (cdc_data_available() > 0) {
         int32_t ch = cdc_data_read_byte();

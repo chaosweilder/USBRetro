@@ -100,6 +100,7 @@ class JoypadConfigApp {
         document.getElementById('resetBtn').addEventListener('click', () => this.factoryReset());
         document.getElementById('rebootBtn').addEventListener('click', () => this.reboot());
         document.getElementById('bootselBtn').addEventListener('click', () => this.bootsel());
+        document.getElementById('rumbleBtn').addEventListener('click', () => this.testRumble());
 
         // Custom profile events
         document.getElementById('newProfileBtn').addEventListener('click', () => this.openProfileEditor(null));
@@ -392,6 +393,17 @@ class JoypadConfigApp {
             this.updateConnectionUI(false);
         } catch (e) {
             this.log(`Failed to enter bootloader: ${e.message}`, 'error');
+        }
+    }
+
+    async testRumble() {
+        try {
+            // Test rumble on player 0 with medium intensity for 500ms
+            this.log('Testing rumble...');
+            await this.protocol.testRumble(0, 200, 200, 500);
+            this.log('Rumble test sent', 'success');
+        } catch (e) {
+            this.log(`Rumble test failed: ${e.message}`, 'error');
         }
     }
 

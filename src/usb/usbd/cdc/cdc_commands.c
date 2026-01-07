@@ -8,9 +8,11 @@
 #include "core/services/storage/flash.h"
 #include "core/services/profiles/profile.h"
 #include "core/services/players/manager.h"
+#include "core/services/players/feedback.h"
 #include "hardware/watchdog.h"
 #include "pico/unique_id.h"
 #include "pico/bootrom.h"
+#include "pico/time.h"
 #include "tusb.h"
 #include <string.h>
 #include <stdio.h>
@@ -906,16 +908,133 @@ static void cmd_players_list(const char* json)
             default: transport = "unknown"; break;
         }
 
+        // Most USB/BT controllers support rumble
+        bool supports_rumble = (players[i].transport == INPUT_TRANSPORT_USB ||
+                               players[i].transport == INPUT_TRANSPORT_BT_CLASSIC ||
+                               players[i].transport == INPUT_TRANSPORT_BT_BLE);
+
         len += snprintf(response_buf + len, sizeof(response_buf) - len,
-                        "%s{\"slot\":%d,\"name\":\"%s\",\"transport\":\"%s\"}",
+                        "%s{\"slot\":%d,\"name\":\"%s\",\"transport\":\"%s\",\"rumble\":%s}",
                         i > 0 ? "," : "",
                         i,
                         name ? name : "Unknown",
-                        transport);
+                        transport,
+                        supports_rumble ? "true" : "false");
     }
 
     snprintf(response_buf + len, sizeof(response_buf) - len, "]}");
     send_json(response_buf);
+}
+
+// ============================================================================
+// RUMBLE TEST
+// ============================================================================
+
+// State for auto-stopping rumble after duration
+static struct {
+    bool active;
+    uint32_t start_ms;
+    uint32_t duration_ms;
+    int player;  // -1 for all players
+} rumble_test_state = {0};
+
+// RUMBLE.TEST - Test rumble on a player's controller
+// {"cmd":"RUMBLE.TEST","player":0,"left":255,"right":255,"duration":500}
+// player: 0-based index, or -1 for all players
+// left/right: motor intensity 0-255
+// duration: optional, ms (default 500, max 5000)
+static void cmd_rumble_test(const char* json)
+{
+    int player = 0;
+    int left = 128;
+    int right = 128;
+    int duration = 500;
+
+    json_get_int(json, "player", &player);
+    json_get_int(json, "left", &left);
+    json_get_int(json, "right", &right);
+    json_get_int(json, "duration", &duration);
+
+    // Clamp values
+    if (left < 0) left = 0;
+    if (left > 255) left = 255;
+    if (right < 0) right = 0;
+    if (right > 255) right = 255;
+    if (duration < 0) duration = 0;
+    if (duration > 5000) duration = 5000;
+
+    printf("[CDC] RUMBLE.TEST: player=%d left=%d right=%d duration=%d\n",
+           player, left, right, duration);
+
+    // Apply rumble via feedback system
+    if (player == -1) {
+        // All players
+        for (int i = 0; i < playersCount && i < MAX_PLAYERS; i++) {
+            if (players[i].dev_addr != -1) {
+                feedback_set_rumble_internal(i, (uint8_t)left, (uint8_t)right);
+            }
+        }
+    } else if (player >= 0 && player < playersCount && players[player].dev_addr != -1) {
+        feedback_set_rumble_internal(player, (uint8_t)left, (uint8_t)right);
+    } else {
+        send_error("invalid player");
+        return;
+    }
+
+    // Store state for auto-stop
+    if (duration > 0 && (left > 0 || right > 0)) {
+        rumble_test_state.active = true;
+        rumble_test_state.start_ms = to_ms_since_boot(get_absolute_time());
+        rumble_test_state.duration_ms = duration;
+        rumble_test_state.player = player;
+    }
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"player\":%d,\"left\":%d,\"right\":%d,\"duration\":%d}",
+             player, left, right, duration);
+    send_json(response_buf);
+}
+
+// RUMBLE.STOP - Stop rumble on a player's controller
+static void cmd_rumble_stop(const char* json)
+{
+    int player = -1;
+    json_get_int(json, "player", &player);
+
+    if (player == -1) {
+        // All players
+        for (int i = 0; i < playersCount && i < MAX_PLAYERS; i++) {
+            if (players[i].dev_addr != -1) {
+                feedback_set_rumble_internal(i, 0, 0);
+            }
+        }
+    } else if (player >= 0 && player < playersCount) {
+        feedback_set_rumble_internal(player, 0, 0);
+    }
+
+    rumble_test_state.active = false;
+    send_ok();
+}
+
+// Call from main loop to auto-stop rumble after duration
+void cdc_commands_task(void)
+{
+    if (rumble_test_state.active) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - rumble_test_state.start_ms >= rumble_test_state.duration_ms) {
+            // Stop rumble
+            if (rumble_test_state.player == -1) {
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    feedback_set_rumble_internal(i, 0, 0);
+                }
+            } else {
+                feedback_set_rumble_internal(rumble_test_state.player, 0, 0);
+            }
+            rumble_test_state.active = false;
+            printf("[CDC] RUMBLE.TEST: auto-stopped after %lu ms\n",
+                   (unsigned long)rumble_test_state.duration_ms);
+        }
+    }
 }
 
 // ============================================================================
@@ -955,6 +1074,9 @@ static const cmd_entry_t commands[] = {
     {"SETTINGS.RESET", cmd_settings_reset},
     // Player management
     {"PLAYERS.LIST", cmd_players_list},
+    // Rumble testing
+    {"RUMBLE.TEST", cmd_rumble_test},
+    {"RUMBLE.STOP", cmd_rumble_stop},
 #ifdef ENABLE_BTSTACK
     {"BT.STATUS", cmd_bt_status},
     {"BT.BONDS.CLEAR", cmd_bt_bonds_clear},

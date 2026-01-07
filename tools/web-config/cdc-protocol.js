@@ -416,6 +416,14 @@ class CDCProtocol {
         return this.sendCommand('PLAYERS.LIST');
     }
 
+    async testRumble(player, left, right, duration = 500) {
+        return this.sendCommand('RUMBLE.TEST', { player, left, right, duration });
+    }
+
+    async stopRumble(player = -1) {
+        return this.sendCommand('RUMBLE.STOP', { player });
+    }
+
 }
 
 // Export for module use
