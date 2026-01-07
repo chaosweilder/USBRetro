@@ -959,9 +959,28 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 if (is_xbox || is_stadia || is_switch2) {
                     printf("[BTSTACK_HOST] BLE controller: %02X:%02X:%02X:%02X:%02X:%02X name=\"%s\"\n",
                            addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], name);
-                    const char* type_str = is_switch2 ? "Switch 2" : (is_xbox ? "Xbox" : "Stadia");
+                    // Determine device name from type and PID
+                    const char* type_str;
+                    if (is_switch2) {
+                        switch (sw2_pid) {
+                            case 0x2066: type_str = "Switch 2 Joy-Con L"; break;
+                            case 0x2067: type_str = "Switch 2 Joy-Con R"; break;
+                            case 0x2069: type_str = "Switch 2 Pro"; break;
+                            case 0x2073: type_str = "Switch 2 GameCube"; break;
+                            default:     type_str = "Switch 2 Controller"; break;
+                        }
+                    } else if (is_xbox) {
+                        type_str = "Xbox BLE";
+                    } else {
+                        type_str = "Stadia";
+                    }
                     printf("[BTSTACK_HOST] Connecting to %s...\n", type_str);
-                    strncpy(hid_state.pending_name, name, sizeof(hid_state.pending_name) - 1);
+                    // Use advertised name if available, otherwise use device type as fallback
+                    if (name[0]) {
+                        strncpy(hid_state.pending_name, name, sizeof(hid_state.pending_name) - 1);
+                    } else {
+                        strncpy(hid_state.pending_name, type_str, sizeof(hid_state.pending_name) - 1);
+                    }
                     hid_state.pending_name[sizeof(hid_state.pending_name) - 1] = '\0';
                     hid_state.pending_is_switch2 = is_switch2;
                     hid_state.pending_vid = sw2_vid;

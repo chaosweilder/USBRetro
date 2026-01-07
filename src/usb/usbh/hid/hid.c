@@ -354,3 +354,13 @@ static void process_generic_report(uint8_t dev_addr, uint8_t instance, uint8_t c
     }
   }
 }
+
+// Get controller type for a device instance
+// Returns -1 if invalid, otherwise returns dev_type_t enum value
+int hid_get_ctrl_type(uint8_t dev_addr, uint8_t instance)
+{
+  if (dev_addr >= MAX_DEVICES || instance >= CFG_TUH_HID) {
+    return -1;
+  }
+  return devices[dev_addr].instances[instance].type;
+}

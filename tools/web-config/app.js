@@ -318,9 +318,33 @@ class JoypadConfigApp {
             await this.protocol.enableInputStream(this.streaming);
             this.streamBtn.textContent = this.streaming ? 'Stop Streaming' : 'Start Streaming';
             this.log(this.streaming ? 'Input streaming enabled' : 'Input streaming disabled');
+
+            if (this.streaming) {
+                // Query connected players when streaming starts
+                await this.refreshPlayers();
+            } else {
+                // Clear player info when streaming stops
+                document.getElementById('inputDeviceName').textContent = '';
+            }
         } catch (e) {
             this.log(`Failed to toggle streaming: ${e.message}`, 'error');
             this.streaming = false;
+        }
+    }
+
+    async refreshPlayers() {
+        try {
+            const result = await this.protocol.getPlayers();
+            if (result.count > 0 && result.players && result.players.length > 0) {
+                // Display first player's controller name
+                const player = result.players[0];
+                document.getElementById('inputDeviceName').textContent = `- ${player.name}`;
+                this.log(`Connected: ${player.name} (${player.transport})`);
+            } else {
+                document.getElementById('inputDeviceName').textContent = '- No controller';
+            }
+        } catch (e) {
+            console.log('Failed to get players:', e.message);
         }
     }
 

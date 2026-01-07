@@ -15,6 +15,17 @@
 #include "usb/usbd/cdc/cdc_commands.h"
 #endif
 
+// Device name lookup for USB HID
+#ifdef CONFIG_USB_HOST
+#include "usb/usbh/hid/hid_registry.h"
+extern int hid_get_ctrl_type(uint8_t dev_addr, uint8_t instance);
+#endif
+
+// Device name lookup for Bluetooth
+#ifdef ENABLE_BTSTACK
+#include "bt/bthid/bthid.h"
+#endif
+
 // ============================================================================
 // AUTO-ASSIGN CONFIGURATION
 // ============================================================================
@@ -39,6 +50,41 @@ static inline bool analog_beyond_threshold(const input_event_t* event) {
         }
     }
     return false;
+}
+
+// ============================================================================
+// DEVICE NAME LOOKUP
+// ============================================================================
+
+// Get device name based on transport type and device address
+// Returns pointer to static string or device name buffer
+static const char* get_device_name(const input_event_t* event) {
+    switch (event->transport) {
+#ifdef CONFIG_USB_HOST
+        case INPUT_TRANSPORT_USB: {
+            int ctrl_type = hid_get_ctrl_type(event->dev_addr, event->instance);
+            if (ctrl_type >= 0 && ctrl_type < CONTROLLER_TYPE_COUNT &&
+                device_interfaces[ctrl_type] && device_interfaces[ctrl_type]->name) {
+                return device_interfaces[ctrl_type]->name;
+            }
+            return "USB Device";
+        }
+#endif
+#ifdef ENABLE_BTSTACK
+        case INPUT_TRANSPORT_BT_CLASSIC:
+        case INPUT_TRANSPORT_BT_BLE: {
+            bthid_device_t* bt_dev = bthid_get_device(event->dev_addr);
+            if (bt_dev && bt_dev->name[0]) {
+                return bt_dev->name;
+            }
+            return "BT Device";
+        }
+#endif
+        case INPUT_TRANSPORT_NATIVE:
+            return "Native";
+        default:
+            return "Unknown";
+    }
 }
 
 // ============================================================================
@@ -398,10 +444,11 @@ static inline void router_simple_mode(const input_event_t* event, output_target_
         uint32_t buttons_pressed = event->buttons | event->keys;
         bool analog_active = analog_beyond_threshold(event);
         if (buttons_pressed || analog_active) {
-            player_index = add_player(event->dev_addr, event->instance, event->transport);
+            const char* device_name = get_device_name(event);
+            player_index = add_player(event->dev_addr, event->instance, event->transport, device_name);
             if (player_index >= 0) {
-                printf(LOG_TAG "Player %d assigned (dev_addr=%d, instance=%d)\n",
-                    player_index + 1, event->dev_addr, event->instance);
+                printf(LOG_TAG "Player %d assigned: %s (dev_addr=%d, instance=%d)\n",
+                    player_index + 1, device_name, event->dev_addr, event->instance);
             }
         }
     }
@@ -434,10 +481,11 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
         uint32_t buttons_pressed = event->buttons | event->keys;
         bool analog_active = analog_beyond_threshold(event);
         if (buttons_pressed || analog_active || event->type == INPUT_TYPE_MOUSE) {
-            player_index = add_player(event->dev_addr, event->instance, event->transport);
+            const char* device_name = get_device_name(event);
+            player_index = add_player(event->dev_addr, event->instance, event->transport, device_name);
             if (player_index >= 0) {
-                printf(LOG_TAG "Player %d assigned in merge mode (dev_addr=%d, instance=%d)\n",
-                    player_index + 1, event->dev_addr, event->instance);
+                printf(LOG_TAG "Player %d assigned in merge mode: %s (dev_addr=%d, instance=%d)\n",
+                    player_index + 1, device_name, event->dev_addr, event->instance);
             }
         }
     }

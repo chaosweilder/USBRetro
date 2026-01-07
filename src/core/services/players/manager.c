@@ -8,6 +8,7 @@
 #include "core/services/profiles/profile_indicator.h"
 #include "core/router/router.h"
 #include <stdio.h>
+#include <string.h>
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -58,6 +59,7 @@ void players_init(void)
     players[i].dev_addr = -1;
     players[i].instance = -1;
     players[i].player_number = 0;
+    players[i].name[0] = '\0';
   }
 
   playersCount = 0;
@@ -91,6 +93,7 @@ void players_init_with_config(const player_config_t* config)
     players[i].dev_addr = -1;
     players[i].instance = -1;
     players[i].player_number = 0;
+    players[i].name[0] = '\0';
   }
 
   playersCount = 0;
@@ -148,7 +151,7 @@ int find_player_index(int dev_addr, int instance)
 }
 
 // Add player to array
-int add_player(int dev_addr, int instance, input_transport_t transport)
+int add_player(int dev_addr, int instance, input_transport_t transport, const char* name)
 {
   int player_index = 0;
 
@@ -178,7 +181,27 @@ int add_player(int dev_addr, int instance, input_transport_t transport)
   players[player_index].player_number = player_index + 1;
   players[player_index].transport = transport;
 
+  // Store device name
+  if (name && name[0]) {
+    strncpy(players[player_index].name, name, PLAYER_NAME_LEN - 1);
+    players[player_index].name[PLAYER_NAME_LEN - 1] = '\0';
+  } else {
+    players[player_index].name[0] = '\0';
+  }
+
   return player_index;
+}
+
+// Get device name for a player slot
+const char* get_player_name(int player_index)
+{
+  if (player_index < 0 || player_index >= MAX_PLAYERS) {
+    return NULL;
+  }
+  if (players[player_index].dev_addr == -1) {
+    return NULL;
+  }
+  return players[player_index].name[0] ? players[player_index].name : "Unknown";
 }
 
 // Remove player(s) by address
@@ -206,6 +229,7 @@ void remove_players_by_address(int dev_addr, int instance)
         players[playersCount - 1].dev_addr = -1;
         players[playersCount - 1].instance = -1;
         players[playersCount - 1].player_number = 0;
+        players[playersCount - 1].name[0] = '\0';
 
         // Decrement playersCount because a player was removed
         playersCount--;
@@ -235,6 +259,7 @@ void remove_players_by_address(int dev_addr, int instance)
         players[i].dev_addr = -1;
         players[i].instance = -1;
         players[i].player_number = 0;
+        players[i].name[0] = '\0';
       }
     }
 

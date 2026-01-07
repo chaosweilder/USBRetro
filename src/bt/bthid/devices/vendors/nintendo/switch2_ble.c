@@ -8,6 +8,7 @@
 
 #include "switch2_ble.h"
 #include "bt/bthid/bthid.h"
+#include "bt/transport/bt_transport.h"
 #include "core/input_event.h"
 #include "core/router/router.h"
 #include "core/buttons.h"
@@ -109,12 +110,20 @@ static bool switch2_ble_init(bthid_device_t* device)
 {
     printf("[SW2_BLE] Init for device: %s\n", device->name);
 
+    // Get PID from connection
+    uint16_t pid = 0;
+    const bt_connection_t* conn = bt_get_connection(device->conn_index);
+    if (conn) {
+        pid = conn->product_id;
+        printf("[SW2_BLE] Device PID: 0x%04X\n", pid);
+    }
+
     // Find free data slot
     for (int i = 0; i < BTHID_MAX_DEVICES; i++) {
         if (!switch2_data[i].initialized) {
             init_input_event(&switch2_data[i].event);
             switch2_data[i].initialized = true;
-            switch2_data[i].pid = 0;  // Will be set when we get VID/PID
+            switch2_data[i].pid = pid;
 
             switch2_data[i].event.type = INPUT_TYPE_GAMEPAD;
             switch2_data[i].event.transport = INPUT_TRANSPORT_BT_BLE;
@@ -244,10 +253,18 @@ static void switch2_ble_process_report(bthid_device_t* device, const uint8_t* da
     if (sw2_buttons & (1 << SW2_X)) buttons |= JP_BUTTON_B4;  // X -> B4 (top)
 
     // Shoulders and triggers
-    if (sw2_buttons & (1 << SW2_L))  buttons |= JP_BUTTON_L1;
-    if (sw2_buttons & (1 << SW2_R))  buttons |= JP_BUTTON_R1;
-    if (sw2_buttons & (1 << SW2_ZL)) buttons |= JP_BUTTON_L2;
-    if (sw2_buttons & (1 << SW2_ZR)) buttons |= JP_BUTTON_R2;
+    // GameCube controller: swap L1/L2 and R1/R2 (L/R bumpers are less important than ZL/ZR triggers)
+    if (sw2->pid == SW2_GC_PID) {
+        if (sw2_buttons & (1 << SW2_L))  buttons |= JP_BUTTON_L2;
+        if (sw2_buttons & (1 << SW2_R))  buttons |= JP_BUTTON_R2;
+        if (sw2_buttons & (1 << SW2_ZL)) buttons |= JP_BUTTON_L1;
+        if (sw2_buttons & (1 << SW2_ZR)) buttons |= JP_BUTTON_R1;
+    } else {
+        if (sw2_buttons & (1 << SW2_L))  buttons |= JP_BUTTON_L1;
+        if (sw2_buttons & (1 << SW2_R))  buttons |= JP_BUTTON_R1;
+        if (sw2_buttons & (1 << SW2_ZL)) buttons |= JP_BUTTON_L2;
+        if (sw2_buttons & (1 << SW2_ZR)) buttons |= JP_BUTTON_R2;
+    }
 
     // Start/Select
     if (sw2_buttons & (1 << SW2_MINUS)) buttons |= JP_BUTTON_S1;

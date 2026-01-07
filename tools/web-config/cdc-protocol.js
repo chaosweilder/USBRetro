@@ -412,6 +412,10 @@ class CDCProtocol {
         return this.sendCommand('WIIMOTE.ORIENT.SET', { mode });
     }
 
+    async getPlayers() {
+        return this.sendCommand('PLAYERS.LIST');
+    }
+
 }
 
 // Export for module use

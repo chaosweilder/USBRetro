@@ -41,12 +41,15 @@ typedef struct {
 // Player_t is only used for device-to-slot mapping.
 // Actual input state is stored in router_outputs[][] (see router.c).
 
+#define PLAYER_NAME_LEN 32
+
 typedef struct TU_ATTR_PACKED
 {
   int dev_addr;               // Device address (-1 = empty slot)
   int instance;               // Device instance/connection index
   int player_number;          // 1-based player number (0 = unassigned)
   input_transport_t transport;   // Connection type (USB, BT, native)
+  char name[PLAYER_NAME_LEN]; // Device name (for CDC events)
 } Player_t;
 
 // ============================================================================
@@ -87,7 +90,10 @@ int find_player_index(int dev_addr, int instance);
 // SHIFT mode: Adds to end (playersCount++)
 // FIXED mode: Finds first empty slot (dev_addr == -1)
 // Returns player index (0-based), or -1 if full
-int add_player(int dev_addr, int instance, input_transport_t transport);
+int add_player(int dev_addr, int instance, input_transport_t transport, const char* name);
+
+// Get device name for a player slot
+const char* get_player_name(int player_index);
 
 // Remove player(s) by address
 // SHIFT mode: Shifts remaining players up, renumbers all

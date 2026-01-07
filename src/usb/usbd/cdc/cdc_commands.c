@@ -7,6 +7,7 @@
 #include "../usbd.h"
 #include "core/services/storage/flash.h"
 #include "core/services/profiles/profile.h"
+#include "core/services/players/manager.h"
 #include "hardware/watchdog.h"
 #include "pico/unique_id.h"
 #include "pico/bootrom.h"
@@ -881,6 +882,43 @@ static void cmd_wiimote_orient_set(const char* json)
 #endif
 
 // ============================================================================
+// PLAYER MANAGEMENT
+// ============================================================================
+
+// PLAYERS.LIST - Get list of connected players/controllers
+static void cmd_players_list(const char* json)
+{
+    (void) json;
+
+    // Build JSON array of players
+    int len = snprintf(response_buf, sizeof(response_buf), "{\"count\":%d,\"players\":[", playersCount);
+
+    for (int i = 0; i < playersCount && i < MAX_PLAYERS; i++) {
+        if (players[i].dev_addr == -1) continue;  // Skip empty slots
+
+        const char* name = get_player_name(i);
+        const char* transport;
+        switch (players[i].transport) {
+            case INPUT_TRANSPORT_USB: transport = "usb"; break;
+            case INPUT_TRANSPORT_BT_CLASSIC: transport = "bt_classic"; break;
+            case INPUT_TRANSPORT_BT_BLE: transport = "bt_ble"; break;
+            case INPUT_TRANSPORT_NATIVE: transport = "native"; break;
+            default: transport = "unknown"; break;
+        }
+
+        len += snprintf(response_buf + len, sizeof(response_buf) - len,
+                        "%s{\"slot\":%d,\"name\":\"%s\",\"transport\":\"%s\"}",
+                        i > 0 ? "," : "",
+                        i,
+                        name ? name : "Unknown",
+                        transport);
+    }
+
+    snprintf(response_buf + len, sizeof(response_buf) - len, "]}");
+    send_json(response_buf);
+}
+
+// ============================================================================
 // COMMAND DISPATCH
 // ============================================================================
 
@@ -915,6 +953,8 @@ static const cmd_entry_t commands[] = {
     {"INPUT.STREAM", cmd_input_stream},
     {"SETTINGS.GET", cmd_settings_get},
     {"SETTINGS.RESET", cmd_settings_reset},
+    // Player management
+    {"PLAYERS.LIST", cmd_players_list},
 #ifdef ENABLE_BTSTACK
     {"BT.STATUS", cmd_bt_status},
     {"BT.BONDS.CLEAR", cmd_bt_bonds_clear},
