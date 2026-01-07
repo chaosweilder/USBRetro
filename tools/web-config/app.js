@@ -378,8 +378,10 @@ class JoypadConfigApp {
             this.updateOutputDisplay(event.buttons, event.axes);
         } else if (event.type === 'connect') {
             this.log(`Controller connected: ${event.name} (${event.vid}:${event.pid})`);
+            document.getElementById('inputDeviceName').textContent = `- ${event.name}`;
         } else if (event.type === 'disconnect') {
             this.log(`Controller disconnected: port ${event.port}`);
+            document.getElementById('inputDeviceName').textContent = '';
         }
     }
 
