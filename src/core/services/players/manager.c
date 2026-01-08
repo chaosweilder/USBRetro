@@ -10,6 +10,11 @@
 #include <stdio.h>
 #include <string.h>
 
+// CDC connection events (optional, for web config)
+#if CFG_TUD_CDC > 0
+#include "usb/usbd/cdc/cdc_commands.h"
+#endif
+
 // ============================================================================
 // GLOBAL VARIABLES
 // ============================================================================
@@ -189,6 +194,13 @@ int add_player(int dev_addr, int instance, input_transport_t transport, const ch
     players[player_index].name[0] = '\0';
   }
 
+  // Send CDC connect event for web config
+#if CFG_TUD_CDC > 0
+  cdc_commands_send_connect_event(player_index,
+      players[player_index].name[0] ? players[player_index].name : "Unknown",
+      0, 0);  // VID/PID not available in Player_t
+#endif
+
   return player_index;
 }
 
@@ -218,6 +230,11 @@ void remove_players_by_address(int dev_addr, int instance)
       {
         printf("[players] Removing player %d (dev_addr=%d, instance=%d, SHIFT mode)\n",
             players[i].player_number, dev_addr, instance);
+
+        // Send CDC disconnect event for web config
+#if CFG_TUD_CDC > 0
+        cdc_commands_send_disconnect_event(i);
+#endif
 
         // Shift all the players after this one up in the array
         for(int j = i; j < playersCount - 1; j++)
@@ -254,6 +271,11 @@ void remove_players_by_address(int dev_addr, int instance)
       {
         printf("[players] Removing player %d (dev_addr=%d, instance=%d, FIXED mode - slot stays empty)\n",
             players[i].player_number, dev_addr, instance);
+
+        // Send CDC disconnect event for web config
+#if CFG_TUD_CDC > 0
+        cdc_commands_send_disconnect_event(i);
+#endif
 
         // Mark slot as empty but don't shift
         players[i].dev_addr = -1;

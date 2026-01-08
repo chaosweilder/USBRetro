@@ -83,8 +83,18 @@ static const char* get_device_name(const input_event_t* event) {
         case INPUT_TRANSPORT_BT_CLASSIC:
         case INPUT_TRANSPORT_BT_BLE: {
             bthid_device_t* bt_dev = bthid_get_device(event->dev_addr);
-            if (bt_dev && bt_dev->name[0]) {
-                return bt_dev->name;
+            if (bt_dev) {
+                // Use driver's friendly name if available
+                if (bt_dev->driver) {
+                    const bthid_driver_t* driver = (const bthid_driver_t*)bt_dev->driver;
+                    if (driver->name) {
+                        return driver->name;
+                    }
+                }
+                // Fallback to raw Bluetooth device name
+                if (bt_dev->name[0]) {
+                    return bt_dev->name;
+                }
             }
             return "BT Device";
         }

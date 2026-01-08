@@ -327,6 +327,7 @@ static bool wiimote_init(bthid_device_t* device)
             init_input_event(&wiimote_data[i].event);
             wiimote_data[i].initialized = true;
             wiimote_data[i].event.type = INPUT_TYPE_GAMEPAD;
+            wiimote_data[i].event.transport = INPUT_TRANSPORT_BT_CLASSIC;
             wiimote_data[i].event.dev_addr = device->conn_index;
             wiimote_data[i].event.instance = 0;
             wiimote_data[i].event.button_count = 11;  // Wiimote has fewer buttons
