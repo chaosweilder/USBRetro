@@ -286,10 +286,24 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
           echo "📦 Preparing v${VERSION} release:"
-          ls -lh releases/
+
+          # Rename files from commit hash to version number
+          # Pattern: joypad_<hash>_<app>_<board>.uf2 -> joypad_<version>_<app>_<board>.uf2
+          cd releases
+          for file in joypad_*_*.uf2; do
+            if [ -f "$file" ]; then
+              # Remove "joypad_" prefix, then remove hash (up to next underscore)
+              temp="${file#joypad_}"
+              suffix="${temp#*_}"
+              newname="joypad_${VERSION}_${suffix}"
+              echo "Renaming: $file -> $newname"
+              mv "$file" "$newname"
+            fi
+          done
+
+          ls -lh *.uf2
 
           # Create checksums
-          cd releases
           sha256sum *.uf2 > checksums.txt
           echo ""
           echo "🔐 Checksums:"
