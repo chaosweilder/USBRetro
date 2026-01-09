@@ -345,6 +345,8 @@ void bt_on_hid_ready(uint8_t conn_index)
     strncpy(device->name, conn->name, BTHID_MAX_NAME_LEN - 1);
     device->name[BTHID_MAX_NAME_LEN - 1] = '\0';
     device->type = classify_device(conn->class_of_device);
+    device->vendor_id = conn->vendor_id;
+    device->product_id = conn->product_id;
 
     char addr_str[18];
     sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",

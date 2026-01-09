@@ -84,6 +84,18 @@ static const char* get_device_name(const input_event_t* event) {
         case INPUT_TRANSPORT_BT_BLE: {
             bthid_device_t* bt_dev = bthid_get_device(event->dev_addr);
             if (bt_dev) {
+                // Check for Switch 2 variants by PID (Nintendo VID 0x057E)
+                if (bt_dev->vendor_id == 0x057E) {
+                    if (bt_dev->product_id == 0x2073) {
+                        return "Switch 2 GameCube";
+                    } else if (bt_dev->product_id == 0x2069) {
+                        return "Switch 2 Pro";
+                    } else if (bt_dev->product_id == 0x2066) {
+                        return "Switch 2 Joy-Con L";
+                    } else if (bt_dev->product_id == 0x2067) {
+                        return "Switch 2 Joy-Con R";
+                    }
+                }
                 // Use driver's friendly name if available
                 if (bt_dev->driver) {
                     const bthid_driver_t* driver = (const bthid_driver_t*)bt_dev->driver;

@@ -67,6 +67,8 @@ typedef struct {
     char name[BTHID_MAX_NAME_LEN];      // Device name
     bthid_device_type_t type;           // Device type
     uint8_t player_index;               // Assigned player slot (-1 if none)
+    uint16_t vendor_id;                 // USB VID (from SDP/manufacturer data)
+    uint16_t product_id;                // USB PID (from SDP/manufacturer data)
 
     // Device driver info
     const void* driver;                 // Pointer to device driver interface
