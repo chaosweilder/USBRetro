@@ -88,9 +88,15 @@ void app_init(void)
 
 void app_task(void)
 {
-    // Forward rumble from Dreamcast to N64 controller
+    // Forward rumble from Dreamcast to feedback system
+    // N64 host reads from feedback_get_state() in its task
+    static uint8_t last_rumble = 0;
     if (dreamcast_output_interface.get_rumble) {
         uint8_t rumble = dreamcast_output_interface.get_rumble();
-        n64_host_set_rumble(0, rumble > 0);
+        if (rumble != last_rumble) {
+            last_rumble = rumble;
+            // Set feedback for player 0 (N64 port 0)
+            feedback_set_rumble(0, rumble, rumble);
+        }
     }
 }
