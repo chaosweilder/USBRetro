@@ -61,6 +61,7 @@ static const profile_t gc_profile_default = {
     .right_stick_modifiers = NULL,
     .right_stick_modifier_count = 0,
     .adaptive_triggers = true,
+    .socd_mode = SOCD_PASSTHROUGH,
 };
 
 // ============================================================================
@@ -102,6 +103,7 @@ static const profile_t gc_profile_snes = {
     .right_stick_modifiers = NULL,
     .right_stick_modifier_count = 0,
     .adaptive_triggers = true,
+    .socd_mode = SOCD_PASSTHROUGH,
 };
 
 // ============================================================================
@@ -151,6 +153,7 @@ static const profile_t gc_profile_ssbm = {
     .right_stick_modifiers = NULL,
     .right_stick_modifier_count = 0,
     .adaptive_triggers = true,
+    .socd_mode = SOCD_NEUTRAL,            // SSBM benefits from neutral SOCD
 };
 
 // ============================================================================
@@ -194,6 +197,7 @@ static const profile_t gc_profile_mkwii = {
     .right_stick_modifiers = NULL,
     .right_stick_modifier_count = 0,
     .adaptive_triggers = true,
+    .socd_mode = SOCD_PASSTHROUGH,
 };
 
 // ============================================================================
@@ -237,6 +241,7 @@ static const profile_t gc_profile_fighting = {
     .right_stick_modifiers = NULL,
     .right_stick_modifier_count = 0,
     .adaptive_triggers = false,
+    .socd_mode = SOCD_UP_PRIORITY,        // Hitbox-style SOCD for fighting games
 };
 
 // ============================================================================

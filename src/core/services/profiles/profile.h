@@ -103,6 +103,18 @@ typedef enum {
 } trigger_behavior_t;
 
 // ============================================================================
+// SOCD (SIMULTANEOUS OPPOSITE CARDINAL DIRECTIONS) HANDLING
+// ============================================================================
+// How to resolve when opposite directions are pressed simultaneously
+
+typedef enum {
+    SOCD_PASSTHROUGH = 0,       // No SOCD cleaning (both directions output)
+    SOCD_NEUTRAL,               // Cancel opposite directions (U+D=neutral, L+R=neutral)
+    SOCD_UP_PRIORITY,           // U+D=U, L+R=neutral (Hitbox style)
+    SOCD_LAST_WIN,              // Last input wins (requires state tracking)
+} socd_mode_t;
+
+// ============================================================================
 // PROFILE STRUCTURE
 // ============================================================================
 
@@ -144,6 +156,9 @@ typedef struct {
 
     // DualSense adaptive trigger feedback
     bool adaptive_triggers;
+
+    // SOCD handling for D-pad (fighting games, Hitbox controllers)
+    socd_mode_t socd_mode;
 
 } profile_t;
 
@@ -397,6 +412,7 @@ uint32_t profile_apply_button_map(const profile_t* profile, uint32_t input_butto
     PROFILE_TRIGGERS_DEFAULT, \
     PROFILE_ANALOG_DEFAULT, \
     .adaptive_triggers = false, \
+    .socd_mode = SOCD_PASSTHROUGH, \
 }
 
 #endif // CORE_PROFILE_H
