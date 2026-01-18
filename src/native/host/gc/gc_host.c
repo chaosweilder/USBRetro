@@ -204,16 +204,9 @@ void gc_host_task(void)
         uint8_t l_analog = report.l_analog;
         uint8_t r_analog = report.r_analog;
 
-        // Only submit if state changed
-        if (buttons == prev_buttons[port] &&
-            stick_x == prev_stick_x[port] &&
-            stick_y == prev_stick_y[port] &&
-            cstick_x == prev_cstick_x[port] &&
-            cstick_y == prev_cstick_y[port] &&
-            l_analog == prev_l_analog[port] &&
-            r_analog == prev_r_analog[port]) {
-            continue;
-        }
+        // Always submit input events - USB output needs continuous reports
+        // even when controller state hasn't changed (held stick positions)
+        // Note: keeping prev_* tracking for future use (e.g., edge detection)
         prev_buttons[port] = buttons;
         prev_stick_x[port] = stick_x;
         prev_stick_y[port] = stick_y;
