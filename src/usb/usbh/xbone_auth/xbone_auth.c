@@ -3,8 +3,8 @@
 // Based on GP2040-CE implementation (gp2040-ce.info)
 
 #include "xbone_auth.h"
-#include "usb/usbd/xgip_protocol.h"
-#include "usb/usbd/tud_xbone.h"
+#include "usb/usbd/drivers/xgip_protocol.h"
+#include "usb/usbd/drivers/tud_xbone.h"
 #include "pico/time.h"
 #include "tusb.h"
 #include <string.h>

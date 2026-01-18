@@ -189,13 +189,24 @@ set(BTSTACK_SOURCES
 # USB Device sources (for USB output apps)
 set(USB_DEVICE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/usbd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/hid_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/xinput_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/switch_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/ps3_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/psclassic_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/ps4_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/xid_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/xbone_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/xac_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/kbmouse_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/gc_adapter_mode.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc_protocol.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc_commands.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/tud_xid.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/tud_xinput.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/tud_xbone.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/xgip_protocol.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/drivers/tud_xid.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/drivers/tud_xinput.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/drivers/tud_xbone.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/drivers/xgip_protocol.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/kbmouse/kbmouse.c
 )
 
