@@ -301,8 +301,15 @@ static void map_usbr_to_gc_report(const profile_output_t* output, gc_report_t* r
 
     // Shoulder buttons
     report->z = ((buttons & GC_BUTTON_Z) != 0) ? 1 : 0;
-    report->l = ((buttons & GC_BUTTON_L) != 0) ? 1 : 0;
-    report->r = ((buttons & GC_BUTTON_R) != 0) ? 1 : 0;
+
+    // L/R digital: set from button OR when analog exceeds threshold
+    // This allows Xbox-style triggers (analog only, no click) to work with threshold
+    const profile_t* profile = profile_get_active(OUTPUT_TARGET_GAMECUBE);
+    uint8_t l_threshold = profile ? profile->l2_threshold : 250;
+    uint8_t r_threshold = profile ? profile->r2_threshold : 250;
+
+    report->l = ((buttons & GC_BUTTON_L) != 0 || output->l2_analog >= l_threshold) ? 1 : 0;
+    report->r = ((buttons & GC_BUTTON_R) != 0 || output->r2_analog >= r_threshold) ? 1 : 0;
 
     // Start
     report->start = ((buttons & GC_BUTTON_START) != 0) ? 1 : 0;

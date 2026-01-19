@@ -118,8 +118,8 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
                 ((p->wButtons & XINPUT_GAMEPAD_Y)              ? JP_BUTTON_B4 : 0) |
                 ((p->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)  ? JP_BUTTON_L1 : 0) |
                 ((p->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? JP_BUTTON_R1 : 0) |
-                ((analog_l > 16)                               ? JP_BUTTON_L2 : 0) |
-                ((analog_r > 16)                               ? JP_BUTTON_R2 : 0) |
+                // Note: No threshold-based L2/R2 - let output profiles handle analog-to-digital
+                // Xbox triggers are purely analog; digital behavior is profile/output dependent
                 ((p->wButtons & XINPUT_GAMEPAD_BACK)           ? JP_BUTTON_S1 : 0) |
                 ((p->wButtons & XINPUT_GAMEPAD_START)          ? JP_BUTTON_S2 : 0) |
                 ((p->wButtons & XINPUT_GAMEPAD_LEFT_THUMB)     ? JP_BUTTON_L3 : 0) |
