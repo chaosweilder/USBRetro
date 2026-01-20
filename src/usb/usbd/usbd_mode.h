@@ -75,6 +75,7 @@ void usbd_register_modes(void);
 // ============================================================================
 
 extern const usbd_mode_t hid_mode;
+extern const usbd_mode_t sinput_mode;
 #if CFG_TUD_XINPUT
 extern const usbd_mode_t xinput_mode;
 #endif

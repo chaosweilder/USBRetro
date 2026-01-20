@@ -16,6 +16,7 @@
 #include "usbd.h"
 #include "usbd_mode.h"
 #include "descriptors/hid_descriptors.h"
+#include "descriptors/sinput_descriptors.h"
 #include "descriptors/xbox_og_descriptors.h"
 #include "descriptors/xinput_descriptors.h"
 #include "descriptors/switch_descriptors.h"
@@ -86,12 +87,13 @@ static bool pending_flags[USB_MAX_PLAYERS] = {false};
 static char usb_serial_str[USB_SERIAL_LEN + 1];
 
 // Current output mode (persisted to flash)
-static usb_output_mode_t output_mode = USB_OUTPUT_MODE_HID;
+static usb_output_mode_t output_mode = USB_OUTPUT_MODE_SINPUT;
 static flash_t flash_settings;
 
 // Mode names for display
 static const char* mode_names[] = {
     [USB_OUTPUT_MODE_HID] = "DInput",
+    [USB_OUTPUT_MODE_SINPUT] = "SInput",
     [USB_OUTPUT_MODE_XBOX_ORIGINAL] = "Xbox Original (XID)",
     [USB_OUTPUT_MODE_XINPUT] = "XInput",
     [USB_OUTPUT_MODE_PS3] = "PS3",
@@ -118,6 +120,7 @@ void usbd_register_modes(void)
 {
     // Register all implemented modes
     usbd_modes[USB_OUTPUT_MODE_HID] = &hid_mode;
+    usbd_modes[USB_OUTPUT_MODE_SINPUT] = &sinput_mode;
 #if CFG_TUD_XINPUT
     usbd_modes[USB_OUTPUT_MODE_XINPUT] = &xinput_mode;
 #endif
@@ -363,8 +366,9 @@ bool usbd_set_mode(usb_output_mode_t mode)
         return false;
     }
 
-    // Supported modes: HID, Xbox OG, XInput, PS3, PS4, Switch, PS Classic, Xbox One, XAC, KB/Mouse, GC Adapter
-    if (mode != USB_OUTPUT_MODE_HID &&
+    // Supported modes: SInput, HID, Xbox OG, XInput, PS3, PS4, Switch, PS Classic, Xbox One, XAC, KB/Mouse, GC Adapter
+    if (mode != USB_OUTPUT_MODE_SINPUT &&
+        mode != USB_OUTPUT_MODE_HID &&
         mode != USB_OUTPUT_MODE_XBOX_ORIGINAL &&
         mode != USB_OUTPUT_MODE_XINPUT &&
         mode != USB_OUTPUT_MODE_PS3 &&
@@ -431,10 +435,10 @@ const char* usbd_get_mode_name(usb_output_mode_t mode)
 
 usb_output_mode_t usbd_get_next_mode(void)
 {
-    // Cycle through common modes: HID → XInput → PS3 → PS4 → Switch → HID
-    // (Skip less common: PS Classic, Xbox Original, Xbox One, XAC)
+    // Cycle through common modes: SInput → XInput → PS3 → PS4 → Switch → KB/Mouse → SInput
+    // (Skip less common: DInput, PS Classic, Xbox Original, Xbox One, XAC)
     switch (output_mode) {
-        case USB_OUTPUT_MODE_HID:
+        case USB_OUTPUT_MODE_SINPUT:
             return USB_OUTPUT_MODE_XINPUT;
         case USB_OUTPUT_MODE_XINPUT:
             return USB_OUTPUT_MODE_PS3;
@@ -446,14 +450,15 @@ usb_output_mode_t usbd_get_next_mode(void)
             return USB_OUTPUT_MODE_KEYBOARD_MOUSE;
         case USB_OUTPUT_MODE_KEYBOARD_MOUSE:
         default:
-            return USB_OUTPUT_MODE_HID;
+            return USB_OUTPUT_MODE_SINPUT;
     }
 }
 
 bool usbd_reset_to_hid(void)
 {
-    if (output_mode != USB_OUTPUT_MODE_HID) {
-        usbd_set_mode(USB_OUTPUT_MODE_HID);
+    // Reset to SInput (the new default, replacing DInput)
+    if (output_mode != USB_OUTPUT_MODE_SINPUT) {
+        usbd_set_mode(USB_OUTPUT_MODE_SINPUT);
         return true;
     }
     return false;
@@ -503,7 +508,7 @@ void usbd_init(void)
         // Validate loaded mode
         if (flash_settings.usb_output_mode < USB_OUTPUT_MODE_COUNT) {
             // Only accept supported modes
-            if (flash_settings.usb_output_mode == USB_OUTPUT_MODE_HID ||
+            if (flash_settings.usb_output_mode == USB_OUTPUT_MODE_SINPUT ||
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_XBOX_ORIGINAL ||
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_XINPUT ||
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_PS3 ||
@@ -516,6 +521,10 @@ void usbd_init(void)
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_GC_ADAPTER) {
                 output_mode = (usb_output_mode_t)flash_settings.usb_output_mode;
                 printf("[usbd] Loaded mode from flash: %s\n", mode_names[output_mode]);
+            } else if (flash_settings.usb_output_mode == USB_OUTPUT_MODE_HID) {
+                // Migrate DInput to SInput (DInput is deprecated)
+                output_mode = USB_OUTPUT_MODE_SINPUT;
+                printf("[usbd] Migrating DInput to SInput\n");
             } else {
                 printf("[usbd] Unsupported mode %d in flash, using default\n",
                        flash_settings.usb_output_mode);
@@ -619,10 +628,17 @@ void usbd_init(void)
             break;
 
         case USB_OUTPUT_MODE_HID:
-        default:
             // Initialize HID mode via mode interface
             if (usbd_modes[USB_OUTPUT_MODE_HID] && usbd_modes[USB_OUTPUT_MODE_HID]->init) {
                 usbd_modes[USB_OUTPUT_MODE_HID]->init();
+            }
+            break;
+
+        case USB_OUTPUT_MODE_SINPUT:
+        default:
+            // Initialize SInput mode via mode interface (new default)
+            if (usbd_modes[USB_OUTPUT_MODE_SINPUT] && usbd_modes[USB_OUTPUT_MODE_SINPUT]->init) {
+                usbd_modes[USB_OUTPUT_MODE_SINPUT]->init();
             }
             break;
     }
@@ -630,9 +646,9 @@ void usbd_init(void)
     // Set current mode pointer for dispatch
     current_mode = usbd_modes[output_mode];
 
-    // Initialize CDC subsystem (for HID, Switch, and KB/Mouse modes)
-    if (output_mode == USB_OUTPUT_MODE_HID || output_mode == USB_OUTPUT_MODE_SWITCH ||
-        output_mode == USB_OUTPUT_MODE_KEYBOARD_MOUSE) {
+    // Initialize CDC subsystem (for SInput, HID, Switch, and KB/Mouse modes)
+    if (output_mode == USB_OUTPUT_MODE_SINPUT || output_mode == USB_OUTPUT_MODE_HID ||
+        output_mode == USB_OUTPUT_MODE_SWITCH || output_mode == USB_OUTPUT_MODE_KEYBOARD_MOUSE) {
         cdc_init();
     }
 
@@ -755,10 +771,19 @@ void usbd_task(void)
 #endif
 
         case USB_OUTPUT_MODE_HID:
-        default:
             // HID mode: process CDC tasks
             cdc_task();
             // Send HID report if device is ready
+            if (tud_hid_ready()) {
+                usbd_send_report(0);
+            }
+            break;
+
+        case USB_OUTPUT_MODE_SINPUT:
+        default:
+            // SInput mode: process CDC tasks
+            cdc_task();
+            // Send SInput report if device is ready
             if (tud_hid_ready()) {
                 usbd_send_report(0);
             }
@@ -793,6 +818,36 @@ static bool usbd_send_hid_report(uint8_t player_index)
 {
     // Use mode interface if available
     const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_HID];
+    if (!mode || !mode->send_report) {
+        return false;
+    }
+
+    // Check ready via mode interface
+    if (mode->is_ready && !mode->is_ready()) {
+        return false;
+    }
+
+    // Check for pending event (event-driven from tap callback)
+    if (player_index >= USB_MAX_PLAYERS || !pending_flags[player_index]) {
+        return false;
+    }
+
+    const input_event_t* event = &pending_events[player_index];
+    pending_flags[player_index] = false;  // Clear after consumption
+
+    // Apply profile (combos, button remaps)
+    profile_output_t profile_out;
+    uint32_t processed_buttons = apply_usbd_profile(event, &profile_out);
+
+    // Delegate to mode implementation
+    return mode->send_report(player_index, event, &profile_out, processed_buttons);
+}
+
+// Send SInput report - uses mode interface
+static bool usbd_send_sinput_report(uint8_t player_index)
+{
+    // Use mode interface if available
+    const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_SINPUT];
     if (!mode || !mode->send_report) {
         return false;
     }
@@ -1081,8 +1136,11 @@ bool usbd_send_report(uint8_t player_index)
             return usbd_send_gc_adapter_report(player_index);
 #endif
         case USB_OUTPUT_MODE_HID:
-        default:
             return usbd_send_hid_report(player_index);
+
+        case USB_OUTPUT_MODE_SINPUT:
+        default:
+            return usbd_send_sinput_report(player_index);
     }
 }
 
@@ -1134,6 +1192,14 @@ static uint8_t usbd_get_rumble(void)
             return 0;
         }
 #endif
+        case USB_OUTPUT_MODE_SINPUT: {
+            // SInput: delegate to mode interface
+            const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_SINPUT];
+            if (mode && mode->get_rumble) {
+                return mode->get_rumble();
+            }
+            return 0;
+        }
         default:
             // HID/Switch modes: no standard rumble protocol
             return 0;
@@ -1205,6 +1271,15 @@ static bool usbd_get_feedback(output_feedback_t* fb)
         }
 #endif
 
+        case USB_OUTPUT_MODE_SINPUT: {
+            // SInput: delegate to mode interface
+            const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_SINPUT];
+            if (mode && mode->get_feedback) {
+                return mode->get_feedback(fb);
+            }
+            return false;
+        }
+
         default:
             return false;
     }
@@ -1250,6 +1325,7 @@ enum {
 
 // Endpoint numbers
 #define EPNUM_HID           0x81
+#define EPNUM_HID_OUT       0x01  // HID OUT endpoint for rumble/output reports
 
 #if CFG_TUD_CDC >= 1
 #define EPNUM_CDC_0_NOTIF   0x82
@@ -1295,6 +1371,8 @@ static const tusb_desc_device_t desc_device_hid = {
 uint8_t const *tud_descriptor_device_cb(void)
 {
     switch (output_mode) {
+        case USB_OUTPUT_MODE_SINPUT:
+            return (uint8_t const *)&sinput_device_descriptor;
         case USB_OUTPUT_MODE_XBOX_ORIGINAL:
             return (uint8_t const *)&xbox_og_device_descriptor;
         case USB_OUTPUT_MODE_XINPUT:
@@ -1367,10 +1445,33 @@ static const uint8_t desc_configuration_kbmouse[] = {
 #endif
 };
 
+// SInput mode configuration descriptor (HID + CDC for web config)
+#define CONFIG_TOTAL_LEN_SINPUT (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN + (CFG_TUD_CDC * TUD_CDC_DESC_LEN))
+
+static const uint8_t desc_configuration_sinput[] = {
+    // Config: bus powered, max 500mA
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN_SINPUT, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
+
+    // Interface 0: HID gamepad with IN and OUT endpoints for rumble
+    TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_report_descriptor), EPNUM_HID_OUT, EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 1),
+
+#if CFG_TUD_CDC >= 1
+    // CDC 0: Data port (commands, config)
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, 4, EPNUM_CDC_0_NOTIF, 8, EPNUM_CDC_0_OUT, EPNUM_CDC_0_IN, 64),
+#endif
+
+#if CFG_TUD_CDC >= 2
+    // CDC 1: Debug port (logging)
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_1, 5, EPNUM_CDC_1_NOTIF, 8, EPNUM_CDC_1_OUT, EPNUM_CDC_1_IN, 64),
+#endif
+};
+
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
     (void)index;
     switch (output_mode) {
+        case USB_OUTPUT_MODE_SINPUT:
+            return desc_configuration_sinput;
         case USB_OUTPUT_MODE_XBOX_ORIGINAL:
             return xbox_og_config_descriptor;
         case USB_OUTPUT_MODE_XINPUT:
@@ -1472,7 +1573,9 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             break;
         case STRID_MANUFACTURER:
             // Mode-specific manufacturer
-            if (output_mode == USB_OUTPUT_MODE_XINPUT) {
+            if (output_mode == USB_OUTPUT_MODE_SINPUT) {
+                str = SINPUT_MANUFACTURER;
+            } else if (output_mode == USB_OUTPUT_MODE_XINPUT) {
                 str = XINPUT_MANUFACTURER;
             } else if (output_mode == USB_OUTPUT_MODE_SWITCH) {
                 str = SWITCH_MANUFACTURER;
@@ -1494,7 +1597,9 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             break;
         case STRID_PRODUCT:
             // Mode-specific product
-            if (output_mode == USB_OUTPUT_MODE_XINPUT) {
+            if (output_mode == USB_OUTPUT_MODE_SINPUT) {
+                str = SINPUT_PRODUCT;
+            } else if (output_mode == USB_OUTPUT_MODE_XINPUT) {
                 str = XINPUT_PRODUCT;
             } else if (output_mode == USB_OUTPUT_MODE_SWITCH) {
                 str = SWITCH_PRODUCT;
@@ -1549,6 +1654,9 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf)
 {
     (void)itf;
     // Return mode-specific HID report descriptor
+    if (output_mode == USB_OUTPUT_MODE_SINPUT) {
+        return sinput_report_descriptor;
+    }
     if (output_mode == USB_OUTPUT_MODE_SWITCH) {
         return switch_report_descriptor;
     }

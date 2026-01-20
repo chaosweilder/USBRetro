@@ -19,6 +19,7 @@
 // Output modes (console types)
 typedef enum {
     USB_OUTPUT_MODE_HID = 0,            // Generic HID gamepad (DInput)
+    USB_OUTPUT_MODE_SINPUT,             // SInput (SDL/Steam compatible)
     USB_OUTPUT_MODE_XINPUT,             // Xbox 360/One/Series (XInput)
     USB_OUTPUT_MODE_PS3,                // PlayStation 3 (DInput/SixAxis)
     USB_OUTPUT_MODE_PS4,                // PlayStation 4
@@ -42,6 +43,13 @@ typedef enum {
 #define USB_HID_BCD            0x0100  // v1.0
 #define USB_HID_MANUFACTURER   "Joypad"
 #define USB_HID_PRODUCT        "Joypad (DInput)"
+
+// SInput Mode (SDL/Steam compatible)
+#define USB_SINPUT_VID         0x2E8A  // Raspberry Pi
+#define USB_SINPUT_PID         0x10C6  // SInput generic
+#define USB_SINPUT_BCD         0x0100  // v1.0
+#define USB_SINPUT_MANUFACTURER "Joypad"
+#define USB_SINPUT_PRODUCT     "Joypad (SInput)"
 
 // Xbox Original Mode (XID)
 #define USB_XOG_VID            0x045E  // Microsoft

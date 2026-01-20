@@ -247,8 +247,13 @@ static void cmd_mode_list(const char* json)
     int pos = snprintf(response_buf, sizeof(response_buf),
                        "{\"current\":%d,\"modes\":[", (int)current);
 
+    bool first = true;
     for (int i = 0; i < USB_OUTPUT_MODE_COUNT && pos < (int)sizeof(response_buf) - 50; i++) {
-        if (i > 0) pos += snprintf(response_buf + pos, sizeof(response_buf) - pos, ",");
+        // Skip DInput (HID) mode - replaced by SInput
+        if (i == USB_OUTPUT_MODE_HID) continue;
+
+        if (!first) pos += snprintf(response_buf + pos, sizeof(response_buf) - pos, ",");
+        first = false;
         pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
                         "{\"id\":%d,\"name\":\"%s\"}", i, usbd_get_mode_name(i));
     }
