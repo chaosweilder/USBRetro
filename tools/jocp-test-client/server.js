@@ -25,7 +25,7 @@ const CONFIG = {
     donglePort: parseInt(process.env.DONGLE_PORT || '30100'),
 
     // Local server
-    httpPort: parseInt(process.env.HTTP_PORT || '3000'),
+    httpPort: parseInt(process.env.HTTP_PORT || '3001'),
 
     // Packet rate (Hz)
     pollRate: parseInt(process.env.POLL_RATE || '125'),
@@ -61,7 +61,9 @@ function buildJocpPacket() {
     buffer.writeUInt8(JOCP_MSG_INPUT, offset); offset += 1;
     buffer.writeUInt16LE(sequenceNumber++ & 0xFFFF, offset); offset += 2;
     buffer.writeUInt16LE(JOCP_FLAG_KEYFRAME, offset); offset += 2;
-    buffer.writeUInt32LE(Date.now() * 1000 & 0xFFFFFFFF, offset); offset += 4;
+    // Timestamp in microseconds, wrapped to 32-bit
+    const timestamp = Number(BigInt(Date.now()) * 1000n % 0x100000000n);
+    buffer.writeUInt32LE(timestamp, offset); offset += 4;
 
     // Payload (64 bytes)
     // Buttons (4 bytes)
@@ -81,7 +83,7 @@ function buildJocpPacket() {
     offset += 12;
 
     // IMU timestamp (4 bytes)
-    buffer.writeUInt32LE(Date.now() * 1000 & 0xFFFFFFFF, offset); offset += 4;
+    buffer.writeUInt32LE(timestamp, offset); offset += 4;
 
     // Touch (12 bytes) - zeros
     offset += 12;

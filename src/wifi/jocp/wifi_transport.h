@@ -60,4 +60,23 @@ int wifi_transport_send_udp(uint32_t dest_ip, uint16_t dest_port,
 // Returns bytes sent, or -1 on error
 int wifi_transport_send_tcp(uint32_t client_id, const uint8_t* data, uint16_t len);
 
+// ============================================================================
+// PAIRING MODE
+// ============================================================================
+// When pairing mode is ON:  SSID is broadcast, new controllers can connect
+// When pairing mode is OFF: SSID is hidden, only existing controllers work
+
+// Enable or disable pairing mode immediately
+void wifi_transport_set_pairing_mode(bool enabled);
+
+// Check if currently in pairing mode
+bool wifi_transport_is_pairing_mode(void);
+
+// Start pairing mode with auto-timeout (seconds, 0 = no timeout)
+// After timeout, pairing mode automatically turns off
+void wifi_transport_start_pairing(uint32_t timeout_sec);
+
+// Called when a new controller connects (to exit pairing mode)
+void wifi_transport_on_controller_connected(void);
+
 #endif // WIFI_TRANSPORT_H

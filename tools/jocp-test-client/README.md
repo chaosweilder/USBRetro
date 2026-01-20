@@ -29,7 +29,7 @@ Browser (Gamepad API / UI) ──WebSocket──> Node.js Server ──UDP──
    ```
 
 4. **Open browser**
-   - Navigate to http://localhost:3000
+   - Navigate to http://localhost:3001
    - Use a physical gamepad or the on-screen buttons
 
 ## Configuration
@@ -40,7 +40,7 @@ Environment variables:
 |----------|---------|-------------|
 | `DONGLE_IP` | `192.168.4.1` | Dongle IP address |
 | `DONGLE_PORT` | `30100` | UDP port for INPUT packets |
-| `HTTP_PORT` | `3000` | Local HTTP server port |
+| `HTTP_PORT` | `3001` | Local HTTP server port |
 | `POLL_RATE` | `125` | Packets per second |
 
 Example:

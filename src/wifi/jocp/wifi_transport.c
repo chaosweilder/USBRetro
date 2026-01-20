@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/unique_id.h"
+#include "cyw43.h"  // For cyw43_ioctl
 
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
@@ -28,6 +29,11 @@
 static wifi_transport_config_t config;
 static bool initialized = false;
 static bool ap_ready = false;
+
+// Pairing mode state
+static bool pairing_mode = true;  // Start in pairing mode
+static uint32_t pairing_timeout_ms = 0;
+static uint32_t pairing_start_ms = 0;
 
 // Network state
 static struct udp_pcb* udp_pcb = NULL;
@@ -57,6 +63,7 @@ static void udp_recv_callback(void* arg, struct udp_pcb* pcb, struct pbuf* p,
 static err_t tcp_accept_callback(void* arg, struct tcp_pcb* newpcb, err_t err);
 static err_t tcp_recv_callback(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err_t err);
 static void tcp_err_callback(void* arg, err_t err);
+static void set_ssid_hidden(bool hidden);
 
 // ============================================================================
 // INITIALIZATION
@@ -212,6 +219,15 @@ void wifi_transport_task(void)
 
     // Poll CYW43 and process LWIP
     cyw43_arch_poll();
+
+    // Check pairing mode timeout
+    if (pairing_mode && pairing_timeout_ms > 0) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - pairing_start_ms >= pairing_timeout_ms) {
+            printf("[wifi] Pairing timeout, hiding SSID\n");
+            wifi_transport_set_pairing_mode(false);
+        }
+    }
 }
 
 // ============================================================================
@@ -239,6 +255,74 @@ const char* wifi_transport_get_ssid(void)
 const char* wifi_transport_get_ip(void)
 {
     return ap_ip_str;
+}
+
+// ============================================================================
+// PAIRING MODE
+// ============================================================================
+
+// CYW43 ioctl to set SSID visibility (WLC_SET_CLOSED)
+#define WLC_SET_CLOSED 0x99
+
+static void set_ssid_hidden(bool hidden)
+{
+    if (!initialized) return;
+
+    // Use CYW43 ioctl to set hidden SSID mode
+    // 1 = hidden (closed network), 0 = visible (open network)
+    uint32_t closed = hidden ? 1 : 0;
+    int ret = cyw43_ioctl(&cyw43_state, WLC_SET_CLOSED, sizeof(closed),
+                          (uint8_t*)&closed, CYW43_ITF_AP);
+    if (ret == 0) {
+        printf("[wifi] SSID %s\n", hidden ? "hidden" : "visible (broadcasting)");
+    } else {
+        printf("[wifi] Warning: Failed to set SSID visibility: %d\n", ret);
+    }
+}
+
+void wifi_transport_set_pairing_mode(bool enabled)
+{
+    if (pairing_mode == enabled) return;
+
+    pairing_mode = enabled;
+    pairing_timeout_ms = 0;  // Clear any timeout
+
+    set_ssid_hidden(!enabled);  // Hidden when NOT pairing
+
+    if (enabled) {
+        printf("[wifi] Pairing mode ON - accepting new controllers\n");
+    } else {
+        printf("[wifi] Pairing mode OFF - SSID hidden\n");
+    }
+}
+
+bool wifi_transport_is_pairing_mode(void)
+{
+    return pairing_mode;
+}
+
+void wifi_transport_start_pairing(uint32_t timeout_sec)
+{
+    pairing_mode = true;
+    pairing_start_ms = to_ms_since_boot(get_absolute_time());
+    pairing_timeout_ms = timeout_sec * 1000;
+
+    set_ssid_hidden(false);  // Make SSID visible
+
+    if (timeout_sec > 0) {
+        printf("[wifi] Pairing mode ON for %lu seconds\n", (unsigned long)timeout_sec);
+    } else {
+        printf("[wifi] Pairing mode ON (no timeout)\n");
+    }
+}
+
+void wifi_transport_on_controller_connected(void)
+{
+    // When a controller connects, exit pairing mode
+    if (pairing_mode) {
+        printf("[wifi] Controller connected, exiting pairing mode\n");
+        wifi_transport_set_pairing_mode(false);
+    }
 }
 
 // ============================================================================

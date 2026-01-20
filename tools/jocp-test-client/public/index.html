@@ -173,6 +173,17 @@
         }
         .gamepad-status.active { background: #1e4620; }
 
+        .keyboard-help {
+            text-align: center;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .keyboard-help strong { color: #00d4aa; }
+
         /* Debug */
         .debug {
             margin-top: 20px;
@@ -276,6 +287,10 @@
 
         <div id="gamepad-status" class="gamepad-status">
             Connect a gamepad and press any button
+        </div>
+
+        <div class="keyboard-help">
+            <strong>Keyboard:</strong> WASD=Stick | Arrows=D-pad | IJKL=YXAB | Q/E=L1/R1 | Enter=Start | Backspace=Select
         </div>
     </div>
 
@@ -602,11 +617,125 @@
             }
         });
 
+        // Keyboard mapping
+        const KEY_MAP = {
+            // Face buttons
+            'KeyK': 0,   // A/South
+            'KeyL': 1,   // B/East
+            'KeyJ': 2,   // X/West
+            'KeyI': 3,   // Y/North
+
+            // D-pad (arrow keys)
+            'ArrowUp': 4,
+            'ArrowDown': 5,
+            'ArrowLeft': 6,
+            'ArrowRight': 7,
+
+            // Shoulders
+            'KeyQ': 8,   // L1
+            'KeyE': 9,   // R1
+            'KeyZ': 10,  // L2 digital
+            'KeyC': 11,  // R2 digital
+
+            // Stick clicks
+            'KeyF': 12,  // L3
+            'KeyH': 13,  // R3
+
+            // System
+            'Enter': 16,     // Start
+            'Backspace': 17, // Select
+            'Escape': 18,    // Guide
+        };
+
+        // WASD for left stick, TFGH for right stick
+        const STICK_KEYS = {
+            left: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' },
+            right: { up: 'KeyT', down: 'KeyG', left: 'KeyF', right: 'KeyH' }
+        };
+
+        // Note: F/H are dual-mapped (L3/R3 and right stick left/right)
+        // Press briefly for stick, hold for click
+
+        const activeKeys = new Set();
+
+        function updateKeyboardSticks() {
+            // Left stick from WASD
+            let lx = 0, ly = 0;
+            if (activeKeys.has('KeyA')) lx -= 32767;
+            if (activeKeys.has('KeyD')) lx += 32767;
+            if (activeKeys.has('KeyW')) ly -= 32767;
+            if (activeKeys.has('KeyS')) ly += 32767;
+
+            controllerState.lx = lx;
+            controllerState.ly = ly;
+
+            // Update visual
+            const leftKnob = document.getElementById('left-knob');
+            leftKnob.style.left = (50 + (lx / 32767) * 33) + '%';
+            leftKnob.style.top = (50 + (ly / 32767) * 33) + '%';
+            document.getElementById('left-values').textContent = `${lx}, ${ly}`;
+
+            sendState();
+        }
+
+        function setupKeyboard() {
+            document.addEventListener('keydown', (e) => {
+                if (e.repeat) return;
+
+                const code = e.code;
+                activeKeys.add(code);
+
+                // Button press
+                if (KEY_MAP[code] !== undefined) {
+                    const buttonId = KEY_MAP[code];
+                    controllerState.buttons |= (1 << buttonId);
+
+                    // Update visual
+                    const btn = document.querySelector(`.btn[data-button="${buttonId}"]`);
+                    if (btn) btn.classList.add('pressed');
+
+                    sendState();
+                    e.preventDefault();
+                }
+
+                // WASD stick
+                if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(code)) {
+                    updateKeyboardSticks();
+                    e.preventDefault();
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                const code = e.code;
+                activeKeys.delete(code);
+
+                // Button release
+                if (KEY_MAP[code] !== undefined) {
+                    const buttonId = KEY_MAP[code];
+                    controllerState.buttons &= ~(1 << buttonId);
+
+                    // Update visual
+                    const btn = document.querySelector(`.btn[data-button="${buttonId}"]`);
+                    if (btn) btn.classList.remove('pressed');
+
+                    sendState();
+                }
+
+                // WASD stick
+                if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(code)) {
+                    updateKeyboardSticks();
+                }
+            });
+
+            log('Keyboard controls: WASD=stick, Arrows=D-pad, IJKL=YXAB, Q/E=L1/R1, Enter=Start');
+        }
+
         // Initialize
         connect();
         setupButtons();
         setupTriggers();
         setupSticks();
+        setupKeyboard();
         pollGamepads();
 
         log('JOCP Test Client initialized');

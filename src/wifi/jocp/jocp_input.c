@@ -142,6 +142,9 @@ static int find_or_create_controller(uint32_t ip, uint16_t port)
     printf("[jocp] New controller connected: slot %d, IP %08lX:%d\n",
            slot, (unsigned long)ip, port);
 
+    // Notify transport layer (to exit pairing mode)
+    wifi_transport_on_controller_connected();
+
     return slot;
 }
 

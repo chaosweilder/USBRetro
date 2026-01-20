@@ -29,9 +29,9 @@ static bool led_state = false;
 
 // LED blink patterns:
 // - Fast blink (4Hz): WiFi AP starting
-// - Slow blink (1Hz): WiFi AP running, no controllers
-// - Double blink: Controller connected
-// - Solid on: Controller connected and active
+// - Slow blink (1Hz): Pairing mode (SSID visible, waiting for controller)
+// - Solid on: Controller connected, not pairing
+// - Double blink: Pairing mode with controller connected
 static void led_status_update(void)
 {
     uint32_t now = to_ms_since_boot(get_absolute_time());
@@ -43,18 +43,24 @@ static void led_status_update(void)
             cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state ? 1 : 0);
             led_last_toggle = now;
         }
+    } else if (wifi_transport_is_pairing_mode()) {
+        // Pairing mode - slow blink (500ms = 1Hz) to show SSID is broadcasting
+        if (now - led_last_toggle >= 500) {
+            led_state = !led_state;
+            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state ? 1 : 0);
+            led_last_toggle = now;
+        }
     } else if (jocp_get_connected_count() > 0) {
-        // Controller connected - solid on
+        // Controller connected, not pairing - solid on
         if (!led_state) {
             cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
             led_state = true;
         }
     } else {
-        // WiFi ready, no controllers - slow blink (500ms on/off = 1Hz)
-        if (now - led_last_toggle >= 500) {
-            led_state = !led_state;
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state ? 1 : 0);
-            led_last_toggle = now;
+        // No controllers, not pairing - solid off
+        if (led_state) {
+            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+            led_state = false;
         }
     }
 }
@@ -63,16 +69,17 @@ static void led_status_update(void)
 // BUTTON EVENT HANDLER
 // ============================================================================
 
+// Pairing timeout in seconds (SSID visible for this long after button press)
+#define PAIRING_TIMEOUT_SEC 30
+
 static void on_button_event(button_event_t event)
 {
     switch (event) {
         case BUTTON_EVENT_CLICK:
-            printf("[app:wifi2usb] Button click - current mode: %s\n",
-                   usbd_get_mode_name(usbd_get_mode()));
-            printf("[app:wifi2usb] WiFi AP: %s\n",
-                   wifi_transport_is_ready() ? "Ready" : "Starting");
-            printf("[app:wifi2usb] Connected controllers: %d\n",
-                   jocp_get_connected_count());
+            // Single click - enter pairing mode (broadcast SSID)
+            printf("[app:wifi2usb] Button click - entering pairing mode\n");
+            printf("[app:wifi2usb] SSID will be visible for %d seconds\n", PAIRING_TIMEOUT_SEC);
+            wifi_transport_start_pairing(PAIRING_TIMEOUT_SEC);
             break;
 
         case BUTTON_EVENT_DOUBLE_CLICK: {
@@ -185,8 +192,11 @@ void app_init(void)
     printf("[app:wifi2usb] Initialization complete\n");
     printf("[app:wifi2usb]   Routing: WiFi -> USB Device (SInput)\n");
     printf("[app:wifi2usb]   Player slots: %d\n", MAX_PLAYER_SLOTS);
-    printf("[app:wifi2usb]   Hold BOOTSEL to restart WiFi AP\n");
-    printf("[app:wifi2usb]   Double-click BOOTSEL to switch USB mode\n");
+    printf("[app:wifi2usb] Button actions:\n");
+    printf("[app:wifi2usb]   Click:        Enter pairing mode (broadcast SSID)\n");
+    printf("[app:wifi2usb]   Double-click: Switch USB output mode\n");
+    printf("[app:wifi2usb]   Triple-click: Reset to SInput mode\n");
+    printf("[app:wifi2usb]   Hold:         Restart WiFi AP\n");
 }
 
 // ============================================================================
