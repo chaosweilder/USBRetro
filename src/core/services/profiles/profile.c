@@ -821,14 +821,22 @@ void profile_apply(const profile_t* profile,
     output->r2_analog = r2;
 
     // Set L2/R2 digital buttons based on analog threshold (if threshold > 0)
-    // Threshold of 0 means disabled (never trigger digital from analog)
-    // This replaces the input driver threshold logic, allowing per-profile control
+    // When threshold is set, it OVERRIDES input L2/R2 (e.g. DualSense's early digital)
+    // Threshold of 0 means passthrough (use input driver's L2/R2 as-is)
     if (profile) {
-        if (profile->l2_threshold > 0 && l2 >= profile->l2_threshold) {
-            output->buttons |= JP_BUTTON_L2;
+        if (profile->l2_threshold > 0) {
+            // Clear input L2, use only threshold-based activation
+            output->buttons &= ~JP_BUTTON_L2;
+            if (l2 >= profile->l2_threshold) {
+                output->buttons |= JP_BUTTON_L2;
+            }
         }
-        if (profile->r2_threshold > 0 && r2 >= profile->r2_threshold) {
-            output->buttons |= JP_BUTTON_R2;
+        if (profile->r2_threshold > 0) {
+            // Clear input R2, use only threshold-based activation
+            output->buttons &= ~JP_BUTTON_R2;
+            if (r2 >= profile->r2_threshold) {
+                output->buttons |= JP_BUTTON_R2;
+            }
         }
     }
 
