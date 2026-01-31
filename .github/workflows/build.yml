@@ -29,6 +29,7 @@ jobs:
           - usb2gc_rp2040zero
           - usb2nuon_kb2040
           - usb2dc_kb2040
+          - usb2neogeo_kb2040
           - n642dc_kb2040
           - usb23do_rp2040zero
           - usb2uart_kb2040
@@ -155,6 +156,13 @@ jobs:
         with:
           name: joypad_${{ steps.commit.outputs.hash }}_usb2dc
           path: organized/usb2dc/*.uf2
+          if-no-files-found: ignore
+
+      - name: Upload usb2neogeo
+        uses: actions/upload-artifact@v4
+        with:
+          name: joypad_${{ steps.commit.outputs.hash }}_usb2neogeo
+          path: organized/usb2neogeo/*.uf2
           if-no-files-found: ignore
 
       - name: Upload n642dc

@@ -104,7 +104,7 @@ APP_controller_macropad := macropad controller_macropad controller_macropad GPIO
 
 # All apps (note: controller_macropad not included - build explicitly with 'make controller_macropad')
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
-APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
+APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 usb2neogeo_kb2040 n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
 
 # Stable apps for release
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
