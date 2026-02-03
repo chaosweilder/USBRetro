@@ -1165,11 +1165,11 @@ void cdc_commands_send_input_event(uint32_t buttons, const uint8_t* axes)
     if (!protocol_ctx.input_streaming) return;
 
     // Input axes from input_event_t (now contiguous):
-    // [0]=LX, [1]=LY, [2]=RX, [3]=RY, [4]=L2, [5]=R2
+    // [0]=LX, [1]=LY, [2]=RX, [3]=RY, [4]=L2, [5]=R2, [6]=RZ
     snprintf(response_buf, sizeof(response_buf),
-             "{\"type\":\"input\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d]}",
+             "{\"type\":\"input\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d,%d]}",
              (unsigned long)buttons,
-             axes[0], axes[1], axes[2], axes[3], axes[4], axes[5]);
+             axes[0], axes[1], axes[2], axes[3], axes[4], axes[5], axes[6]);
     cdc_protocol_send_event(&protocol_ctx, response_buf);
 }
 
@@ -1178,9 +1178,9 @@ void cdc_commands_send_output_event(uint32_t buttons, const uint8_t* axes)
     if (!protocol_ctx.input_streaming) return;
 
     snprintf(response_buf, sizeof(response_buf),
-             "{\"type\":\"output\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d]}",
+             "{\"type\":\"output\",\"buttons\":%lu,\"axes\":[%d,%d,%d,%d,%d,%d,%d]}",
              (unsigned long)buttons,
-             axes[0], axes[1], axes[2], axes[3], axes[4], axes[5]);
+             axes[0], axes[1], axes[2], axes[3], axes[4], axes[5], axes[6]);
     cdc_protocol_send_event(&protocol_ctx, response_buf);
 }
 

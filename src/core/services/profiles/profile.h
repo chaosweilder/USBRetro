@@ -177,6 +177,7 @@ typedef struct {
     uint8_t right_y;
     uint8_t l2_analog;
     uint8_t r2_analog;
+    uint8_t rz_analog;
 
     // Flags for analog overrides (buttons forced analog values)
     bool left_x_override;
@@ -185,6 +186,7 @@ typedef struct {
     bool right_y_override;
     bool l2_analog_override;
     bool r2_analog_override;
+    bool rz_analog_override;
 
     // Motion data (passthrough from input)
     int16_t accel[3];           // Accelerometer X, Y, Z
@@ -333,6 +335,7 @@ void profile_apply(const profile_t* profile,
                    uint8_t lx, uint8_t ly,
                    uint8_t rx, uint8_t ry,
                    uint8_t l2, uint8_t r2,
+                   uint8_t rz,
                    profile_output_t* output);
 
 // Simple button-only mapping (for basic use cases)

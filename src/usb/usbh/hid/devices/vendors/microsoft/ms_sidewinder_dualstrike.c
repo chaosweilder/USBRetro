@@ -125,12 +125,12 @@ static void process_ms_sidewinder_dualstrike(uint8_t dev_addr, uint8_t instance,
     uint8_t analog_ly = (uint8_t)((axis_y + 512) * 255 / 1023);
 
     // Scale 4-bit signed (-8..7) to 8-bit unsigned (0..255, center 128)
-    uint8_t analog_ry = (uint8_t)((twist + 8) * 255 / 15);
+    uint8_t analog_rz = (uint8_t)((twist + 8) * 255 / 15);
 
     // Ensure non-zero (internal convention)
     analog_lx = (analog_lx == 0) ? 1 : analog_lx;
     analog_ly = (analog_ly == 0) ? 1 : analog_ly;
-    analog_ry = (analog_ry == 0) ? 1 : analog_ry;
+    analog_rz = (analog_rz == 0) ? 1 : analog_rz;
 
     input_event_t event = {
         .dev_addr = dev_addr,
@@ -139,7 +139,7 @@ static void process_ms_sidewinder_dualstrike(uint8_t dev_addr, uint8_t instance,
         .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 11,
-        .analog = {128, 128, analog_lx, analog_ly, 0, 0},
+        .analog = {128, 128, analog_lx, analog_ly, 0, 0, analog_rz},
         .keys = 0,
     };
     router_submit_input(&event);

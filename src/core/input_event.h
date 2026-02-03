@@ -85,7 +85,8 @@ typedef enum {
     ANALOG_RY = 3,      // Right stick Y (0=up, 128=center, 255=down) [HID convention]
     ANALOG_L2 = 4,      // Left trigger (0=released, 255=fully pressed)
     ANALOG_R2 = 5,      // Right trigger (0=released, 255=fully pressed)
-    ANALOG_COUNT = 6,   // Number of standard analog axes
+    ANALOG_RZ = 6,      // RZ axis / twist (0=released, 255=fully pressed) - spinner/twist input
+    ANALOG_COUNT = 7,   // Number of standard analog axes
 } analog_axis_index_t;
 
 
@@ -114,6 +115,7 @@ typedef struct {
                                   // [3] = RY (Right stick Y)
                                   // [4] = L2 (Left trigger)
                                   // [5] = R2 (Right trigger)
+                                  // [6] = RZ (Twist/spinner)
 
     // Relative inputs (mouse, spinner, trackball)
     int8_t delta_x;             // Horizontal delta (-127 to +127)
@@ -163,12 +165,14 @@ static inline void init_input_event(input_event_t* event) {
     // Set analog axes to appropriate defaults:
     // - Sticks (0-3): centered at 128
     // - Triggers (4-5): start at 0 (not pressed)
+    // - RZ (6): start at 0 (not pressed)
     event->analog[ANALOG_LX] = 128;
     event->analog[ANALOG_LY] = 128;
     event->analog[ANALOG_RX] = 128;
     event->analog[ANALOG_RY] = 128;
     event->analog[ANALOG_L2] = 0;
     event->analog[ANALOG_R2] = 0;
+    event->analog[ANALOG_RZ] = 0;
 
     // Set hat switches to centered
     for (int i = 0; i < 4; i++) {

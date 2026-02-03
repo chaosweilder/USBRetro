@@ -404,6 +404,7 @@ void __not_in_flash_func(update_output)(void)
                   event->analog[ANALOG_LX], event->analog[ANALOG_LY],  // left stick
                   event->analog[ANALOG_RX], event->analog[ANALOG_RY],  // right stick
                   event->analog[ANALOG_L2], event->analog[ANALOG_R2],  // triggers
+                  event->analog[ANALOG_RZ],
                   &output);
 
     // Map profile output to GameCube report

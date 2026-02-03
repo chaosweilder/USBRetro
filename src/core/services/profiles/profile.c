@@ -796,6 +796,7 @@ void profile_apply(const profile_t* profile,
                    uint8_t lx, uint8_t ly,
                    uint8_t rx, uint8_t ry,
                    uint8_t l2, uint8_t r2,
+                   uint8_t rz,
                    profile_output_t* output)
 {
     // Suppress combo buttons when profile switch is active
@@ -819,6 +820,7 @@ void profile_apply(const profile_t* profile,
     output->right_y = ry;
     output->l2_analog = l2;
     output->r2_analog = r2;
+    output->rz_analog = rz;
 
     // Set L2/R2 digital buttons based on analog threshold (if threshold > 0)
     // When threshold is set, it OVERRIDES input L2/R2 (e.g. DualSense's early digital)
@@ -1039,6 +1041,6 @@ void profile_apply(const profile_t* profile,
 uint32_t profile_apply_button_map(const profile_t* profile, uint32_t input_buttons)
 {
     profile_output_t output;
-    profile_apply(profile, input_buttons, 128, 128, 128, 128, 0, 0, &output);
+    profile_apply(profile, input_buttons, 128, 128, 128, 128, 0, 0, 0, &output);
     return output.buttons;
 }

@@ -157,6 +157,7 @@ static uint32_t apply_usbd_profile(const input_event_t* event, profile_output_t*
                   event->analog[ANALOG_LX], event->analog[ANALOG_LY],
                   event->analog[ANALOG_RX], event->analog[ANALOG_RY],
                   event->analog[ANALOG_L2], event->analog[ANALOG_R2],
+                  event->analog[ANALOG_RZ],
                   profile_out);
 
     // If no built-in profile, apply custom profile button mapping (if active)
@@ -238,10 +239,11 @@ static uint32_t apply_usbd_profile(const input_event_t* event, profile_output_t*
 
     // Stream output to CDC for web config (if enabled)
     // This shows the processed output values after profile mapping
-    uint8_t output_axes[6] = {
+    uint8_t output_axes[7] = {
         profile_out->left_x, profile_out->left_y,
         profile_out->right_x, profile_out->right_y,
-        profile_out->l2_analog, profile_out->r2_analog
+        profile_out->l2_analog, profile_out->r2_analog,
+        profile_out->rz_analog
     };
     cdc_commands_send_output_event(profile_out->buttons, output_axes);
 

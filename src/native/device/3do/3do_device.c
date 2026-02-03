@@ -824,7 +824,7 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index) {
   // Apply profile remapping
   const profile_t* profile = profile_get_active(OUTPUT_TARGET_3DO);
   profile_output_t mapped;
-  profile_apply(profile, buttons, ax, ay, az, at, l2, r2, &mapped);
+  profile_apply(profile, buttons, ax, ay, az, at, l2, r2, event->analog[ANALOG_RZ], &mapped);
 
   // Check if silly pad mode is enabled
   if (output_mode == TDO_MODE_SILLY) {
