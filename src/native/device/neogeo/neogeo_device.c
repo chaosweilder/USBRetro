@@ -128,9 +128,10 @@ void neogeo_init()
   profile_indicator_disable_rumble();
   profile_set_player_count_callback(neogeo_get_player_count_for_profile);
 
-  // Register tap for push-based GPIO updates — fires immediately from
-  // router_submit_input() instead of waiting for next task loop iteration
-  router_set_tap(OUTPUT_TARGET_NEOGEO, neogeo_tap_callback);
+  // Register exclusive tap for push-based GPIO updates — fires immediately from
+  // router_submit_input() instead of waiting for next task loop iteration.
+  // Exclusive: router skips storing to router_outputs[] since we never poll.
+  router_set_tap_exclusive(OUTPUT_TARGET_NEOGEO, neogeo_tap_callback);
 
   #if CFG_TUSB_DEBUG >= 1
   // Initialize chosen UART
@@ -164,7 +165,7 @@ void neogeo_task()
 
   // Run cheat code detection when we had new input
   if (had_update && playersCount > 0) {
-    codes_task_for_output(OUTPUT_TARGET_NEOGEO);
+    codes_process_raw(last_buttons);
   }
 }
 

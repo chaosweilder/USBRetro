@@ -26,4 +26,7 @@ void codes_task(void);
 // Task with explicit output target (for controller app)
 void codes_task_for_output(output_target_t output);
 
+// Process raw button state directly (for push-based outputs that bypass router_get_output)
+void codes_process_raw(uint32_t buttons);
+
 #endif // CODES_H

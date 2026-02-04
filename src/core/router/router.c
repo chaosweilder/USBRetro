@@ -172,6 +172,7 @@ static uint8_t route_count = 0;
 // ============================================================================
 
 static router_tap_callback_t output_taps[MAX_OUTPUTS] = {NULL};
+static bool output_tap_exclusive[MAX_OUTPUTS] = {false};
 
 // ============================================================================
 // INITIALIZATION
@@ -486,20 +487,28 @@ static inline void router_simple_mode(const input_event_t* event, output_target_
     }
 
     if (player_index >= 0 && player_index < router_config.max_players_per_output[output]) {
-        // Create local copy for transformation
-        input_event_t transformed = *event;
+        // Avoid struct copy when no transformations are active (common case)
+        const input_event_t* final_event;
+        input_event_t transformed;
 
-        // Apply transformations (mouse-to-analog, instance merging, etc.)
-        apply_transformations(&transformed, output, player_index);
+        if (router_config.transform_flags) {
+            transformed = *event;
+            apply_transformations(&transformed, output, player_index);
+            final_event = &transformed;
+        } else {
+            final_event = event;  // Zero-copy pass-through
+        }
 
-        // Store transformed event (atomic write)
-        router_outputs[output][player_index].current_state = transformed;
-        router_outputs[output][player_index].updated = true;
-        router_outputs[output][player_index].source = INPUT_SOURCE_USB_HOST;
+        // Store to output slot (skip when tap-exclusive — tap delivers directly)
+        if (!output_tap_exclusive[output]) {
+            router_outputs[output][player_index].current_state = *final_event;
+            router_outputs[output][player_index].updated = true;
+            router_outputs[output][player_index].source = INPUT_SOURCE_USB_HOST;
+        }
 
         // Notify tap if registered (for push-based outputs like UART)
         if (output_taps[output]) {
-            output_taps[output](output, player_index, &transformed);
+            output_taps[output](output, player_index, final_event);
         }
     }
 }
@@ -525,16 +534,22 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
     // Only process if player is registered
     if (player_index < 0) return;
 
-    // Create local copy for transformation
-    input_event_t transformed = *event;
+    // Avoid struct copy when no transformations are active
+    const input_event_t* final_event;
+    input_event_t transformed;
 
-    // Apply transformations (mouse-to-analog, instance merging, etc.)
-    apply_transformations(&transformed, output, 0);  // Always player 0 in merge mode
+    if (router_config.transform_flags) {
+        transformed = *event;
+        apply_transformations(&transformed, output, 0);
+        final_event = &transformed;
+    } else {
+        final_event = event;  // Zero-copy pass-through
+    }
 
     switch (router_config.merge_mode) {
         case MERGE_ALL:
             // Latest active input wins (overwrites previous state)
-            router_outputs[output][0].current_state = transformed;
+            router_outputs[output][0].current_state = *final_event;
             break;
 
         case MERGE_BLEND: {
@@ -546,8 +561,8 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
             int slot = -1;
             for (int i = 0; i < MAX_BLEND_DEVICES; i++) {
                 if (blend_devices[output][i].active &&
-                    blend_devices[output][i].dev_addr == transformed.dev_addr &&
-                    blend_devices[output][i].instance == transformed.instance) {
+                    blend_devices[output][i].dev_addr == final_event->dev_addr &&
+                    blend_devices[output][i].instance == final_event->instance) {
                     slot = i;
                     break;
                 }
@@ -558,8 +573,8 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
                     if (!blend_devices[output][i].active) {
                         slot = i;
                         blend_devices[output][i].active = true;
-                        blend_devices[output][i].dev_addr = transformed.dev_addr;
-                        blend_devices[output][i].instance = transformed.instance;
+                        blend_devices[output][i].dev_addr = final_event->dev_addr;
+                        blend_devices[output][i].instance = final_event->instance;
                         break;
                     }
                 }
@@ -567,7 +582,7 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
 
             if (slot >= 0) {
                 // Update this device's state
-                blend_devices[output][slot].state = transformed;
+                blend_devices[output][slot].state = *final_event;
 
                 // Now re-blend ALL active devices
                 output_state_t* out = &router_outputs[output][0];
@@ -650,7 +665,7 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
             // Check if this source has higher priority than current
             if (router_outputs[output][0].source <= INPUT_SOURCE_USB_HOST) {
                 // USB has highest priority (0), always wins
-                router_outputs[output][0].current_state = transformed;
+                router_outputs[output][0].current_state = *final_event;
             }
             // Lower priority sources only update if no USB input active
             // TODO: Track activity timeout for priority fallback
@@ -718,15 +733,25 @@ void router_submit_input(const input_event_t* event) {
                         uint8_t target_player = matches[i].output_player_id;
 
                         if (target_player != 0xFF && target_player < MAX_PLAYERS_PER_OUTPUT) {
-                            input_event_t transformed = *event;
-                            apply_transformations(&transformed, target, target_player);
+                            const input_event_t* final_event;
+                            input_event_t transformed;
 
-                            router_outputs[target][target_player].current_state = transformed;
-                            router_outputs[target][target_player].updated = true;
-                            router_outputs[target][target_player].source = INPUT_SOURCE_USB_HOST;
+                            if (router_config.transform_flags) {
+                                transformed = *event;
+                                apply_transformations(&transformed, target, target_player);
+                                final_event = &transformed;
+                            } else {
+                                final_event = event;
+                            }
+
+                            if (!output_tap_exclusive[target]) {
+                                router_outputs[target][target_player].current_state = *final_event;
+                                router_outputs[target][target_player].updated = true;
+                                router_outputs[target][target_player].source = INPUT_SOURCE_USB_HOST;
+                            }
 
                             if (output_taps[target]) {
-                                output_taps[target](target, target_player, &transformed);
+                                output_taps[target](target, target_player, final_event);
                             }
                         } else {
                             router_simple_mode(event, target);
@@ -831,7 +856,17 @@ output_target_t router_get_primary_output(void) {
 void router_set_tap(output_target_t output, router_tap_callback_t callback) {
     if (output >= 0 && output < MAX_OUTPUTS) {
         output_taps[output] = callback;
+        output_tap_exclusive[output] = false;
         printf(LOG_TAG "Tap %s for output %d\n",
+               callback ? "registered" : "unregistered", output);
+    }
+}
+
+void router_set_tap_exclusive(output_target_t output, router_tap_callback_t callback) {
+    if (output >= 0 && output < MAX_OUTPUTS) {
+        output_taps[output] = callback;
+        output_tap_exclusive[output] = (callback != NULL);
+        printf(LOG_TAG "Exclusive tap %s for output %d\n",
                callback ? "registered" : "unregistered", output);
     }
 }

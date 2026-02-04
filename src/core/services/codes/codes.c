@@ -110,6 +110,14 @@ void codes_task_for_output(output_target_t output)
     codes_process_buttons(event);
 }
 
+// Process raw button state (for tap-exclusive outputs that don't poll router_get_output)
+void codes_process_raw(uint32_t buttons)
+{
+    input_event_t event;
+    event.buttons = buttons;
+    codes_process_buttons(&event);
+}
+
 // ============================================================================
 // INTERNAL HELPERS
 // ============================================================================
