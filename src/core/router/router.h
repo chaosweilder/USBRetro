@@ -216,7 +216,13 @@ typedef void (*router_tap_callback_t)(output_target_t output, uint8_t player_ind
                                        const input_event_t* event);
 
 // Set tap callback for an output (NULL to disable)
+// Output still stores to router_outputs[] for polling via router_get_output()
 void router_set_tap(output_target_t output, router_tap_callback_t callback);
+
+// Set tap callback with exclusive mode — output is fully push-based,
+// router skips storing to router_outputs[] (avoids copy on hot path).
+// Use this when the output never calls router_get_output().
+void router_set_tap_exclusive(output_target_t output, router_tap_callback_t callback);
 
 // ============================================================================
 // INTERNAL STATE (exposed for debugging, don't modify directly)
