@@ -3,6 +3,8 @@
 #include "core/buttons.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
+#include "core/services/players/manager.h"
+#include "core/services/players/feedback.h"
 #include "pico/time.h"
 #include "app_config.h"
 
@@ -14,6 +16,7 @@ typedef struct TU_ATTR_PACKED
 {
   uint8_t rumble;
   uint8_t player;
+  uint8_t led_r, led_g, led_b;
 } ds5_instance_t;
 
 // Cached device report properties on mount
@@ -242,50 +245,34 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, device_output_config_t*
     ds5_fb.trigger_r.range_force = 0xff;
   }
 
-  // Console-specific LED colors from led_config.h
-  switch (config->player_index+1)
-  {
-  case 1:
-    ds5_fb.player_led = LED_P1_PATTERN;
-    ds5_fb.lightbar_r = LED_P1_R;
-    ds5_fb.lightbar_g = LED_P1_G;
-    ds5_fb.lightbar_b = LED_P1_B;
-    break;
+  // Get RGB and player LED from feedback system (canonical source)
+  int8_t player_idx = find_player_index(dev_addr, instance);
+  feedback_state_t* fb = (player_idx >= 0) ? feedback_get_state(player_idx) : NULL;
 
-  case 2:
-    ds5_fb.player_led = LED_P2_PATTERN;
-    ds5_fb.lightbar_r = LED_P2_R;
-    ds5_fb.lightbar_g = LED_P2_G;
-    ds5_fb.lightbar_b = LED_P2_B;
-    break;
+  if (fb && (fb->led.r || fb->led.g || fb->led.b)) {
+    ds5_fb.lightbar_r = fb->led.r;
+    ds5_fb.lightbar_g = fb->led.g;
+    ds5_fb.lightbar_b = fb->led.b;
+  } else {
+    // Fallback to app-specific defaults when no feedback RGB set
+    switch (config->player_index+1) {
+    case 1:  ds5_fb.lightbar_r = LED_P1_R; ds5_fb.lightbar_g = LED_P1_G; ds5_fb.lightbar_b = LED_P1_B; break;
+    case 2:  ds5_fb.lightbar_r = LED_P2_R; ds5_fb.lightbar_g = LED_P2_G; ds5_fb.lightbar_b = LED_P2_B; break;
+    case 3:  ds5_fb.lightbar_r = LED_P3_R; ds5_fb.lightbar_g = LED_P3_G; ds5_fb.lightbar_b = LED_P3_B; break;
+    case 4:  ds5_fb.lightbar_r = LED_P4_R; ds5_fb.lightbar_g = LED_P4_G; ds5_fb.lightbar_b = LED_P4_B; break;
+    case 5:  ds5_fb.lightbar_r = LED_P5_R; ds5_fb.lightbar_g = LED_P5_G; ds5_fb.lightbar_b = LED_P5_B; break;
+    default: ds5_fb.lightbar_r = LED_DEFAULT_R; ds5_fb.lightbar_g = LED_DEFAULT_G; ds5_fb.lightbar_b = LED_DEFAULT_B; break;
+    }
+  }
 
-  case 3:
-    ds5_fb.player_led = LED_P3_PATTERN;
-    ds5_fb.lightbar_r = LED_P3_R;
-    ds5_fb.lightbar_g = LED_P3_G;
-    ds5_fb.lightbar_b = LED_P3_B;
-    break;
-
-  case 4:
-    ds5_fb.player_led = LED_P4_PATTERN;
-    ds5_fb.lightbar_r = LED_P4_R;
-    ds5_fb.lightbar_g = LED_P4_G;
-    ds5_fb.lightbar_b = LED_P4_B;
-    break;
-
-  case 5:
-    ds5_fb.player_led = LED_P5_PATTERN;
-    ds5_fb.lightbar_r = LED_P5_R;
-    ds5_fb.lightbar_g = LED_P5_G;
-    ds5_fb.lightbar_b = LED_P5_B;
-    break;
-
-  default:
-    ds5_fb.player_led = LED_DEFAULT_PATTERN;
-    ds5_fb.lightbar_r = LED_DEFAULT_R;
-    ds5_fb.lightbar_g = LED_DEFAULT_G;
-    ds5_fb.lightbar_b = LED_DEFAULT_B;
-    break;
+  // Player LED pattern
+  switch (config->player_index+1) {
+  case 1:  ds5_fb.player_led = LED_P1_PATTERN; break;
+  case 2:  ds5_fb.player_led = LED_P2_PATTERN; break;
+  case 3:  ds5_fb.player_led = LED_P3_PATTERN; break;
+  case 4:  ds5_fb.player_led = LED_P4_PATTERN; break;
+  case 5:  ds5_fb.player_led = LED_P5_PATTERN; break;
+  default: ds5_fb.player_led = LED_DEFAULT_PATTERN; break;
   }
 
   // test pattern
@@ -306,10 +293,16 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, device_output_config_t*
 
   if (ds5_devices[dev_addr].instances[instance].rumble != config->rumble ||
       ds5_devices[dev_addr].instances[instance].player != ds5_fb.player_led ||
+      ds5_devices[dev_addr].instances[instance].led_r != ds5_fb.lightbar_r ||
+      ds5_devices[dev_addr].instances[instance].led_g != ds5_fb.lightbar_g ||
+      ds5_devices[dev_addr].instances[instance].led_b != ds5_fb.lightbar_b ||
       config->test)
   {
     ds5_devices[dev_addr].instances[instance].rumble = config->rumble;
     ds5_devices[dev_addr].instances[instance].player = ds5_fb.player_led & 0xff;
+    ds5_devices[dev_addr].instances[instance].led_r = ds5_fb.lightbar_r;
+    ds5_devices[dev_addr].instances[instance].led_g = ds5_fb.lightbar_g;
+    ds5_devices[dev_addr].instances[instance].led_b = ds5_fb.lightbar_b;
     tuh_hid_send_report(dev_addr, instance, 5, &ds5_fb, sizeof(ds5_fb));
   }
 }
