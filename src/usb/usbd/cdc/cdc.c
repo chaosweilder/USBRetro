@@ -8,8 +8,6 @@
 #include "../usbd.h"
 #include "core/services/storage/flash.h"
 #include "tusb.h"
-#include "pico/stdio.h"
-#include "pico/stdio/driver.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,72 +22,16 @@ static uint8_t cmd_pos = 0;
 // Protocol mode detection
 static bool binary_mode = false;  // Switch to binary after receiving 0xAA
 
-// Debug output enabled flag (runtime toggle)
-static bool debug_enabled = true;
-
-// ============================================================================
-// STDIO DRIVER (routes printf to CDC debug port)
-// ============================================================================
-
-#if CFG_TUD_CDC >= 2
-
-static void cdc_stdio_out_chars(const char *buf, int len)
-{
-    if (!debug_enabled) return;
-    if (!tud_cdc_n_connected(CDC_PORT_DEBUG)) return;
-
-    // Write in chunks to avoid blocking
-    int remaining = len;
-    while (remaining > 0) {
-        int available = (int)tud_cdc_n_write_available(CDC_PORT_DEBUG);
-        if (available == 0) {
-            tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-            break;  // Don't block waiting for space
-        }
-        int to_write = remaining < available ? remaining : available;
-        int written = (int)tud_cdc_n_write(CDC_PORT_DEBUG, buf, to_write);
-        buf += written;
-        remaining -= written;
-    }
-    tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-}
-
-static void cdc_stdio_out_flush(void)
-{
-    if (tud_cdc_n_connected(CDC_PORT_DEBUG)) {
-        tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-    }
-}
-
-static stdio_driver_t cdc_stdio_driver = {
-    .out_chars = cdc_stdio_out_chars,
-    .out_flush = cdc_stdio_out_flush,
-    .in_chars = NULL,  // No input on debug port
-    .set_chars_available_callback = NULL,
-    .next = NULL,
-#if PICO_STDIO_ENABLE_CRLF_SUPPORT
-    .crlf_enabled = PICO_STDIO_DEFAULT_CRLF,
-#endif
-};
-
-#endif // CFG_TUD_CDC >= 2
-
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
 
 void cdc_init(void)
 {
-    debug_enabled = true;
     binary_mode = false;
 
     // Initialize binary protocol command handlers
     cdc_commands_init();
-
-#if CFG_TUD_CDC >= 2
-    // Register CDC debug port as stdio output
-    stdio_set_driver_enabled(&cdc_stdio_driver, true);
-#endif
 }
 
 // Process a complete command line
@@ -195,7 +137,7 @@ void cdc_task(void)
 {
     cdc_protocol_t* proto = cdc_commands_get_protocol();
 
-    // Handle rumble auto-stop etc.
+    // Handle rumble auto-stop, log drain, etc.
     cdc_commands_task();
 
     // Process incoming data on the data port
@@ -285,77 +227,6 @@ void cdc_data_flush(void)
 }
 
 // ============================================================================
-// DEBUG PORT (CDC 1)
-// ============================================================================
-
-bool cdc_debug_connected(void)
-{
-#if CFG_TUD_CDC >= 2
-    return tud_cdc_n_connected(CDC_PORT_DEBUG);
-#else
-    return false;
-#endif
-}
-
-int cdc_debug_printf(const char* format, ...)
-{
-#if CFG_TUD_CDC >= 2
-    if (!debug_enabled || !tud_cdc_n_connected(CDC_PORT_DEBUG)) {
-        return 0;
-    }
-
-    char buffer[256];
-    va_list args;
-    va_start(args, format);
-    int len = vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-
-    if (len > 0) {
-        uint32_t written = tud_cdc_n_write(CDC_PORT_DEBUG, buffer, len);
-        tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-        return written;
-    }
-    return 0;
-#else
-    (void)format;
-    return 0;
-#endif
-}
-
-uint32_t cdc_debug_write(const uint8_t* buffer, uint32_t bufsize)
-{
-#if CFG_TUD_CDC >= 2
-    if (!debug_enabled || !tud_cdc_n_connected(CDC_PORT_DEBUG)) {
-        return 0;
-    }
-    uint32_t written = tud_cdc_n_write(CDC_PORT_DEBUG, buffer, bufsize);
-    tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-    return written;
-#else
-    (void)buffer;
-    (void)bufsize;
-    return 0;
-#endif
-}
-
-void cdc_debug_flush(void)
-{
-#if CFG_TUD_CDC >= 2
-    tud_cdc_n_write_flush(CDC_PORT_DEBUG);
-#endif
-}
-
-void cdc_debug_set_enabled(bool enabled)
-{
-    debug_enabled = enabled;
-}
-
-bool cdc_debug_is_enabled(void)
-{
-    return debug_enabled;
-}
-
-// ============================================================================
 // TINYUSB CDC CALLBACKS
 // ============================================================================
 
@@ -399,11 +270,5 @@ int32_t cdc_data_read_byte(void) { return -1; }
 uint32_t cdc_data_write(const uint8_t* buffer, uint32_t bufsize) { (void)buffer; (void)bufsize; return 0; }
 uint32_t cdc_data_write_str(const char* str) { (void)str; return 0; }
 void cdc_data_flush(void) {}
-bool cdc_debug_connected(void) { return false; }
-int cdc_debug_printf(const char* format, ...) { (void)format; return 0; }
-uint32_t cdc_debug_write(const uint8_t* buffer, uint32_t bufsize) { (void)buffer; (void)bufsize; return 0; }
-void cdc_debug_flush(void) {}
-void cdc_debug_set_enabled(bool enabled) { (void)enabled; }
-bool cdc_debug_is_enabled(void) { return false; }
 
 #endif // CFG_TUD_CDC

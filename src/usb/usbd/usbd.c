@@ -90,6 +90,9 @@ static char usb_serial_str[USB_SERIAL_LEN + 1];
 static usb_output_mode_t output_mode = USB_OUTPUT_MODE_SINPUT;
 static flash_t flash_settings;
 
+// Forward declaration (defined in CONFIGURATION DESCRIPTOR section)
+static void build_config_descriptors(void);
+
 // Mode names for display
 static const char* mode_names[] = {
     [USB_OUTPUT_MODE_HID] = "DInput",
@@ -563,6 +566,9 @@ void usbd_init(void)
     }
 
     printf("[usbd] Mode: %s\n", mode_names[output_mode]);
+
+    // Build runtime config descriptors (must happen before tusb_init)
+    build_config_descriptors();
 
     // Get unique board ID for USB serial number (first 12 chars)
     char full_id[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1];
@@ -1347,10 +1353,6 @@ enum {
     ITF_NUM_CDC_0 = ITF_NUM_HID_MOUSE + 1,  // CDC 0 control interface (data port)
     ITF_NUM_CDC_0_DATA,                       // CDC 0 data interface
 #endif
-#if CFG_TUD_CDC >= 2
-    ITF_NUM_CDC_1,             // CDC 1 control interface (debug port)
-    ITF_NUM_CDC_1_DATA,        // CDC 1 data interface
-#endif
     ITF_NUM_TOTAL
 };
 
@@ -1373,11 +1375,6 @@ enum {
 #define EPNUM_CDC_0_IN      0x85
 #endif
 
-#if CFG_TUD_CDC >= 2
-#define EPNUM_CDC_1_NOTIF   0x86
-#define EPNUM_CDC_1_OUT     0x07
-#define EPNUM_CDC_1_IN      0x87
-#endif
 
 // ============================================================================
 // DEVICE DESCRIPTOR
@@ -1444,61 +1441,85 @@ uint8_t const *tud_descriptor_device_cb(void)
 // CONFIGURATION DESCRIPTOR
 // ============================================================================
 
-// HID mode configuration descriptor
-#define CONFIG_TOTAL_LEN_HID (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + (CFG_TUD_CDC * TUD_CDC_DESC_LEN))
+// Compile-time descriptor fragments (always compiled, concatenated at runtime)
 
-static const uint8_t desc_configuration_hid[] = {
-    // Config: bus powered, max 100mA
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN_HID, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-
-    // Interface 0: HID gamepad
+// HID gamepad fragment (IN-only, for HID/DInput mode)
+static const uint8_t desc_frag_hid_gamepad[] = {
     TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE, sizeof(hid_report_descriptor), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 1),
-
-#if CFG_TUD_CDC >= 1
-    // CDC 0: Data port (commands, config)
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, 4, EPNUM_CDC_0_NOTIF, 8, EPNUM_CDC_0_OUT, EPNUM_CDC_0_IN, 64),
-#endif
-
-#if CFG_TUD_CDC >= 2
-    // CDC 1: Debug port (logging)
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_1, 5, EPNUM_CDC_1_NOTIF, 8, EPNUM_CDC_1_OUT, EPNUM_CDC_1_IN, 64),
-#endif
 };
 
-// SInput composite configuration descriptor (gamepad + keyboard + mouse + CDC)
-// Shared by both SInput and KB/Mouse modes for instant switching
-#define CONFIG_TOTAL_LEN_SINPUT (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN + (CFG_TUD_CDC * TUD_CDC_DESC_LEN))
-
-static const uint8_t desc_configuration_sinput[] = {
-    // Config: bus powered, max 500mA
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN_SINPUT, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
-
-    // Interface 0: HID gamepad with IN and OUT endpoints (for rumble/LEDs)
+// SInput HID fragments (composite: gamepad INOUT + keyboard + mouse)
+static const uint8_t desc_frag_sinput_gamepad[] = {
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID_GAMEPAD, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_report_descriptor), EPNUM_HID_GAMEPAD_OUT, EPNUM_HID_GAMEPAD, CFG_TUD_HID_EP_BUFSIZE, 1),
-
-    // Interface 1: HID keyboard (IN only)
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID_KEYBOARD, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_keyboard_report_descriptor), EPNUM_HID_KEYBOARD, 16, 1),
-
-    // Interface 2: HID mouse (IN only)
-    TUD_HID_DESCRIPTOR(ITF_NUM_HID_MOUSE, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_mouse_report_descriptor), EPNUM_HID_MOUSE, 8, 1),
-
-#if CFG_TUD_CDC >= 1
-    // CDC 0: Data port (commands, config)
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, 4, EPNUM_CDC_0_NOTIF, 8, EPNUM_CDC_0_OUT, EPNUM_CDC_0_IN, 64),
-#endif
-
-#if CFG_TUD_CDC >= 2
-    // CDC 1: Debug port (logging)
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_1, 5, EPNUM_CDC_1_NOTIF, 8, EPNUM_CDC_1_OUT, EPNUM_CDC_1_IN, 64),
-#endif
 };
+static const uint8_t desc_frag_sinput_keyboard[] = {
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID_KEYBOARD, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_keyboard_report_descriptor), EPNUM_HID_KEYBOARD, 16, 1),
+};
+static const uint8_t desc_frag_sinput_mouse[] = {
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID_MOUSE, 0, HID_ITF_PROTOCOL_NONE, sizeof(sinput_mouse_report_descriptor), EPNUM_HID_MOUSE, 8, 1),
+};
+
+// CDC 0 fragment (data port - always present)
+static const uint8_t desc_frag_cdc0[] = {
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, 4, EPNUM_CDC_0_NOTIF, 8, EPNUM_CDC_0_OUT, EPNUM_CDC_0_IN, 64),
+};
+
+// Max possible config descriptor sizes
+#define MAX_CONFIG_LEN_HID    (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
+#define MAX_CONFIG_LEN_SINPUT (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN + 2 * TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
+
+// Runtime-built config descriptor buffers
+static uint8_t runtime_desc_hid[MAX_CONFIG_LEN_HID];
+static uint8_t runtime_desc_sinput[MAX_CONFIG_LEN_SINPUT];
+
+// Helper: append fragment to buffer, return new offset
+static uint16_t append_fragment(uint8_t* buf, uint16_t offset, const uint8_t* frag, uint16_t frag_len)
+{
+    memcpy(buf + offset, frag, frag_len);
+    return offset + frag_len;
+}
+
+// Build runtime config descriptors
+// Must be called before tusb_init()
+static void build_config_descriptors(void)
+{
+    uint16_t off;
+
+    // --- HID mode descriptor ---
+    // Interfaces: 1 HID + 2 CDC (data)
+    uint8_t hid_itf_count = 1 + 2;  // HID + CDC0 (2 interfaces)
+    off = TUD_CONFIG_DESC_LEN;  // Skip header, fill later
+    off = append_fragment(runtime_desc_hid, off, desc_frag_hid_gamepad, sizeof(desc_frag_hid_gamepad));
+    off = append_fragment(runtime_desc_hid, off, desc_frag_cdc0, sizeof(desc_frag_cdc0));
+
+    // Write config header (9 bytes)
+    uint8_t hid_header[] = {
+        TUD_CONFIG_DESCRIPTOR(1, hid_itf_count, 0, off, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100)
+    };
+    memcpy(runtime_desc_hid, hid_header, TUD_CONFIG_DESC_LEN);
+
+    // --- SInput mode descriptor ---
+    // Interfaces: 3 HID + 2 CDC (data)
+    uint8_t sinput_itf_count = 3 + 2;  // 3 HID + CDC0 (2 interfaces)
+    off = TUD_CONFIG_DESC_LEN;  // Skip header
+    off = append_fragment(runtime_desc_sinput, off, desc_frag_sinput_gamepad, sizeof(desc_frag_sinput_gamepad));
+    off = append_fragment(runtime_desc_sinput, off, desc_frag_sinput_keyboard, sizeof(desc_frag_sinput_keyboard));
+    off = append_fragment(runtime_desc_sinput, off, desc_frag_sinput_mouse, sizeof(desc_frag_sinput_mouse));
+    off = append_fragment(runtime_desc_sinput, off, desc_frag_cdc0, sizeof(desc_frag_cdc0));
+
+    // Write config header (9 bytes)
+    uint8_t sinput_header[] = {
+        TUD_CONFIG_DESCRIPTOR(1, sinput_itf_count, 0, off, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500)
+    };
+    memcpy(runtime_desc_sinput, sinput_header, TUD_CONFIG_DESC_LEN);
+}
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
     (void)index;
     switch (output_mode) {
         case USB_OUTPUT_MODE_SINPUT:
-            return desc_configuration_sinput;
+            return runtime_desc_sinput;
         case USB_OUTPUT_MODE_XBOX_ORIGINAL:
             return xbox_og_config_descriptor;
         case USB_OUTPUT_MODE_XINPUT:
@@ -1517,12 +1538,12 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
             return xac_config_descriptor;
         case USB_OUTPUT_MODE_KEYBOARD_MOUSE:
             // Share SInput composite descriptor (same USB device)
-            return desc_configuration_sinput;
+            return runtime_desc_sinput;
         case USB_OUTPUT_MODE_GC_ADAPTER:
             return gc_adapter_config_descriptor;
         case USB_OUTPUT_MODE_HID:
         default:
-            return desc_configuration_hid;
+            return runtime_desc_hid;
     }
 }
 
@@ -1538,9 +1559,6 @@ enum {
     STRID_SERIAL,
 #if CFG_TUD_CDC >= 1
     STRID_CDC_DATA,
-#endif
-#if CFG_TUD_CDC >= 2
-    STRID_CDC_DEBUG,
 #endif
     STRID_COUNT
 };
@@ -1671,11 +1689,6 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 #if CFG_TUD_CDC >= 1
         case STRID_CDC_DATA:
             str = "Joypad Data";
-            break;
-#endif
-#if CFG_TUD_CDC >= 2
-        case STRID_CDC_DEBUG:
-            str = "Joypad Debug";
             break;
 #endif
         default:

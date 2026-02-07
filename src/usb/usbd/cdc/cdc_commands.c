@@ -13,6 +13,8 @@
 #include "pico/unique_id.h"
 #include "pico/bootrom.h"
 #include "pico/time.h"
+#include "pico/stdio.h"
+#include "pico/stdio/driver.h"
 #include "tusb.h"
 #include <string.h>
 #include <stdio.h>
@@ -30,6 +32,42 @@
 
 static cdc_protocol_t protocol_ctx;
 static char response_buf[CDC_MAX_PAYLOAD];
+
+// ============================================================================
+// LOG CAPTURE (ring buffer + stdio driver)
+// ============================================================================
+
+#define LOG_BUF_SIZE 1024
+static char log_ring[LOG_BUF_SIZE];
+static volatile uint16_t log_head = 0;  // Write position
+static volatile uint16_t log_tail = 0;  // Read position
+
+static void log_stdio_out_chars(const char *buf, int len)
+{
+    for (int i = 0; i < len; i++) {
+        uint16_t next = (log_head + 1) % LOG_BUF_SIZE;
+        if (next == log_tail) {
+            // Buffer full - drop oldest byte
+            log_tail = (log_tail + 1) % LOG_BUF_SIZE;
+        }
+        log_ring[log_head] = buf[i];
+        log_head = next;
+    }
+}
+
+static stdio_driver_t log_stdio_driver = {
+    .out_chars = log_stdio_out_chars,
+    .out_flush = NULL,
+    .in_chars = NULL,
+    .set_chars_available_callback = NULL,
+    .next = NULL,
+#if PICO_STDIO_ENABLE_CRLF_SUPPORT
+    .crlf_enabled = PICO_STDIO_DEFAULT_CRLF,
+#endif
+};
+
+// Separate buffer for log events (not shared with response_buf)
+static char log_event_buf[384];
 
 // App info (set by CMake or use defaults)
 #ifndef APP_NAME
@@ -804,6 +842,43 @@ static void cmd_cprofile_delete(const char* json)
     cmd_profile_delete(json);
 }
 
+// ============================================================================
+// DEBUG LOG STREAM COMMAND
+// ============================================================================
+
+static void cmd_debug_stream(const char* json)
+{
+    bool enable;
+    if (!json_get_bool(json, "enable", &enable)) {
+        send_error("missing enable");
+        return;
+    }
+
+    protocol_ctx.log_streaming = enable;
+
+    if (!enable) {
+        // Drain any stale data when disabling
+        log_tail = log_head;
+    } else {
+        // Flush stale data so only fresh logs are streamed
+        log_tail = log_head;
+    }
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"streaming\":%s}",
+             enable ? "true" : "false");
+    send_json(response_buf);
+
+    // Print after response so next drain picks it up
+    if (enable) {
+        printf("[LOG] Debug log streaming started\n");
+    }
+}
+
+// ============================================================================
+// SETTINGS COMMANDS
+// ============================================================================
+
 static void cmd_settings_get(const char* json)
 {
     (void)json;
@@ -1029,7 +1104,7 @@ static void cmd_rumble_stop(const char* json)
     send_ok();
 }
 
-// Call from main loop to auto-stop rumble after duration
+// Call from main loop to auto-stop rumble after duration and drain log buffer
 void cdc_commands_task(void)
 {
     if (rumble_test_state.active) {
@@ -1046,6 +1121,54 @@ void cdc_commands_task(void)
             rumble_test_state.active = false;
             printf("[CDC] RUMBLE.TEST: auto-stopped after %lu ms\n",
                    (unsigned long)rumble_test_state.duration_ms);
+        }
+    }
+
+    // Drain log ring buffer and send as events
+    if (protocol_ctx.log_streaming && log_head != log_tail) {
+        // Collect up to 256 raw bytes from ring buffer
+        char raw[256];
+        int raw_len = 0;
+        while (log_tail != log_head && raw_len < (int)sizeof(raw)) {
+            raw[raw_len++] = log_ring[log_tail];
+            log_tail = (log_tail + 1) % LOG_BUF_SIZE;
+        }
+
+        if (raw_len > 0) {
+            // Build JSON event with escaped message
+            // Prefix: {"type":"log","msg":"  = 22 chars
+            // Suffix: "}                     = 2 chars
+            // Max overhead per char: 2 (for \n, \", \\)
+            int pos = 0;
+            pos += snprintf(log_event_buf + pos, sizeof(log_event_buf) - pos,
+                            "{\"type\":\"log\",\"msg\":\"");
+            for (int i = 0; i < raw_len && pos < (int)sizeof(log_event_buf) - 10; i++) {
+                char c = raw[i];
+                if (c == '\\') {
+                    log_event_buf[pos++] = '\\';
+                    log_event_buf[pos++] = '\\';
+                } else if (c == '"') {
+                    log_event_buf[pos++] = '\\';
+                    log_event_buf[pos++] = '"';
+                } else if (c == '\n') {
+                    log_event_buf[pos++] = '\\';
+                    log_event_buf[pos++] = 'n';
+                } else if (c == '\r') {
+                    log_event_buf[pos++] = '\\';
+                    log_event_buf[pos++] = 'r';
+                } else if (c == '\t') {
+                    log_event_buf[pos++] = '\\';
+                    log_event_buf[pos++] = 't';
+                } else if (c >= 0x20) {
+                    log_event_buf[pos++] = c;
+                }
+                // Drop other control characters
+            }
+            log_event_buf[pos++] = '"';
+            log_event_buf[pos++] = '}';
+            log_event_buf[pos] = '\0';
+
+            cdc_protocol_send_event(&protocol_ctx, log_event_buf);
         }
     }
 }
@@ -1083,6 +1206,7 @@ static const cmd_entry_t commands[] = {
     {"CPROFILE.DELETE", cmd_cprofile_delete},
     {"CPROFILE.SELECT", cmd_cprofile_select},
     {"INPUT.STREAM", cmd_input_stream},
+    {"DEBUG.STREAM", cmd_debug_stream},
     {"SETTINGS.GET", cmd_settings_get},
     {"SETTINGS.RESET", cmd_settings_reset},
     // Player management
@@ -1140,6 +1264,9 @@ static void packet_handler(const cdc_packet_t* packet)
 void cdc_commands_init(void)
 {
     cdc_protocol_init(&protocol_ctx, packet_handler);
+
+    // Register stdio driver to capture printf output into ring buffer
+    stdio_set_driver_enabled(&log_stdio_driver, true);
 
     // Debug: print build info at startup
     printf("[CDC] Build Info Debug:\n");

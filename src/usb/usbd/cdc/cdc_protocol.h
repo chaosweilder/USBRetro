@@ -94,6 +94,7 @@ typedef struct {
     uint8_t cmd_seq;            // Last received CMD sequence (for RSP)
     cdc_packet_handler_t handler;
     bool input_streaming;       // Input event streaming enabled
+    bool log_streaming;         // Debug log streaming enabled
 } cdc_protocol_t;
 
 // ============================================================================

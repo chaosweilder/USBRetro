@@ -257,6 +257,10 @@
             color: var(--success);
         }
 
+        .log-entry.debug {
+            color: #7c8cbf;
+        }
+
         .device-info {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -715,12 +719,11 @@
 
             <!-- Input Test -->
             <div class="card">
-                <h2>Input Test</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2 style="margin-bottom: 0;">Input Test</h2>
+                    <button id="streamBtn" class="secondary" style="padding: 6px 12px; font-size: 12px;">Start Stream</button>
+                </div>
                 <div class="card-content">
-                    <div class="row">
-                        <span class="label">Live Stream</span>
-                        <button id="streamBtn" class="secondary">Start Streaming</button>
-                    </div>
                     <div class="stream-container">
                         <!-- Input (raw controller data) -->
                         <div class="stream-section">
@@ -840,7 +843,7 @@
                 </div>
             </div>
 
-            <!-- Danger Zone -->
+            <!-- Advanced Settings -->
             <div class="card">
                 <h2>Advanced</h2>
                 <div class="card-content">
@@ -858,7 +861,10 @@
 
             <!-- Log -->
             <div class="card">
-                <h2>Log</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2 style="margin-bottom: 0;">Log</h2>
+                    <button id="debugStreamBtn" class="secondary" style="padding: 6px 12px; font-size: 12px;">Debug Stream</button>
+                </div>
                 <div class="log" id="log"></div>
             </div>
         </div>

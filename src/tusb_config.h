@@ -144,11 +144,8 @@
   #define CFG_TUD_GC_ADAPTER        1   // Enable GC adapter class driver
   #define CFG_TUD_GC_ADAPTER_EP_BUFSIZE 37  // GC adapter endpoint buffer size (37 bytes)
 
-  // CDC configuration: 0=none, 1=data only, 2=data+debug
-  #ifndef USBR_CDC_DEBUG
-  #define USBR_CDC_DEBUG            1   // Default: debug enabled
-  #endif
-  #define CFG_TUD_CDC               (1 + USBR_CDC_DEBUG)  // 1=data, 2=data+debug
+  // CDC configuration: single data port (debug logs streamed as protocol events)
+  #define CFG_TUD_CDC               1
 
   #define CFG_TUD_MSC               0   // No mass storage
   #define CFG_TUD_MIDI              0   // No MIDI

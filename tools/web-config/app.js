@@ -53,6 +53,7 @@ class JoypadConfigApp {
     constructor() {
         this.protocol = new CDCProtocol();
         this.streaming = false;
+        this.debugStreaming = false;
         this.customProfiles = [];
         this.activeProfileIndex = 0;
         this.editingProfileIndex = null;
@@ -101,6 +102,7 @@ class JoypadConfigApp {
         document.getElementById('rebootBtn').addEventListener('click', () => this.reboot());
         document.getElementById('bootselBtn').addEventListener('click', () => this.bootsel());
         document.getElementById('rumbleBtn').addEventListener('click', () => this.testRumble());
+        document.getElementById('debugStreamBtn').addEventListener('click', () => this.toggleDebugStream());
 
         // Custom profile events
         document.getElementById('newProfileBtn').addEventListener('click', () => this.openProfileEditor(null));
@@ -207,7 +209,14 @@ class JoypadConfigApp {
             if (this.streaming) {
                 await this.protocol.enableInputStream(false);
                 this.streaming = false;
-                this.streamBtn.textContent = 'Start Streaming';
+                this.streamBtn.textContent = 'Start Stream';
+                this.streamBtn.style.background = '';
+            }
+            if (this.debugStreaming) {
+                this.debugStreaming = false;
+                const btn = document.getElementById('debugStreamBtn');
+                btn.textContent = 'Debug Stream';
+                btn.style.background = '';
             }
             await this.protocol.disconnect();
             this.log('Disconnected');
@@ -313,11 +322,30 @@ class JoypadConfigApp {
         }
     }
 
+    async toggleDebugStream() {
+        const btn = document.getElementById('debugStreamBtn');
+        const enable = !this.debugStreaming;
+        btn.textContent = enable ? 'Starting...' : 'Stopping...';
+        try {
+            await this.protocol.enableDebugStream(enable);
+            this.debugStreaming = enable;
+            btn.textContent = enable ? 'Stop Debug' : 'Debug Stream';
+            btn.style.background = enable ? 'var(--success)' : '';
+            this.log(enable ? 'Debug log streaming enabled' : 'Debug log streaming disabled');
+        } catch (e) {
+            this.debugStreaming = false;
+            btn.textContent = 'Debug Stream';
+            btn.style.background = '';
+            this.log(`Failed to toggle debug stream: ${e.message}`, 'error');
+        }
+    }
+
     async toggleStreaming() {
         try {
             this.streaming = !this.streaming;
             await this.protocol.enableInputStream(this.streaming);
-            this.streamBtn.textContent = this.streaming ? 'Stop Streaming' : 'Start Streaming';
+            this.streamBtn.textContent = this.streaming ? 'Stop Stream' : 'Start Stream';
+            this.streamBtn.style.background = this.streaming ? 'var(--success)' : '';
             this.log(this.streaming ? 'Input streaming enabled' : 'Input streaming disabled');
 
             if (this.streaming) {
@@ -418,6 +446,14 @@ class JoypadConfigApp {
         } else if (event.type === 'disconnect') {
             this.log(`Controller disconnected: port ${event.port}`);
             document.getElementById('inputDeviceName').textContent = '';
+        } else if (event.type === 'log') {
+            // Weave firmware debug logs into the main log pane
+            if (event.msg) {
+                const lines = event.msg.split('\n').filter(l => l.length > 0);
+                for (const line of lines) {
+                    this.log(line, 'debug');
+                }
+            }
         }
     }
 

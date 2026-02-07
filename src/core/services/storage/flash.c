@@ -545,3 +545,4 @@ void flash_cycle_profile_prev(void)
     uint8_t prev = (current == 0) ? (total - 1) : (current - 1);
     flash_set_active_profile_index(prev);
 }
+

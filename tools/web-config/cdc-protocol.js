@@ -424,6 +424,10 @@ class CDCProtocol {
         return this.sendCommand('RUMBLE.STOP', { player });
     }
 
+    async enableDebugStream(enable) {
+        return this.sendCommand('DEBUG.STREAM', { enable });
+    }
+
 }
 
 // Export for module use
