@@ -30,6 +30,7 @@ typedef enum {
     USB_OUTPUT_MODE_XAC,                // Xbox Adaptive Controller compatible
     USB_OUTPUT_MODE_KEYBOARD_MOUSE,     // Keyboard + Mouse composite HID
     USB_OUTPUT_MODE_GC_ADAPTER,         // GameCube Adapter for Wii U/Switch
+    USB_OUTPUT_MODE_PCEMINI,            // PC Engine Mini (TurboGrafx-16 Mini)
     USB_OUTPUT_MODE_COUNT
 } usb_output_mode_t;
 

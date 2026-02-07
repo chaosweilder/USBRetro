@@ -27,6 +27,7 @@
 #include "descriptors/xac_descriptors.h"
 #include "descriptors/kbmouse_descriptors.h"
 #include "descriptors/gc_adapter_descriptors.h"
+#include "descriptors/pcemini_descriptors.h"
 #include "kbmouse/kbmouse.h"
 #include "drivers/tud_xid.h"
 #include "drivers/tud_xinput.h"
@@ -107,6 +108,7 @@ static const char* mode_names[] = {
     [USB_OUTPUT_MODE_XAC] = "XAC Compat",
     [USB_OUTPUT_MODE_KEYBOARD_MOUSE] = "KB/Mouse",
     [USB_OUTPUT_MODE_GC_ADAPTER] = "GC Adapter",
+    [USB_OUTPUT_MODE_PCEMINI] = "PCE Mini",
 };
 
 // ============================================================================
@@ -135,6 +137,7 @@ void usbd_register_modes(void)
     usbd_modes[USB_OUTPUT_MODE_XBONE] = &xbone_mode;
     usbd_modes[USB_OUTPUT_MODE_XAC] = &xac_mode;
     usbd_modes[USB_OUTPUT_MODE_KEYBOARD_MOUSE] = &kbmouse_mode;
+    usbd_modes[USB_OUTPUT_MODE_PCEMINI] = &pcemini_mode;
 #if CFG_TUD_GC_ADAPTER
     usbd_modes[USB_OUTPUT_MODE_GC_ADAPTER] = &gc_adapter_mode;
 #endif
@@ -383,7 +386,8 @@ bool usbd_set_mode(usb_output_mode_t mode)
         mode != USB_OUTPUT_MODE_XBONE &&
         mode != USB_OUTPUT_MODE_XAC &&
         mode != USB_OUTPUT_MODE_KEYBOARD_MOUSE &&
-        mode != USB_OUTPUT_MODE_GC_ADAPTER) {
+        mode != USB_OUTPUT_MODE_GC_ADAPTER &&
+        mode != USB_OUTPUT_MODE_PCEMINI) {
         printf("[usbd] Mode %d not yet supported\n", mode);
         return false;
     }
@@ -548,7 +552,8 @@ void usbd_init(void)
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_XBONE ||
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_XAC ||
                 flash_settings.usb_output_mode == USB_OUTPUT_MODE_KEYBOARD_MOUSE ||
-                flash_settings.usb_output_mode == USB_OUTPUT_MODE_GC_ADAPTER) {
+                flash_settings.usb_output_mode == USB_OUTPUT_MODE_GC_ADAPTER ||
+                flash_settings.usb_output_mode == USB_OUTPUT_MODE_PCEMINI) {
                 output_mode = (usb_output_mode_t)flash_settings.usb_output_mode;
                 printf("[usbd] Loaded mode from flash: %s\n", mode_names[output_mode]);
             } else if (flash_settings.usb_output_mode == USB_OUTPUT_MODE_HID) {
@@ -660,6 +665,13 @@ void usbd_init(void)
 #endif
             break;
 
+        case USB_OUTPUT_MODE_PCEMINI:
+            // PCE Mini mode: delegate to mode interface
+            if (usbd_modes[USB_OUTPUT_MODE_PCEMINI] && usbd_modes[USB_OUTPUT_MODE_PCEMINI]->init) {
+                usbd_modes[USB_OUTPUT_MODE_PCEMINI]->init();
+            }
+            break;
+
         case USB_OUTPUT_MODE_HID:
             // Initialize HID mode via mode interface
             if (usbd_modes[USB_OUTPUT_MODE_HID] && usbd_modes[USB_OUTPUT_MODE_HID]->init) {
@@ -747,6 +759,19 @@ void usbd_task(void)
             const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_PSCLASSIC];
             if (mode && mode->is_ready && mode->is_ready()) {
                 usbd_send_report(0);
+            }
+            break;
+        }
+
+        case USB_OUTPUT_MODE_PCEMINI: {
+            // PCE Mini mode: process new input first, turbo resend only if idle
+            const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_PCEMINI];
+            if (mode) {
+                bool sent = false;
+                if (mode->is_ready && mode->is_ready()) {
+                    sent = usbd_send_report(0);
+                }
+                if (!sent && mode->task) mode->task();
             }
             break;
         }
@@ -1032,6 +1057,28 @@ static bool usbd_send_psclassic_report(uint8_t player_index)
     return mode->send_report(player_index, event, &profile_out, processed_buttons);
 }
 
+// Send PCE Mini report - delegates to mode interface
+static bool usbd_send_pcemini_report(uint8_t player_index)
+{
+    const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_PCEMINI];
+    if (!mode || !mode->send_report) return false;
+    if (mode->is_ready && !mode->is_ready()) return false;
+
+    // Check for pending event
+    if (player_index >= USB_MAX_PLAYERS || !pending_flags[player_index]) {
+        return false;
+    }
+
+    const input_event_t* event = &pending_events[player_index];
+    pending_flags[player_index] = false;
+
+    // Apply profile
+    profile_output_t profile_out;
+    uint32_t processed_buttons = apply_usbd_profile(event, &profile_out);
+
+    return mode->send_report(player_index, event, &profile_out, processed_buttons);
+}
+
 // Send PS4 report - delegates to mode interface
 static bool usbd_send_ps4_report(uint8_t player_index)
 {
@@ -1160,6 +1207,8 @@ bool usbd_send_report(uint8_t player_index)
             return usbd_send_ps3_report(player_index);
         case USB_OUTPUT_MODE_PSCLASSIC:
             return usbd_send_psclassic_report(player_index);
+        case USB_OUTPUT_MODE_PCEMINI:
+            return usbd_send_pcemini_report(player_index);
         case USB_OUTPUT_MODE_PS4:
             return usbd_send_ps4_report(player_index);
         case USB_OUTPUT_MODE_XBONE:
@@ -1420,6 +1469,8 @@ uint8_t const *tud_descriptor_device_cb(void)
             return (uint8_t const *)&ps3_device_descriptor;
         case USB_OUTPUT_MODE_PSCLASSIC:
             return (uint8_t const *)&psclassic_device_descriptor;
+        case USB_OUTPUT_MODE_PCEMINI:
+            return (uint8_t const *)&pcemini_device_descriptor;
         case USB_OUTPUT_MODE_PS4:
             return (uint8_t const *)&ps4_device_descriptor;
         case USB_OUTPUT_MODE_XBONE:
@@ -1530,6 +1581,8 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
             return ps3_config_descriptor;
         case USB_OUTPUT_MODE_PSCLASSIC:
             return psclassic_config_descriptor;
+        case USB_OUTPUT_MODE_PCEMINI:
+            return pcemini_config_descriptor;
         case USB_OUTPUT_MODE_PS4:
             return ps4_config_descriptor;
         case USB_OUTPUT_MODE_XBONE:
@@ -1650,6 +1703,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
                 str = PS3_MANUFACTURER;
             } else if (output_mode == USB_OUTPUT_MODE_PSCLASSIC) {
                 str = PSCLASSIC_MANUFACTURER;
+            } else if (output_mode == USB_OUTPUT_MODE_PCEMINI) {
+                str = PCEMINI_MANUFACTURER;
             } else if (output_mode == USB_OUTPUT_MODE_PS4) {
                 str = PS4_MANUFACTURER;
             } else if (output_mode == USB_OUTPUT_MODE_XAC) {
@@ -1673,6 +1728,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
                 str = PS3_PRODUCT;
             } else if (output_mode == USB_OUTPUT_MODE_PSCLASSIC) {
                 str = PSCLASSIC_PRODUCT;
+            } else if (output_mode == USB_OUTPUT_MODE_PCEMINI) {
+                str = PCEMINI_PRODUCT;
             } else if (output_mode == USB_OUTPUT_MODE_PS4) {
                 str = PS4_PRODUCT;
             } else if (output_mode == USB_OUTPUT_MODE_XAC) {
@@ -1731,6 +1788,9 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf)
     }
     if (output_mode == USB_OUTPUT_MODE_PSCLASSIC) {
         return psclassic_report_descriptor;
+    }
+    if (output_mode == USB_OUTPUT_MODE_PCEMINI) {
+        return pcemini_report_descriptor;
     }
     if (output_mode == USB_OUTPUT_MODE_PS4) {
         return ps4_report_descriptor;

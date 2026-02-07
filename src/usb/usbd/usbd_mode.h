@@ -91,6 +91,7 @@ extern const usbd_mode_t xac_mode;
 extern const usbd_mode_t kbmouse_mode;
 // KB/Mouse mode helper for idle mouse reports
 bool kbmouse_mode_send_idle_mouse(void);
+extern const usbd_mode_t pcemini_mode;
 #if CFG_TUD_GC_ADAPTER
 extern const usbd_mode_t gc_adapter_mode;
 // Get per-port rumble (for multi-controller GC Adapter mode)
