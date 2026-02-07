@@ -12,14 +12,33 @@
 #include <stdio.h>
 
 // ============================================================================
+// D-PAD MODE (S1+S2+direction hotkeys, GP2040-CE compatible)
+// ============================================================================
+
+typedef enum {
+    DPAD_MODE_DPAD,        // D-pad → d-pad buttons (default)
+    DPAD_MODE_LEFT_STICK,  // D-pad → left analog stick
+    DPAD_MODE_RIGHT_STICK, // D-pad → right analog stick
+} dpad_mode_t;
+
+// ============================================================================
 // INTERNAL STATE
 // ============================================================================
 
 static snespad_t snes_pads[SNES_MAX_PORTS];
 static bool initialized = false;
 
-// Track previous state for edge detection
+// Track previous state for edge detection (buttons + analog packed)
 static uint32_t prev_buttons[SNES_MAX_PORTS] = {0};
+static uint32_t prev_analog[SNES_MAX_PORTS] = {0};
+
+// D-pad mode state (shared across all ports)
+static dpad_mode_t dpad_mode = DPAD_MODE_DPAD;
+
+// S1+S2 combo state (per port)
+static bool prev_s1s2_held[SNES_MAX_PORTS] = {false};
+static bool combo_used[SNES_MAX_PORTS] = {false};       // Direction combo fired during hold
+static bool combo_had_other[SNES_MAX_PORTS] = {false};   // Non-S1S2 buttons seen during hold
 
 // ============================================================================
 // BUTTON MAPPING: SNES → USBR
@@ -166,11 +185,86 @@ void snes_host_task(void)
                 continue;
         }
 
-        // Only submit if state changed
-        if (buttons == prev_buttons[port]) {
+        // =================================================================
+        // S1+S2 combo detection (Home button + d-pad mode switching)
+        // While S1+S2 held alone: inject A1 (Home) continuously.
+        // While S1+S2 held + direction: trigger d-pad mode switch.
+        // =================================================================
+        bool s1s2_held = (buttons & (JP_BUTTON_S1 | JP_BUTTON_S2)) == (JP_BUTTON_S1 | JP_BUTTON_S2);
+
+        if (s1s2_held) {
+            if (!prev_s1s2_held[port]) {
+                combo_used[port] = false;
+                combo_had_other[port] = false;
+            }
+
+            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+            uint32_t other_bits = buttons & ~(JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+
+            if (other_bits) combo_had_other[port] = true;
+
+            // Check for d-pad mode switch (only fire once per hold)
+            if (!combo_used[port] && dpad_bits) {
+                if (dpad_bits == JP_BUTTON_DD) {
+                    dpad_mode = DPAD_MODE_DPAD;
+                    printf("[snes_host] D-pad mode: D-PAD (default)\n");
+                    combo_used[port] = true;
+                } else if (dpad_bits == JP_BUTTON_DL) {
+                    dpad_mode = DPAD_MODE_LEFT_STICK;
+                    printf("[snes_host] D-pad mode: LEFT STICK\n");
+                    combo_used[port] = true;
+                } else if (dpad_bits == JP_BUTTON_DR) {
+                    dpad_mode = DPAD_MODE_RIGHT_STICK;
+                    printf("[snes_host] D-pad mode: RIGHT STICK\n");
+                    combo_used[port] = true;
+                }
+            }
+
+            prev_s1s2_held[port] = true;
+
+            if (!combo_used[port] && !combo_had_other[port]) {
+                // S1+S2 alone → inject Home (held continuously)
+                buttons = JP_BUTTON_A1;
+                // Fall through to change detection and submit
+            } else {
+                // Direction combo fired or other buttons present — suppress
+                prev_buttons[port] = buttons;
+                continue;
+            }
+        } else if (prev_s1s2_held[port]) {
+            // S1+S2 just released — let natural button state through
+            prev_s1s2_held[port] = false;
+        }
+
+        // =================================================================
+        // Apply d-pad mode (remap d-pad to analog stick if needed)
+        // =================================================================
+        if (dpad_mode != DPAD_MODE_DPAD) {
+            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+            buttons &= ~(JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+
+            uint8_t ax = 128, ay = 128;
+            if (dpad_bits & JP_BUTTON_DL) ax = 0;
+            else if (dpad_bits & JP_BUTTON_DR) ax = 255;
+            if (dpad_bits & JP_BUTTON_DU) ay = 0;
+            else if (dpad_bits & JP_BUTTON_DD) ay = 255;
+
+            if (dpad_mode == DPAD_MODE_LEFT_STICK) {
+                analog_1x = ax;
+                analog_1y = ay;
+            } else {
+                analog_2x = ax;
+                analog_2y = ay;
+            }
+        }
+
+        // Only submit if state changed (check buttons and analog)
+        uint32_t analog_packed = (analog_1x << 24) | (analog_1y << 16) | (analog_2x << 8) | analog_2y;
+        if (buttons == prev_buttons[port] && analog_packed == prev_analog[port]) {
             continue;
         }
         prev_buttons[port] = buttons;
+        prev_analog[port] = analog_packed;
 
         // Build input event
         input_event_t event;

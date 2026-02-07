@@ -78,7 +78,7 @@ void app_init(void)
     };
     players_init_with_config(&player_cfg);
 
-    // Initialize profile system with button combos (Select+Start=Home)
+    // Initialize profile system (combos handled in snes_host.c)
     static const profile_config_t profile_cfg = {
         .output_profiles = { NULL },
         .shared_profiles = &snes2usb_profile_set,
