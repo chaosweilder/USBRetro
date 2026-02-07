@@ -3,6 +3,8 @@
 #include "core/buttons.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
+#include "core/services/players/manager.h"
+#include "core/services/players/feedback.h"
 #include "pico/time.h"
 #include "app_config.h"
 #include <string.h>
@@ -10,11 +12,12 @@
 static uint16_t tpadLastPos;
 static bool tpadDragging;
 
-// DualSense instance state
+// DualShock 4 instance state
 typedef struct TU_ATTR_PACKED
 {
   uint8_t rumble;
   uint8_t player;
+  uint8_t led_r, led_g, led_b;
 } ds4_instance_t;
 
 // Cached device report properties on mount
@@ -286,44 +289,24 @@ void output_sony_ds4(uint8_t dev_addr, uint8_t instance, device_output_config_t*
   sony_ds4_output_report_t output_report = {0};
   output_report.set_led = 1;
 
-  // Console-specific LED colors from led_config.h
-  switch (config->player_index+1)
-  {
-  case 1:
-    output_report.lightbar_red = LED_P1_R;
-    output_report.lightbar_green = LED_P1_G;
-    output_report.lightbar_blue = LED_P1_B;
-    break;
+  // Get RGB from feedback system (canonical source)
+  int8_t player_idx = find_player_index(dev_addr, instance);
+  feedback_state_t* fb = (player_idx >= 0) ? feedback_get_state(player_idx) : NULL;
 
-  case 2:
-    output_report.lightbar_red = LED_P2_R;
-    output_report.lightbar_green = LED_P2_G;
-    output_report.lightbar_blue = LED_P2_B;
-    break;
-
-  case 3:
-    output_report.lightbar_red = LED_P3_R;
-    output_report.lightbar_green = LED_P3_G;
-    output_report.lightbar_blue = LED_P3_B;
-    break;
-
-  case 4:
-    output_report.lightbar_red = LED_P4_R;
-    output_report.lightbar_green = LED_P4_G;
-    output_report.lightbar_blue = LED_P4_B;
-    break;
-
-  case 5:
-    output_report.lightbar_red = LED_P5_R;
-    output_report.lightbar_green = LED_P5_G;
-    output_report.lightbar_blue = LED_P5_B;
-    break;
-
-  default:
-    output_report.lightbar_red = LED_DEFAULT_R;
-    output_report.lightbar_green = LED_DEFAULT_G;
-    output_report.lightbar_blue = LED_DEFAULT_B;
-    break;
+  if (fb && (fb->led.r || fb->led.g || fb->led.b)) {
+    output_report.lightbar_red = fb->led.r;
+    output_report.lightbar_green = fb->led.g;
+    output_report.lightbar_blue = fb->led.b;
+  } else {
+    // Fallback to app-specific defaults when no feedback RGB set
+    switch (config->player_index+1) {
+    case 1:  output_report.lightbar_red = LED_P1_R; output_report.lightbar_green = LED_P1_G; output_report.lightbar_blue = LED_P1_B; break;
+    case 2:  output_report.lightbar_red = LED_P2_R; output_report.lightbar_green = LED_P2_G; output_report.lightbar_blue = LED_P2_B; break;
+    case 3:  output_report.lightbar_red = LED_P3_R; output_report.lightbar_green = LED_P3_G; output_report.lightbar_blue = LED_P3_B; break;
+    case 4:  output_report.lightbar_red = LED_P4_R; output_report.lightbar_green = LED_P4_G; output_report.lightbar_blue = LED_P4_B; break;
+    case 5:  output_report.lightbar_red = LED_P5_R; output_report.lightbar_green = LED_P5_G; output_report.lightbar_blue = LED_P5_B; break;
+    default: output_report.lightbar_red = LED_DEFAULT_R; output_report.lightbar_green = LED_DEFAULT_G; output_report.lightbar_blue = LED_DEFAULT_B; break;
+    }
   }
 
   // fun
@@ -344,10 +327,16 @@ void output_sony_ds4(uint8_t dev_addr, uint8_t instance, device_output_config_t*
 
   if (ds4_devices[dev_addr].instances[instance].rumble != config->rumble ||
       ds4_devices[dev_addr].instances[instance].player != config->player_index+1 ||
+      ds4_devices[dev_addr].instances[instance].led_r != output_report.lightbar_red ||
+      ds4_devices[dev_addr].instances[instance].led_g != output_report.lightbar_green ||
+      ds4_devices[dev_addr].instances[instance].led_b != output_report.lightbar_blue ||
       config->test)
   {
     ds4_devices[dev_addr].instances[instance].rumble = config->rumble;
     ds4_devices[dev_addr].instances[instance].player = config->test ? config->test : config->player_index+1;
+    ds4_devices[dev_addr].instances[instance].led_r = output_report.lightbar_red;
+    ds4_devices[dev_addr].instances[instance].led_g = output_report.lightbar_green;
+    ds4_devices[dev_addr].instances[instance].led_b = output_report.lightbar_blue;
     tuh_hid_send_report(dev_addr, instance, 5, &output_report, sizeof(output_report));
   }
 }
