@@ -978,8 +978,18 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             // Uses GAP Appearance: 0x03C3 = Joystick, 0x03C4 = Gamepad
             // Also accepts HID service UUID (0x1812) with gamepad/joystick appearance.
             // Does NOT match on HID UUID alone to avoid connecting to keyboards/mice.
+            // Excludes controllers that use classic BT (DS4, DS3, DS5) — they advertise
+            // BLE but must connect via classic for proper driver support.
+            bool is_classic_bt_controller = false;
+            if (name[0]) {
+                is_classic_bt_controller = (strstr(name, "Wireless Controller") != NULL ||  // DS4
+                                            strstr(name, "DualSense") != NULL ||            // DS5
+                                            strstr(name, "DUALSHOCK") != NULL ||            // DS3/DS4
+                                            strstr(name, "PLAYSTATION") != NULL);           // DS3
+            }
             bool is_generic_ble_gamepad = false;
-            if (!is_known_controller && (appearance == 0x03C3 || appearance == 0x03C4)) {
+            if (!is_known_controller && !is_classic_bt_controller &&
+                (appearance == 0x03C3 || appearance == 0x03C4)) {
                 is_generic_ble_gamepad = true;
                 printf("[BTSTACK_HOST] Generic BLE gamepad detected: \"%s\" appearance=0x%04X hid_uuid=%d\n",
                        name, appearance, has_hid_uuid);
@@ -1441,7 +1451,41 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             hci_event_remote_name_request_complete_get_bd_addr(packet, name_addr);
             uint8_t name_status = hci_event_remote_name_request_complete_get_status(packet);
 
-            if (name_status == 0) {
+            if (name_status != 0) {
+                printf("[BTSTACK_HOST] Remote name request failed: status=%d\n", name_status);
+
+                // If we deferred a connection waiting for the name, fall back to
+                // standard HID Host connect. This handles DS4, DS3, and other
+                // controllers that may not respond to name requests.
+                if (classic_state.pending_valid &&
+                    classic_state.pending_outgoing &&
+                    classic_state.pending_hid_connect &&
+                    memcmp(name_addr, classic_state.pending_addr, 6) == 0) {
+                    printf("[BTSTACK_HOST] Deferred connect: name failed, falling back to HID Host\n");
+                    classic_state.pending_hid_connect = false;
+
+                    uint16_t hid_cid;
+                    uint8_t status = hid_host_connect(name_addr, HID_PROTOCOL_MODE_REPORT, &hid_cid);
+                    if (status == ERROR_CODE_SUCCESS) {
+                        printf("[BTSTACK_HOST] hid_host_connect started, cid=0x%04X\n", hid_cid);
+                        classic_connection_t* conn = find_free_classic_connection();
+                        if (conn) {
+                            memset(conn, 0, sizeof(*conn));
+                            conn->active = true;
+                            conn->hid_cid = hid_cid;
+                            memcpy(conn->addr, name_addr, 6);
+                            conn->class_of_device[0] = classic_state.pending_cod & 0xFF;
+                            conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
+                            conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                        }
+                    } else {
+                        printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", status);
+                    }
+                }
+                break;
+            }
+
+            {
                 const char* name = hci_event_remote_name_request_complete_get_remote_name(packet);
                 printf("[BTSTACK_HOST] Remote name: %s\n", name);
 
