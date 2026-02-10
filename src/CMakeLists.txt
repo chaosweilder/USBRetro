@@ -517,6 +517,42 @@ target_link_libraries(joypad_neogeo PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_neogeo)
 joypad_add_btstack(joypad_neogeo)
 
+# Neo Geo — Pi Pico (WS2812 PIO on GP25 drives onboard LED as on/off indicator)
+add_executable(joypad_neogeo_pico)
+target_compile_definitions(joypad_neogeo_pico PRIVATE
+    CONFIG_NEOGEO=1
+    WS2812_PIN=25
+    USE_BOOTSEL_BUTTON=1
+)
+target_sources(joypad_neogeo_pico PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo/neogeo_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo/app.c
+)
+target_include_directories(joypad_neogeo_pico PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo
+)
+target_link_libraries(joypad_neogeo_pico PRIVATE ${COMMON_LIBRARIES})
+joypad_target_common(joypad_neogeo_pico)
+joypad_add_btstack(joypad_neogeo_pico)
+
+# Neo Geo — RP2040-Zero (WS2812 on GP16, auto from board def)
+add_executable(joypad_neogeo_rp2040zero)
+target_compile_definitions(joypad_neogeo_rp2040zero PRIVATE
+    CONFIG_NEOGEO=1
+)
+target_sources(joypad_neogeo_rp2040zero PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo/neogeo_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo/app.c
+)
+target_include_directories(joypad_neogeo_rp2040zero PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo
+)
+target_link_libraries(joypad_neogeo_rp2040zero PRIVATE ${COMMON_LIBRARIES})
+joypad_target_common(joypad_neogeo_rp2040zero)
+joypad_add_btstack(joypad_neogeo_rp2040zero)
+
 # --- N64 to Dreamcast ---
 add_executable(joypad_n642dc)
 # Core 0 TX mode required: joybus uses PIO1 SM3, conflicts with Core 1 TX

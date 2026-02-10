@@ -66,6 +66,8 @@ CONSOLE_usb_pico := joypad_usb_pico
 CONSOLE_usb_pico_w := joypad_usb_pico_w
 CONSOLE_usb_pico2_w := joypad_usb_pico2_w
 CONSOLE_neogeo := joypad_neogeo
+CONSOLE_neogeo_pico := joypad_neogeo_pico
+CONSOLE_neogeo_rp2040zero := joypad_neogeo_rp2040zero
 CONSOLE_n642dc := joypad_n642dc
 CONSOLE_snes3do := joypad_snes3do
 CONSOLE_uart := joypad_uart
@@ -92,6 +94,8 @@ APP_usb2loopy_kb2040 := kb2040 loopy usb2loopy_kb2040 USB/BT Loopy
 APP_usb2dc_kb2040 := kb2040 dc usb2dc_kb2040 USB/BT Dreamcast
 APP_usb2dc_rp2040zero := rp2040zero dc_rp2040zero usb2dc_rp2040zero USB/BT Dreamcast
 APP_usb2neogeo_kb2040 := kb2040 neogeo usb2neogeo_kb2040 USB/BT NEOGEO
+APP_usb2neogeo_pico := pico neogeo_pico usb2neogeo_pico USB/BT NEOGEO
+APP_usb2neogeo_rp2040zero := rp2040zero neogeo_rp2040zero usb2neogeo_rp2040zero USB/BT NEOGEO
 APP_n642dc_kb2040 := kb2040 n642dc n642dc_kb2040 N64 Dreamcast
 APP_usb23do_rp2040zero := rp2040zero 3do usb23do_rp2040zero USB/BT 3DO
 APP_snes23do_rp2040zero := rp2040zero snes3do snes23do_rp2040zero SNES 3DO
@@ -116,7 +120,7 @@ APP_controller_macropad := macropad controller_macropad controller_macropad GPIO
 
 # All apps (note: controller_macropad not included - build explicitly with 'make controller_macropad')
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
-APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 usb2dc_rp2040zero usb2neogeo_kb2040 n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_pico usb2usb_pico_w usb2usb_pico2_w usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
+APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 usb2dc_rp2040zero usb2neogeo_kb2040 usb2neogeo_pico usb2neogeo_rp2040zero n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_pico usb2usb_pico_w usb2usb_pico2_w usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
 
 # Stable apps for release
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
@@ -162,6 +166,8 @@ help:
 	@echo "  make usb2dc_kb2040      - USB/BT -> Dreamcast (KB2040)"
 	@echo "  make usb2dc_rp2040zero  - USB/BT -> Dreamcast (RP2040-Zero, USB4Maple-compatible)"
 	@echo "  make usb2neogeo_kb2040  - USB/BT -> NEOGEO (KB2040)"
+	@echo "  make usb2neogeo_pico    - USB/BT -> NEOGEO (Pi Pico)"
+	@echo "  make usb2neogeo_rp2040zero - USB/BT -> NEOGEO (RP2040-Zero)"
 	@echo "  make n642dc_kb2040      - N64 -> Dreamcast (KB2040)"
 	@echo "  make usb23do_rp2040zero - USB/BT -> 3DO (RP2040-Zero)"
 	@echo "  make snes23do_rp2040zero - SNES -> 3DO (RP2040-Zero)"
@@ -274,6 +280,14 @@ usb2dc_rp2040zero:
 .PHONY: usb2neogeo_kb2040
 usb2neogeo_kb2040:
 	$(call build_app,usb2neogeo_kb2040)
+
+.PHONY: usb2neogeo_pico
+usb2neogeo_pico:
+	$(call build_app,usb2neogeo_pico)
+
+.PHONY: usb2neogeo_rp2040zero
+usb2neogeo_rp2040zero:
+	$(call build_app,usb2neogeo_rp2040zero)
 
 .PHONY: n642dc_kb2040
 n642dc_kb2040:
@@ -479,6 +493,18 @@ flash-usb2gc_kb2040:
 .PHONY: flash-usb2gc_rp2040zero
 flash-usb2gc_rp2040zero:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2gc_rp2040zero
+
+.PHONY: flash-usb2neogeo_kb2040
+flash-usb2neogeo_kb2040:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_kb2040
+
+.PHONY: flash-usb2neogeo_pico
+flash-usb2neogeo_pico:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_pico
+
+.PHONY: flash-usb2neogeo_rp2040zero
+flash-usb2neogeo_rp2040zero:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_rp2040zero
 
 .PHONY: flash-usb2nuon_kb2040
 flash-usb2nuon_kb2040:
