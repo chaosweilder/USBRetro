@@ -63,6 +63,8 @@ CONSOLE_loopy := joypad_loopy
 CONSOLE_dc := joypad_dc
 CONSOLE_dc_rp2040zero := joypad_dc_rp2040zero
 CONSOLE_usb_pico := joypad_usb_pico
+CONSOLE_usb_pico_w := joypad_usb_pico_w
+CONSOLE_usb_pico2_w := joypad_usb_pico2_w
 CONSOLE_neogeo := joypad_neogeo
 CONSOLE_n642dc := joypad_n642dc
 CONSOLE_snes3do := joypad_snes3do
@@ -95,6 +97,8 @@ APP_usb23do_rp2040zero := rp2040zero 3do usb23do_rp2040zero USB/BT 3DO
 APP_snes23do_rp2040zero := rp2040zero snes3do snes23do_rp2040zero SNES 3DO
 APP_usb2uart_kb2040 := kb2040 uart usb2uart_kb2040 USB/BT UART
 APP_usb2usb_pico := pico usb_pico usb2usb_pico USB/BT USB
+APP_usb2usb_pico_w := pico_w usb_pico_w usb2usb_pico_w USB/BT USB
+APP_usb2usb_pico2_w := pico2_w usb_pico2_w usb2usb_pico2_w USB/BT USB
 APP_usb2usb_feather := feather_usbhost usb usb2usb_feather USB/BT USB
 APP_usb2usb_rp2040zero := rp2040zero usb_rp2040zero usb2usb_rp2040zero USB/BT USB
 APP_usb2usb_rp2350usba := rp2350usba usb_rp2350usba usb2usb_rp2350usba USB/BT USB
@@ -112,7 +116,7 @@ APP_controller_macropad := macropad controller_macropad controller_macropad GPIO
 
 # All apps (note: controller_macropad not included - build explicitly with 'make controller_macropad')
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
-APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 usb2dc_rp2040zero usb2neogeo_kb2040 n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_pico usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
+APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2dc_kb2040 usb2dc_rp2040zero usb2neogeo_kb2040 n642dc_kb2040 usb23do_rp2040zero usb2uart_kb2040 usb2usb_pico usb2usb_pico_w usb2usb_pico2_w usb2usb_feather usb2usb_rp2040zero usb2usb_rp2350usba bt2usb_pico_w bt2usb_pico2_w snes2usb_kb2040 n642usb_kb2040 gc2usb_kb2040 controller_fisherprice_kb2040 controller_alpakka_pico
 
 # Stable apps for release
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
@@ -163,6 +167,8 @@ help:
 	@echo "  make snes23do_rp2040zero - SNES -> 3DO (RP2040-Zero)"
 	@echo "  make usb2uart_kb2040    - USB -> UART/ESP32 (KB2040)"
 	@echo "  make usb2usb_pico       - USB/BT -> USB HID (Pi Pico)"
+	@echo "  make usb2usb_pico_w     - USB/BT -> USB HID (Pi Pico W)"
+	@echo "  make usb2usb_pico2_w    - USB/BT -> USB HID (Pi Pico 2 W)"
 	@echo "  make usb2usb_feather    - USB/BT -> USB HID (Feather USB Host)"
 	@echo "  make usb2usb_rp2040zero - USB/BT -> USB HID (RP2040-Zero)"
 	@echo "  make usb2usb_rp2350usba - USB/BT -> USB HID (Waveshare RP2350A)"
@@ -288,6 +294,14 @@ usb2uart_kb2040:
 .PHONY: usb2usb_pico
 usb2usb_pico:
 	$(call build_app,usb2usb_pico)
+
+.PHONY: usb2usb_pico_w
+usb2usb_pico_w:
+	$(call build_app,usb2usb_pico_w)
+
+.PHONY: usb2usb_pico2_w
+usb2usb_pico2_w:
+	$(call build_app,usb2usb_pico2_w)
 
 .PHONY: usb2usb_feather
 usb2usb_feather:
@@ -501,6 +515,14 @@ flash-usb2uart_kb2040:
 .PHONY: flash-usb2usb_pico
 flash-usb2usb_pico:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2usb_pico
+
+.PHONY: flash-usb2usb_pico_w
+flash-usb2usb_pico_w:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2usb_pico_w
+
+.PHONY: flash-usb2usb_pico2_w
+flash-usb2usb_pico2_w:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2usb_pico2_w
 
 .PHONY: flash-usb2usb_feather
 flash-usb2usb_feather:
