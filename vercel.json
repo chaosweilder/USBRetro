@@ -1,0 +1,5 @@
+{
+  "installCommand": "cd tools/web-config && npm install",
+  "buildCommand": "cd tools/web-config && npm run build",
+  "outputDirectory": "tools/web-config/dist"
+}
