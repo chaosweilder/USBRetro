@@ -192,6 +192,8 @@ void task_sinput_host(uint8_t dev_addr, uint8_t instance, device_output_config_t
     case 3:  led_r = LED_P3_R; led_g = LED_P3_G; led_b = LED_P3_B; break;
     case 4:  led_r = LED_P4_R; led_g = LED_P4_G; led_b = LED_P4_B; break;
     case 5:  led_r = LED_P5_R; led_g = LED_P5_G; led_b = LED_P5_B; break;
+    case 6:  led_r = LED_P6_R; led_g = LED_P6_G; led_b = LED_P6_B; break;
+    case 7:  led_r = LED_P7_R; led_g = LED_P7_G; led_b = LED_P7_B; break;
     default: led_r = LED_DEFAULT_R; led_g = LED_DEFAULT_G; led_b = LED_DEFAULT_B; break;
     }
   }

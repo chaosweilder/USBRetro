@@ -313,6 +313,8 @@ void output_sony_ds3(uint8_t dev_addr, uint8_t instance, device_output_config_t*
     case 3:
     case 4:
     case 5:
+    case 6:
+    case 7:
       output_report.data.leds_bitmap = (PLAYER_LEDS[config->player_index+1] << 1);
       break;
 

@@ -17,11 +17,14 @@ static feedback_state_t feedback_states[MAX_PLAYERS];
 static bool initialized = false;
 
 // Default player colors (PS4/DualSense style)
-static const uint8_t player_colors[4][3] = {
+static const uint8_t player_colors[7][3] = {
     {0x00, 0x00, 0xFF},  // Player 1: Blue
     {0xFF, 0x00, 0x00},  // Player 2: Red
     {0x00, 0xFF, 0x00},  // Player 3: Green
     {0xFF, 0x00, 0xFF},  // Player 4: Pink/Magenta
+    {0xFF, 0xFF, 0x00},  // Player 5: Yellow
+    {0x00, 0xFF, 0xFF},  // Player 6: Cyan
+    {0xFF, 0x80, 0x00},  // Player 7: Orange
 };
 
 // ============================================================================
@@ -94,15 +97,15 @@ void feedback_set_led_player_internal(uint8_t player_index, uint8_t player_num)
 
     feedback_state_t* state = &feedback_states[player_index];
 
-    // Set player indicator pattern
+    // Set player indicator pattern (uses PLAYER_LEDS[] for combo patterns on players 5-7)
     uint8_t pattern = FEEDBACK_LED_NONE;
-    if (player_num >= 1 && player_num <= 4) {
-        pattern = (1 << (player_num - 1));  // PLAYER1=0x01, PLAYER2=0x02, etc.
+    if (player_num >= 1 && player_num <= 7) {
+        pattern = PLAYER_LEDS[player_num];
     }
 
     // Set RGB color based on player number
     uint8_t r = 0, g = 0, b = 0;
-    if (player_num >= 1 && player_num <= 4) {
+    if (player_num >= 1 && player_num <= 7) {
         r = player_colors[player_num - 1][0];
         g = player_colors[player_num - 1][1];
         b = player_colors[player_num - 1][2];

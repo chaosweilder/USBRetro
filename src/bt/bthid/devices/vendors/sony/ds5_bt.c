@@ -23,6 +23,9 @@ static const uint8_t PLAYER_COLORS[][3] = {
     { 64,   0,   0 },   // Player 2: Red
     {  0,  64,   0 },   // Player 3: Green
     { 64,   0,  64 },   // Player 4: Pink/Fuchsia
+    { 64,  64,   0 },   // Player 5: Yellow
+    {  0,  64,  64 },   // Player 6: Cyan
+    { 64,  32,   0 },   // Player 7: Orange
 };
 
 // Player LED patterns for DS5 (5 LEDs in a row)
@@ -32,6 +35,7 @@ static const uint8_t PLAYER_LED_PATTERNS[] = {
     0x0A,   // Player 2: left+right of center (-*-*-)
     0x15,   // Player 3: outer + center (*-*-*)
     0x1B,   // Player 4: all but center (**-**)
+    0x1F,   // Player 5: all LEDs (*****)
 };
 
 // ============================================================================
@@ -446,10 +450,11 @@ static void ds5_task(bthid_device_t* device)
             if (now - ds5->activation_time >= 100) {
                 // Set initial LED based on player index
                 int player_idx = find_player_index(ds5->event.dev_addr, ds5->event.instance);
-                int idx = (player_idx >= 0 && player_idx < 4) ? player_idx : 0;
+                int idx = (player_idx >= 0 && player_idx < 7) ? player_idx : 0;
+                int pat_idx = (idx < 5) ? idx : idx % 5;
                 ds5_send_output(device, 0, 0,
                     PLAYER_COLORS[idx][0], PLAYER_COLORS[idx][1], PLAYER_COLORS[idx][2],
-                    PLAYER_LED_PATTERNS[idx]);
+                    PLAYER_LED_PATTERNS[pat_idx]);
                 ds5->activation_state = 2;
             }
             break;
@@ -473,16 +478,19 @@ static void ds5_task(bthid_device_t* device)
                     // DS5 has separate player LED bar and RGB lightbar
                     uint8_t calc_player_led;
                     if (fb->led.pattern != 0) {
-                        // Map feedback pattern bits to DS5 player LED pattern
+                        // Map feedback pattern to player number via PLAYER_LEDS[] lookup
                         int player_num = 0;
-                        if (fb->led.pattern & 0x01) player_num = 0;
-                        else if (fb->led.pattern & 0x02) player_num = 1;
-                        else if (fb->led.pattern & 0x04) player_num = 2;
-                        else if (fb->led.pattern & 0x08) player_num = 3;
-                        calc_player_led = PLAYER_LED_PATTERNS[player_num];
+                        for (int p = 1; p <= 7; p++) {
+                            if (fb->led.pattern == PLAYER_LEDS[p]) {
+                                player_num = p - 1;
+                                break;
+                            }
+                        }
+                        int pat_idx = (player_num < 5) ? player_num : player_num % 5;
+                        calc_player_led = PLAYER_LED_PATTERNS[pat_idx];
                     } else {
                         // Default to player index
-                        int idx = player_idx % 4;
+                        int idx = (player_idx < 5) ? player_idx : player_idx % 5;
                         calc_player_led = PLAYER_LED_PATTERNS[idx];
                     }
 
@@ -500,18 +508,21 @@ static void ds5_task(bthid_device_t* device)
                             g = fb->led.g;
                             b = fb->led.b;
                         } else if (fb->led.pattern != 0) {
-                            // Use player color based on pattern
+                            // Use player color based on pattern via PLAYER_LEDS[] lookup
                             int player_num = 0;
-                            if (fb->led.pattern & 0x01) player_num = 0;
-                            else if (fb->led.pattern & 0x02) player_num = 1;
-                            else if (fb->led.pattern & 0x04) player_num = 2;
-                            else if (fb->led.pattern & 0x08) player_num = 3;
-                            r = PLAYER_COLORS[player_num][0];
-                            g = PLAYER_COLORS[player_num][1];
-                            b = PLAYER_COLORS[player_num][2];
+                            for (int p = 1; p <= 7; p++) {
+                                if (fb->led.pattern == PLAYER_LEDS[p]) {
+                                    player_num = p - 1;
+                                    break;
+                                }
+                            }
+                            int color_idx = (player_num < 7) ? player_num : player_num % 7;
+                            r = PLAYER_COLORS[color_idx][0];
+                            g = PLAYER_COLORS[color_idx][1];
+                            b = PLAYER_COLORS[color_idx][2];
                         } else {
                             // Default to player index color
-                            int idx = player_idx % 4;
+                            int idx = (player_idx < 7) ? player_idx : player_idx % 7;
                             r = PLAYER_COLORS[idx][0];
                             g = PLAYER_COLORS[idx][1];
                             b = PLAYER_COLORS[idx][2];

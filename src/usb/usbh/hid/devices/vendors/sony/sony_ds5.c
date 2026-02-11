@@ -261,6 +261,8 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, device_output_config_t*
     case 3:  ds5_fb.lightbar_r = LED_P3_R; ds5_fb.lightbar_g = LED_P3_G; ds5_fb.lightbar_b = LED_P3_B; break;
     case 4:  ds5_fb.lightbar_r = LED_P4_R; ds5_fb.lightbar_g = LED_P4_G; ds5_fb.lightbar_b = LED_P4_B; break;
     case 5:  ds5_fb.lightbar_r = LED_P5_R; ds5_fb.lightbar_g = LED_P5_G; ds5_fb.lightbar_b = LED_P5_B; break;
+    case 6:  ds5_fb.lightbar_r = LED_P6_R; ds5_fb.lightbar_g = LED_P6_G; ds5_fb.lightbar_b = LED_P6_B; break;
+    case 7:  ds5_fb.lightbar_r = LED_P7_R; ds5_fb.lightbar_g = LED_P7_G; ds5_fb.lightbar_b = LED_P7_B; break;
     default: ds5_fb.lightbar_r = LED_DEFAULT_R; ds5_fb.lightbar_g = LED_DEFAULT_G; ds5_fb.lightbar_b = LED_DEFAULT_B; break;
     }
   }
@@ -272,6 +274,8 @@ void output_sony_ds5(uint8_t dev_addr, uint8_t instance, device_output_config_t*
   case 3:  ds5_fb.player_led = LED_P3_PATTERN; break;
   case 4:  ds5_fb.player_led = LED_P4_PATTERN; break;
   case 5:  ds5_fb.player_led = LED_P5_PATTERN; break;
+  case 6:  ds5_fb.player_led = LED_P6_PATTERN; break;
+  case 7:  ds5_fb.player_led = LED_P7_PATTERN; break;
   default: ds5_fb.player_led = LED_DEFAULT_PATTERN; break;
   }
 

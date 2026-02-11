@@ -13,7 +13,7 @@
 typedef struct {
     uint8_t rumble_left;        // Left (heavy) motor 0-255
     uint8_t rumble_right;       // Right (light) motor 0-255
-    uint8_t led_player;         // Player LED index (1-4), 0 = not set
+    uint8_t led_player;         // Player LED index (1-7), 0 = not set
     uint8_t led_r, led_g, led_b;// RGB LED color
     bool dirty;                 // True if feedback changed since last read
 } output_feedback_t;

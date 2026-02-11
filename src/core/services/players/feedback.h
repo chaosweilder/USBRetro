@@ -37,6 +37,9 @@ typedef struct {
 #define FEEDBACK_LED_PLAYER2    0x02    // LED 2 on
 #define FEEDBACK_LED_PLAYER3    0x04    // LED 3 on
 #define FEEDBACK_LED_PLAYER4    0x08    // LED 4 on
+#define FEEDBACK_LED_PLAYER5    0x09    // LED 1+4 on
+#define FEEDBACK_LED_PLAYER6    0x0A    // LED 2+4 on
+#define FEEDBACK_LED_PLAYER7    0x0C    // LED 3+4 on
 #define FEEDBACK_LED_ALL        0x0F    // All LEDs on
 
 // Common patterns

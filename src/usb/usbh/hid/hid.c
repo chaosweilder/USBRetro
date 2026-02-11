@@ -70,13 +70,15 @@ void hid_task(void)
           feedback_state_t* fb = (player_index >= 0) ? feedback_get_state(player_index) : NULL;
 
           // Derive player LED index from feedback pattern (for USB output passthrough)
-          // Pattern: 0x01=P1, 0x02=P2, 0x04=P3, 0x08=P4
+          // Supports combo patterns for players 5-7 via PLAYER_LEDS[] lookup
           int8_t led_player_index = -1;
           if (fb && fb->led.pattern) {
-            if (fb->led.pattern & 0x01) led_player_index = 0;
-            else if (fb->led.pattern & 0x02) led_player_index = 1;
-            else if (fb->led.pattern & 0x04) led_player_index = 2;
-            else if (fb->led.pattern & 0x08) led_player_index = 3;
+            for (int p = 1; p <= 7; p++) {
+              if (fb->led.pattern == PLAYER_LEDS[p]) {
+                led_player_index = p - 1;
+                break;
+              }
+            }
           }
 
           // Use feedback LED player if set, otherwise use profile indicator display

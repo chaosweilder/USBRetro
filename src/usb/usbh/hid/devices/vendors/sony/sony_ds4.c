@@ -305,6 +305,8 @@ void output_sony_ds4(uint8_t dev_addr, uint8_t instance, device_output_config_t*
     case 3:  output_report.lightbar_red = LED_P3_R; output_report.lightbar_green = LED_P3_G; output_report.lightbar_blue = LED_P3_B; break;
     case 4:  output_report.lightbar_red = LED_P4_R; output_report.lightbar_green = LED_P4_G; output_report.lightbar_blue = LED_P4_B; break;
     case 5:  output_report.lightbar_red = LED_P5_R; output_report.lightbar_green = LED_P5_G; output_report.lightbar_blue = LED_P5_B; break;
+    case 6:  output_report.lightbar_red = LED_P6_R; output_report.lightbar_green = LED_P6_G; output_report.lightbar_blue = LED_P6_B; break;
+    case 7:  output_report.lightbar_red = LED_P7_R; output_report.lightbar_green = LED_P7_G; output_report.lightbar_blue = LED_P7_B; break;
     default: output_report.lightbar_red = LED_DEFAULT_R; output_report.lightbar_green = LED_DEFAULT_G; output_report.lightbar_blue = LED_DEFAULT_B; break;
     }
   }

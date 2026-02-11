@@ -36,6 +36,18 @@
 #define LED_P5_B 60
 #define LED_P5_PATTERN 0b11111
 
+// Player 6 - Cyan
+#define LED_P6_R 0
+#define LED_P6_G 64
+#define LED_P6_B 64
+#define LED_P6_PATTERN 0b00011
+
+// Player 7 - Orange
+#define LED_P7_R 64
+#define LED_P7_G 32
+#define LED_P7_B 0
+#define LED_P7_PATTERN 0b00110
+
 // Default/Unassigned - White
 #define LED_DEFAULT_R 32
 #define LED_DEFAULT_G 32

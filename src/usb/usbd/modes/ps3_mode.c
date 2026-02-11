@@ -7,6 +7,7 @@
 #include "../usbd.h"
 #include "descriptors/ps3_descriptors.h"
 #include "core/buttons.h"
+#include "core/services/players/manager.h"
 #include "pico/unique_id.h"
 #include <string.h>
 
@@ -196,11 +197,16 @@ static bool ps3_mode_get_feedback(output_feedback_t* fb)
     fb->rumble_left = ps3_output.rumble_left_force;
     fb->rumble_right = ps3_output.rumble_right_on ? 0xFF : 0x00;
 
-    // PS3 LEDs: bitmap in leds_bitmap (LED_1=0x02, LED_2=0x04, etc.)
-    if (ps3_output.leds_bitmap & 0x02) fb->led_player = 1;
-    else if (ps3_output.leds_bitmap & 0x04) fb->led_player = 2;
-    else if (ps3_output.leds_bitmap & 0x08) fb->led_player = 3;
-    else if (ps3_output.leds_bitmap & 0x10) fb->led_player = 4;
+    // PS3 LEDs: bitmap in leds_bitmap, shifted by 1 (LED1=0x02..LED4=0x10)
+    // Combinations encode players 5-7 via PLAYER_LEDS[] lookup
+    uint8_t led_bits = (ps3_output.leds_bitmap >> 1) & 0x0F;
+    fb->led_player = 0;
+    for (int p = 1; p <= 7; p++) {
+        if (led_bits == PLAYER_LEDS[p]) {
+            fb->led_player = p;
+            break;
+        }
+    }
 
     fb->dirty = true;
     ps3_output_available = false;
