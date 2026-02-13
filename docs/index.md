@@ -1,5 +1,12 @@
+<style>
+  .logo-light, .logo-dark { display: block; margin: 0 auto; }
+  .logo-dark { display: none; }
+  [data-md-color-scheme="slate"] .logo-light { display: none; }
+  [data-md-color-scheme="slate"] .logo-dark { display: block; }
+</style>
 <div style="text-align: center;">
-  <img src="images/logo_solid.svg" alt="Joypad OS" width="300">
+  <img class="logo-light" src="images/logo_solid_black.svg" alt="Joypad OS" width="300">
+  <img class="logo-dark" src="images/logo_solid.svg" alt="Joypad OS" width="300">
 </div>
 
 # Joypad OS
