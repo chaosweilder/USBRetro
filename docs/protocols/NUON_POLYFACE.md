@@ -89,27 +89,16 @@ All communication uses **64-bit packets** with the following structure:
 ### Bit Layout (MSB first)
 
 ```
-Bits 63-56: [START][CTRL] + Data Byte 0
-Bits 55-48: Data Byte 1
-Bits 47-40: Data Byte 2
-Bits 39-32: Data Byte 3
-Bits 31-16: CRC-16 Checksum
-Bits 15-0:  Padding (zeros)
-```
-
-### Detailed Packet Format
-
-```
-Bit:  63  62  61-54     53-46     45-38     37-30     29-14      13-0
-     ┌───┬───┬─────────┬─────────┬─────────┬─────────┬──────────┬────────────┐
-     │ S │ C │ A[7:0]  │ B[7:0]  │ C[7:0]  │ D[7:0]  │  CRC16   │    PAD     │
-     └───┴───┴─────────┴─────────┴─────────┴─────────┴──────────┴────────────┘
-      │   │      │         │         │         │                      │
-      │   │      │         └─────────┴─────────┘                      │
-      │   │      │               Data bytes                           │
-      │   │      └── Command/Address byte                             │
-      │   └── Control bit (1=READ, 0=WRITE)                           │
-      └── Start bit (always 1)                      Padding (zeros) ──┘
+Bit:  63    62    61-54     53-46     45-38     37-30     29-14      13-0
+     ┌─────┬─────┬─────────┬─────────┬─────────┬─────────┬──────────┬──────────┐
+     │START│CTRL │ A[7:0]  │ S[7:0]  │ C[7:0]  │ D[7:0]  │  CRC16   │   PAD    │
+     └─────┴─────┴─────────┴─────────┴─────────┴─────────┴──────────┴──────────┘
+       │     │       │         │         │         │                      │
+       │     │       │         └─────────┴─────────┘                      │
+       │     │       │               Data bytes                           │
+       │     │       └── Command/Address byte                             │
+       │     └── Control bit (1=READ, 0=WRITE)                            │
+       └── Start bit (always 1)                         Padding (zeros) ──┘
 ```
 
 ### Field Descriptions
@@ -123,30 +112,28 @@ Bit:  63  62  61-54     53-46     45-38     37-30     29-14      13-0
 **A[7:0] (Bits 61-54)**: Command/Address byte
 - Identifies the type of packet (ALIVE, PROBE, ANALOG, etc.)
 
-**B[7:0], C[7:0], D[7:0]**: Data bytes (usage varies by command)
+**S[7:0] (Bits 53-46), C[7:0] (Bits 45-38), D[7:0] (Bits 37-30)**: Data bytes (usage varies by command)
 
-**CRC16 (Bits 31-16)**: CRC-16 checksum
+**CRC16 (Bits 29-14)**: CRC-16 checksum
 - Polynomial: `0x8005`
 - Calculated over data bytes only
 - MSB-first bit ordering
 
-**PAD (Bits 15-0)**: Always zero (reserved for future use)
+**PAD (Bits 13-0)**: Always zero (reserved for future use)
 
 ### Example Packets
 
 **ALIVE Request** (Nuon → Controller):
 ```
-Binary:  11 10000000 00000000 00000000 00000000 [CRC16] 0000000000000000
-Hex:     C0 80 00 00 00 XX XX 00 00
-         └─ START=1, CTRL=1 (READ), CMD=0x80
+START=1, CTRL=1 (READ), A=0x80, S=0x00, C=0x00, D=0x00, CRC16, PAD
 ```
 
 **ALIVE Response** (Controller → Nuon):
 ```
-Binary:  11 00000001 00000000 00000000 00000000 [CRC16] 0000000000000000
-Hex:     C0 01 00 00 00 XX XX 00 00
-         └─ START=1, CTRL=1, Response=0x01
+START=1, CTRL=1, A=0x01, S=0x00, C=0x00, D=0x00, CRC16, PAD
 ```
+
+Note: Because START and CTRL consume 2 bits before the first data byte, packet fields do not align to byte boundaries on the wire.
 
 ---
 
@@ -273,7 +260,7 @@ Nuon → Controller: BRAND (0xB4 00 05)
 Controller: (stores ID=5, sets branded=true)
 
 Nuon → Controller: CONFIG (0x25 01 00)
-Controller → Nuon: 0xC0C00000 (device capabilities)
+Controller → Nuon: 0xC0 (device capabilities: ANALOG1 + ANALOG2)
 
 [Now in ACTIVE state - normal polling begins]
 ```
@@ -327,7 +314,7 @@ A=0x90, S=XX, C=XX (S and C ignored)
 **Notes**:
 - Only respond BEFORE receiving BRAND command
 - Prevents re-enumeration of already branded devices
-- Honors protocol designer Jude St. John
+- Honors protocol designer Jude Katsch
 
 ---
 
@@ -410,8 +397,8 @@ Bits 7-0: Configuration flags
 ```
 
 **Configuration Bits** (from Nuon SDK `joystick.h`):
-- Bit 7: ANALOG2 support
-- Bit 6: ANALOG1 support
+- Bit 7: ANALOG1 support
+- Bit 6: ANALOG2 support
 - Bit 5: QUADSPINNER support
 - Bit 4: THROTTLE support
 - Bit 3: BRAKE support
@@ -455,9 +442,6 @@ A=0x30, S=0x02, C=0x00
 ```
 
 **Response**: 16-bit button word + CRC
-```
-Bits 15-0: Button state (active LOW)
-```
 
 **Button Encoding** (see "Button Encoding" section):
 
@@ -481,8 +465,8 @@ Bits 15-0: Button state (active LOW)
 | 0 | C_RIGHT |
 
 **Notes**:
-- Buttons are **active LOW** (0 = pressed, 1 = released)
-- Idle state: `0x0080` (all buttons released except reserved bits)
+- Buttons are **active HIGH** (1 = pressed, 0 = released)
+- Idle state: `0x0080` (bit 7 reserved, all buttons released)
 
 ---
 
@@ -644,8 +628,8 @@ Type bit (bit 25) determines READ (1) or WRITE (0)
 ```
 
 **Response** (if READ):
-- If accumulated state equals `0x4151`: respond with `0xD1028E00`
-- Otherwise: respond with `0xC0002800`
+- If accumulated state equals `0x4151`: respond with `0xD102E600`
+- Otherwise: respond with `0xC0028000`
 
 **Write Operation**: Accumulates a 16-bit state value by shifting the current state left by 8 bits and OR-ing in the received data byte (dataC).
 
@@ -721,10 +705,10 @@ Capabilities: QUADSPINNER1 (for mouse mode), ANALOG1 (left stick), ANALOG2 (righ
 |-------|-------|
 | Properties | 0x0000083F |
 | Device Mode | 0x9D (binary: 10011101) |
-| Config | 0xD0 (binary: 11010000) |
+| Config | 0x80 (binary: 10000000) |
 | Switch | 0x80 (binary: 10000000) |
 
-Capabilities: MOUSE (XY movement via QUADX), ANALOG1, ANALOG2, STDBUTTONS, DPAD, SHOULDER, EXTBUTTONS
+Capabilities: MOUSE (XY movement via QUADX), ANALOG1, STDBUTTONS, DPAD, SHOULDER, EXTBUTTONS
 
 #### Single Analog Gamepad
 
@@ -798,7 +782,7 @@ Device capabilities are encoded across three 8-bit configuration bytes sent duri
 
 ## Button Encoding
 
-### Button Bit Layout (16-bit, Active LOW)
+### Button Bit Layout (16-bit, Active HIGH)
 
 ```
 Bit │ Button    │ Binary    │ Hex    │ Description
@@ -811,8 +795,8 @@ Bit │ Button    │ Binary    │ Hex    │ Description
 10  │ LEFT      │ 0x0400    │ 0x0400 │ D-Pad Left
  9  │ UP        │ 0x0200    │ 0x0200 │ D-Pad Up
  8  │ RIGHT     │ 0x0100    │ 0x0100 │ D-Pad Right
- 7  │ (reserved)│ 0x0080    │ 0x0080 │ Always 1 (unused)
- 6  │ (reserved)│ 0x0040    │ 0x0040 │ Always 1 (unused)
+ 7  │ (reserved)│ 0x0080    │ 0x0080 │ Always 1 (reserved)
+ 6  │ (unused)  │ 0x0040    │ 0x0040 │ Always 0 (unused)
  5  │ L         │ 0x0020    │ 0x0020 │ L shoulder button
  4  │ R         │ 0x0010    │ 0x0010 │ R shoulder button
  3  │ B         │ 0x0008    │ 0x0008 │ B button (secondary)
@@ -823,17 +807,19 @@ Bit │ Button    │ Binary    │ Hex    │ Description
 
 ### Idle State
 
-**No buttons pressed**: `0x0080` (bits 7 and 6 reserved as high)
+**No buttons pressed**: `0x0080` (bit 7 reserved, always set)
 
-### Active LOW Logic
+### Active HIGH Logic
 
-**IMPORTANT**: Buttons are active LOW (inverse logic):
-- `0` = Button PRESSED
-- `1` = Button RELEASED
+Buttons are active HIGH:
+- `1` = Button PRESSED
+- `0` = Button RELEASED
+
+The idle state starts at `0x0080` (only bit 7 set, all buttons released). When a button is pressed, its corresponding bit is set (OR'd in).
 
 Examples:
-- **A button pressed** (all others released): The idle state `0x0080` with bit 14 cleared gives `0xBFFF`.
-- **A + START + L pressed**: The idle state with bits 14, 13, and 5 cleared gives `0x9FDF`.
+- **A button pressed** (all others released): `0x0080 | 0x4000 = 0x4080`
+- **A + START + L pressed**: `0x0080 | 0x4000 | 0x2000 | 0x0020 = 0x60A0`
 
 ### C-Button Mapping
 
@@ -913,7 +899,7 @@ Channel `0x00` returns a **device mode packet** instead of an analog value:
 ```
 Nuon → CHANNEL(0x00)
 Nuon → ANALOG
-Controller → 0x9DC0C000 (24-bit capability descriptor + CRC)
+Controller → 0x9D834D00 (1-byte capability descriptor + CRC + padding)
 ```
 
 This packet describes the controller's capabilities (see "Device Configuration").
@@ -924,7 +910,7 @@ Each analog value is sent as a 1-byte data packet with CRC appended:
 
 ```
 Format: [DataByte][CRC_High][CRC_Low][Padding]
-Example: 0x80 → 0x8086C300
+Example: 0x80 → 0x80830300
 ```
 
 ---
@@ -960,8 +946,8 @@ For example, a 1-byte value occupies byte 3 (bits 31-24), with the CRC in bytes 
 **1-byte data** (e.g., analog value `0x80`):
 ```
 Data:   0x80
-CRC:    0x86C3
-Packet: 0x8086C300
+CRC:    0x8303
+Packet: 0x80830300
         └─┬─┘└─┬──┘└─ padding
           data  CRC
 ```
@@ -969,8 +955,8 @@ Packet: 0x8086C300
 **2-byte data** (e.g., buttons `0x0080`):
 ```
 Data:   0x0080
-CRC:    0x4631
-Packet: 0x00804631
+CRC:    0x8303
+Packet: 0x00808303
         └──┬──┘└─┬──┘
           data   CRC
 ```
@@ -1082,7 +1068,7 @@ This protocol documentation was made possible through extensive reverse-engineer
 - **Community Support**: Nuon homebrew community feedback and testing
 
 **Special Thanks**:
-- **Jude St. John** - Polyface protocol designer (MAGIC = "JUDE")
+- **Jude Katsch** - Polyface protocol designer (MAGIC = "JUDE")
 - **VM Labs / Nuon Community** - For preserving development materials
 
 ---
