@@ -51,13 +51,13 @@ Joypad OS is a modular, high-performance firmware platform for building controll
 
 | Console | Highlights |
 |---------|-----------|
-| [**3DO**](consoles/3DO.md) | 8-player support, mouse, extension passthrough |
-| [**Dreamcast**](consoles/DREAMCAST.md) | Rumble, profiles |
-| [**GameCube / Wii**](consoles/GAMECUBE.md) | Profiles, rumble, keyboard mode |
-| [**Casio Loopy**](consoles/LOOPY.md) | 4-player (experimental) |
-| [**Neo Geo / SuperGun**](consoles/NEOGEO.md) | Profiles, 1L6B layouts |
-| [**Nuon**](consoles/NUON.md) | Controller, Tempest 3000 spinner, IGR |
-| [**PC Engine / TurboGrafx-16**](consoles/PCENGINE.md) | Multitap (5 players), mouse, 2/3/6-button |
+| [**3DO**](apps/USB23DO.md) | 8-player support, mouse, extension passthrough |
+| [**Dreamcast**](apps/USB2DC.md) | Rumble, profiles |
+| [**GameCube / Wii**](apps/USB2GC.md) | Profiles, rumble, keyboard mode |
+| [**Casio Loopy**](apps/USB2LOOPY.md) | 4-player (experimental) |
+| [**Neo Geo / SuperGun**](apps/USB2NEO.md) | Profiles, 1L6B layouts |
+| [**Nuon**](apps/USB2NUON.md) | Controller, Tempest 3000 spinner, IGR |
+| [**PC Engine / TurboGrafx-16**](apps/USB2PCE.md) | Multitap (5 players), mouse, 2/3/6-button |
 
 ---
 
@@ -65,7 +65,7 @@ Joypad OS is a modular, high-performance firmware platform for building controll
 
 Joypad OS supports a wide range of **USB controllers** (Xbox, PlayStation, Nintendo Switch, 8BitDo, and generic HID), **Bluetooth controllers** via USB dongle or Pico W, and **USB peripherals** including keyboards, mice, and hubs.
 
-See the [USB Output Modes](USB_OUTPUT.md) documentation for details on HID Gamepad, XInput, Switch, PS3/PS4, and other output profiles — plus the web configurator at [config.joypad.ai](https://config.joypad.ai).
+See the [USB2USB](apps/USB2USB.md) and [BT2USB](apps/BT2USB.md) documentation for details on HID Gamepad, XInput, Switch, PS3/PS4, and other output profiles — plus the web configurator at [config.joypad.ai](https://config.joypad.ai).
 
 ---
 
