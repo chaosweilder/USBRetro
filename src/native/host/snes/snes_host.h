@@ -17,15 +17,15 @@
 
 // Default GPIO pins for SNES controller (can be overridden by app)
 #ifndef SNES_PIN_CLOCK
-#define SNES_PIN_CLOCK  7   // Clock output
+#define SNES_PIN_CLOCK  2   // Clock output
 #endif
 
 #ifndef SNES_PIN_LATCH
-#define SNES_PIN_LATCH  8   // Latch output
+#define SNES_PIN_LATCH  3   // Latch output
 #endif
 
 #ifndef SNES_PIN_DATA0
-#define SNES_PIN_DATA0 9   // Data input (directly from controller)
+#define SNES_PIN_DATA0 4   // Data input (directly from controller)
 #endif
 
 #ifndef SNES_PIN_DATA1
