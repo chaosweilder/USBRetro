@@ -197,8 +197,8 @@ void snes_host_task(void)
                 combo_had_other[port] = false;
             }
 
-            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
-            uint32_t other_bits = buttons & ~(JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR| JP_BUTTON_X| JP_BUTTON_B| JP_BUTTON_Y| JP_BUTTON_A);
+            uint32_t other_bits = buttons & ~(JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR | JP_BUTTON_X| JP_BUTTON_B| JP_BUTTON_Y| JP_BUTTON_A);
 
             if (other_bits) combo_had_other[port] = true;
 
@@ -239,21 +239,33 @@ void snes_host_task(void)
         // Apply d-pad mode (remap d-pad to analog stick if needed)
         // =================================================================
         if (dpad_mode != DPAD_MODE_DPAD) {
-            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
-            buttons &= ~(JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+            uint32_t dpad_bits = buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR | JP_BUTTON_X| JP_BUTTON_B| JP_BUTTON_Y| JP_BUTTON_A);
+            buttons &= ~(JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR | JP_BUTTON_X| JP_BUTTON_B| JP_BUTTON_Y| JP_BUTTON_A);
 
-            uint8_t ax = 128, ay = 128;
-            if (dpad_bits & JP_BUTTON_DL) ax = 0;
-            else if (dpad_bits & JP_BUTTON_DR) ax = 255;
-            if (dpad_bits & JP_BUTTON_DU) ay = 0;
-            else if (dpad_bits & JP_BUTTON_DD) ay = 255;
-
+            uint8_t ax = 128, ay = 128, bx = 128, by = 128;
+            if {(dpad_bits & JP_BUTTON_DL) ax = 0;
+                (dpad_bits & JP_BUTTON_Y) bx = 0;
+               }
+            else if {(dpad_bits & JP_BUTTON_DR) ax = 255;
+                    (dpad_bits & JP_BUTTON_A) bx = 255;
+                    }
+            if {(dpad_bits & JP_BUTTON_DU) ay = 0;
+                (dpad_bits & JP_BUTTON_X) by = 0;
+               }       
+            else if {(dpad_bits & JP_BUTTON_DD) ay = 255;
+                    (dpad_bits & JP_BUTTON_B) by = 255;
+                    }
+            
             if (dpad_mode == DPAD_MODE_LEFT_STICK) {
                 analog_1x = ax;
                 analog_1y = ay;
+                analog_2x = bx;
+                analog_2y = by;
             } else {
                 analog_2x = ax;
                 analog_2y = ay;
+                analog_1x = bx;
+                analog_1y = by;
             }
         }
 
