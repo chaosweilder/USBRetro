@@ -1112,7 +1112,6 @@ if (PICO_BOARD STREQUAL "pico_w" OR PICO_BOARD STREQUAL "pico2_w")
         CONFIG_USB=1
         DISABLE_USB_HOST=1
         USE_BOOTSEL_BUTTON=1
-        REQUIRE_BT_INPUT=1
         CYW43_LWIP=0
         # BTstack uses async_context, not embedded run loop
         BTSTACK_USE_CYW43=1
@@ -2265,6 +2264,71 @@ target_link_libraries(joypad_controller_btusb_feather_rp2040 PRIVATE
 )
 joypad_target_common(joypad_controller_btusb_feather_rp2040)
 pico_enable_stdio_uart(joypad_controller_btusb_feather_rp2040 1)
+
+# ============================================================================
+# USB2AMI (USB -> Amiga/Atari DE9, RP2040 Zero)
+# DE9: UP=GP2 DOWN=GP3 LEFT=GP4 RIGHT=GP5 CLK=GP6 JOYMODE=GP7 DATA=GP8
+# TXS0108E level shifting (3.3V <-> 5V)
+# ============================================================================
+
+add_executable(joypad_ami_rp2040zero)
+target_compile_definitions(joypad_ami_rp2040zero PRIVATE
+    CONFIG_AMIGA=1
+    CONFIG_USB_HOST=1
+    WS2812_PIN=16
+    USE_BOOTSEL_BUTTON=1
+    AMIGA_PIN_UP=2
+    AMIGA_PIN_DOWN=3
+    AMIGA_PIN_LEFT=4
+    AMIGA_PIN_RIGHT=5
+    AMIGA_PIN_CLK=6
+    AMIGA_PIN_JOYMODE=7
+    AMIGA_PIN_DATA=8
+)
+target_sources(joypad_ami_rp2040zero PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga/amiga_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami/app.c
+)
+target_include_directories(joypad_ami_rp2040zero PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga
+)
+target_link_libraries(joypad_ami_rp2040zero PRIVATE ${COMMON_LIBRARIES} pico_multicore)
+joypad_target_common(joypad_ami_rp2040zero)
+joypad_add_btstack(joypad_ami_rp2040zero)
+
+# ============================================================================
+# USB2AMI (USB -> Amiga/Atari DE9, XIAO RP2040)
+# DE9: UP=GP26 DOWN=GP27 LEFT=GP28 RIGHT=GP29 CLK=GP6 JOYMODE=GP7 DATA=GP0
+# ============================================================================
+
+add_executable(joypad_ami_xiao)
+target_compile_definitions(joypad_ami_xiao PRIVATE
+    CONFIG_AMIGA=1
+    CONFIG_USB_HOST=1
+    WS2812_PIN=12
+    WS2812_POWER_PIN=11
+    AMIGA_PIN_UP=26
+    AMIGA_PIN_DOWN=27
+    AMIGA_PIN_LEFT=28
+    AMIGA_PIN_RIGHT=29
+    AMIGA_PIN_CLK=6
+    AMIGA_PIN_JOYMODE=7
+    AMIGA_PIN_DATA=0
+)
+target_sources(joypad_ami_xiao PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga/amiga_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami/app.c
+)
+target_include_directories(joypad_ami_xiao PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga
+)
+target_link_libraries(joypad_ami_xiao PRIVATE ${COMMON_LIBRARIES} pico_multicore)
+joypad_target_common(joypad_ami_xiao)
+joypad_add_btstack(joypad_ami_xiao)
+pico_enable_stdio_uart(joypad_ami_xiao 0)
+pico_enable_stdio_usb(joypad_ami_xiao 0)
 
 # ============================================================================
 # DEBUG BUILD CONFIGURATION
