@@ -204,7 +204,7 @@ APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb2n64_k
 
 # Stable apps for release
 # Note: usb2loopy_kb2040, snes23do_rp2040zero excluded until more mature
-RELEASE_APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb23do_rp2040zero usb2usb_feather_rp2040 usb2usb_rp2040zero bt2usb_pico_w snes2usb_kb2040
+RELEASE_APPS := usb2pce_kb2040 usb2gc_kb2040 usb2gc_rp2040zero usb2nuon_kb2040 usb23do_rp2040zero usb2usb_feather_rp2040 usb2usb_feather_rp2040_usb_host usb2usb_rp2040zero bt2usb_pico_w snes2usb_kb2040
 
 # Release directory
 RELEASE_DIR := releases

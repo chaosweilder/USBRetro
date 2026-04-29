@@ -40,6 +40,7 @@ jobs:
           - usb2usb_pico_w
           - usb2usb_pico2_w
           - usb2usb_feather_rp2040
+          - usb2usb_feather_rp2040_usb_host
           - usb2usb_rp2040zero
           - usb2usb_rp2350usba
           - bt2usb_pico_w

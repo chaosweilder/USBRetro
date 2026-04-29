@@ -1112,6 +1112,7 @@ if (PICO_BOARD STREQUAL "pico_w" OR PICO_BOARD STREQUAL "pico2_w")
         CONFIG_USB=1
         DISABLE_USB_HOST=1
         USE_BOOTSEL_BUTTON=1
+        REQUIRE_BT_INPUT=1
         CYW43_LWIP=0
         # BTstack uses async_context, not embedded run loop
         BTSTACK_USE_CYW43=1

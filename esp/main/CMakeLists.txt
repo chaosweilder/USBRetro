@@ -535,6 +535,7 @@ elseif(CONFIG_APP STREQUAL "btusb2usb")
 elseif(APP_NEEDS_BTSTACK)
     target_compile_definitions(${COMPONENT_LIB} PUBLIC
         CONFIG_BT2USB=1
+        REQUIRE_BT_INPUT=1
         BTSTACK_USE_ESP32=1
         ENABLE_BTSTACK=1
     )

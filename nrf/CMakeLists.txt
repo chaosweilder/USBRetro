@@ -600,6 +600,7 @@ else()
         CONFIG_BT2USB=1
         CONFIG_USB=1
         DISABLE_USB_HOST=1
+        REQUIRE_BT_INPUT=1
         BTSTACK_USE_NRF=1
         ENABLE_BTSTACK=1
         PLATFORM_NRF=1
