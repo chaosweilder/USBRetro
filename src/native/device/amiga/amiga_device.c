@@ -206,7 +206,7 @@ static void __not_in_flash_func(amiga_tap_callback)(output_target_t output,
 
 void amiga_device_task(void) {
     // Only handle mouse state when in joystick mode (not during CD32 transactions)
-    if (amiga_state.mode == AMIGA_MODE_JOYSTICK) {
+    if (amiga_state.mode == AMIGA_MODE_JOYSTICK && mouse_active) {
 
         // Apply mouse buttons continuously so held state persists
         if (mouse_buttons & JP_BUTTON_B1) pin_press(AMIGA_PIN_CLK);
@@ -250,8 +250,8 @@ void amiga_device_task(void) {
         }
     }
 
-    // Process regular mouse movement
-    if (mouse_accum_x == 0 && mouse_accum_y == 0) return;
+    // Process regular mouse movement — only when mouse is active
+    if (!mouse_active || (mouse_accum_x == 0 && mouse_accum_y == 0)) return;
 
     // Horizontal
     if (mouse_accum_x > 0) {
