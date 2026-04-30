@@ -9,6 +9,7 @@
 #include "core/router/router.h"
 #include "core/services/players/manager.h"
 #include "core/services/profiles/profile.h"
+#include "core/services/storage/flash.h"
 #include "core/input_interface.h"
 #include "core/output_interface.h"
 #include "native/device/amiga/amiga_device.h"
@@ -61,6 +62,9 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 void app_init(void)
 {
     printf("[app:usb2ami] Initializing usb2ami v%s\n", APP_VERSION);
+
+    // Initialize flash storage early so settings are available to device init
+    // flash_init();
 
     // Configure router for single player USB -> Amiga
     router_config_t router_cfg = {
