@@ -56,9 +56,13 @@ static volatile uint8_t buttons_isr  = 0xFF;
 // Mouse accumulator — updated by tap callback, drained by device task
 static volatile int16_t mouse_accum_x = 0;
 static volatile int16_t mouse_accum_y = 0;
+static volatile int16_t mouse_accum_wheel = 0;  // scroll wheel accumulator
 
 // Mouse button state — persists between events
 static volatile uint32_t mouse_buttons = 0;
+
+// Track whether a mouse is the active device — disables CD32 mode switching
+static volatile bool mouse_active = false;
 
 // Quadrature state indices
 static uint8_t quad_x = 0;
@@ -124,7 +128,7 @@ static inline void set_quad_y(uint8_t state) {
 static void __not_in_flash_func(amiga_gpio_irq)(uint gpio, uint32_t events) {
     if (gpio == AMIGA_PIN_JOYMODE) {
         if (events & GPIO_IRQ_EDGE_FALL) {
-            if (amiga_state.mode == AMIGA_MODE_JOYSTICK) {
+            if (amiga_state.mode == AMIGA_MODE_JOYSTICK && !mouse_active) {
                 amiga_state.mode = AMIGA_MODE_CD32;
                 gpio_set_dir(AMIGA_PIN_CLK, GPIO_IN);
                 buttons_isr = buttons_live >> 1;
@@ -172,12 +176,15 @@ static void __not_in_flash_func(amiga_tap_callback)(output_target_t output,
 
     if (event->type == INPUT_TYPE_MOUSE) {
         // Mouse mode — accumulate deltas, store button state
+        mouse_active = true;
         mouse_accum_x += event->delta_x;
         mouse_accum_y += event->delta_y;
+        mouse_accum_wheel += event->delta_wheel;
         mouse_buttons = event->buttons;
 
     } else {
         // Gamepad mode
+        mouse_active = false;
         uint32_t buttons = event->buttons;
         amiga_state.buttons = buttons;
 
@@ -200,15 +207,50 @@ static void __not_in_flash_func(amiga_tap_callback)(output_target_t output,
 void amiga_device_task(void) {
     // Only handle mouse state when in joystick mode (not during CD32 transactions)
     if (amiga_state.mode == AMIGA_MODE_JOYSTICK) {
+
         // Apply mouse buttons continuously so held state persists
         if (mouse_buttons & JP_BUTTON_B1) pin_press(AMIGA_PIN_CLK);
         else                              pin_release(AMIGA_PIN_CLK);
 
         if (mouse_buttons & JP_BUTTON_B2) pin_press(AMIGA_PIN_DATA);
         else                              pin_release(AMIGA_PIN_DATA);
+
+        // WheelBusMouse scroll protocol:
+        // Pull MMB (JOYMODE pin 5) LOW, generate Y quadrature steps for scroll
+        // amount, then release MMB HIGH. Amiga driver reads Y delta while MMB
+        // is LOW as scroll wheel data (not cursor movement).
+        if (mouse_accum_wheel != 0) {
+            int16_t steps = mouse_accum_wheel;
+            mouse_accum_wheel = 0;
+
+            // Disable JOYMODE IRQ during scroll — we're driving the pin ourselves
+            gpio_set_irq_enabled(AMIGA_PIN_JOYMODE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, false);
+
+            // Pull MMB LOW to signal scroll transaction
+            pin_press(AMIGA_PIN_JOYMODE);
+            busy_wait_us(50);
+
+            // Generate quadrature steps for scroll amount
+            for (int i = 0; i < (steps < 0 ? -steps : steps); i++) {
+                if (steps > 0) {
+                    quad_y = (quad_y + QUAD_STEPS - 1) % QUAD_STEPS;
+                } else {
+                    quad_y = (quad_y + 1) % QUAD_STEPS;
+                }
+                set_quad_y(QUAD_TABLE[quad_y]);
+                busy_wait_us(10);
+            }
+
+            busy_wait_us(50);
+            pin_release(AMIGA_PIN_JOYMODE);
+            busy_wait_us(50);
+
+            // Re-enable JOYMODE IRQ
+            gpio_set_irq_enabled(AMIGA_PIN_JOYMODE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+        }
     }
 
-    // Only process mouse movement when there is accumulated delta
+    // Process regular mouse movement
     if (mouse_accum_x == 0 && mouse_accum_y == 0) return;
 
     // Horizontal
