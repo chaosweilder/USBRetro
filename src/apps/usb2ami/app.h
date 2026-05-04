@@ -23,7 +23,7 @@
 // Routing
 #define ROUTING_MODE    ROUTING_MODE_MERGE
 #define MERGE_MODE      MERGE_BLEND
-#define MAX_ROUTES      1
+#define APP_MAX_ROUTES  1
 #define TRANSFORM_FLAGS 0
 
 // Player management
