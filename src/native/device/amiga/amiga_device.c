@@ -283,6 +283,15 @@ static void __not_in_flash_func(amiga_tap_callback)(output_target_t output,
     (void)output;
     (void)player_index;
 
+    // Handle disconnect event
+    if (event->type == INPUT_TYPE_NONE) {
+        device_connected = false;
+        mouse_active = false;
+        dpi_adjust_mode = false;
+        leds_set_color(0, 0, 0);
+        return;
+    }
+
     if (event->type == INPUT_TYPE_MOUSE) {
         // Set LED on first connection or when switching from gamepad
         if (!mouse_active || !device_connected) {
@@ -395,7 +404,11 @@ void amiga_device_task(void) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
         if (now - last_button_read >= 50) {
             last_button_read = now;
+            // Temporarily disable JOYMODE IRQ — read_bootsel_button() disables
+            // all interrupts briefly which can cause ghost CD32 button presses
+            gpio_set_irq_enabled(AMIGA_PIN_JOYMODE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, false);
             bool pressed = read_bootsel_button();
+            gpio_set_irq_enabled(AMIGA_PIN_JOYMODE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
 
             if (pressed && !button_was_pressed) {
                 // Button just pressed
