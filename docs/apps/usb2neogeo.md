@@ -56,6 +56,8 @@ Standard arcade mapping for 1L6B in 1L8B fightsticks:
 | D-Pad | D-Pad |
 | Left Stick | D-Pad |
 
+![Default Profile](../images/usb2neogeo_default.svg)
+
 ### Type A Profile
 
 1L6B aligned to right side of 1L8B fightsticks:
@@ -70,6 +72,8 @@ Standard arcade mapping for 1L6B in 1L8B fightsticks:
 | R1 (RB/R) | B2 / P2 / B |
 | L2 (LT/ZL) | B6 / K3 |
 | R2 (RT/ZR) | B5 / K2 / Select |
+
+![Type A](../images/usb2neogeo_typea.svg)
 
 ### Type B Profile
 
@@ -86,6 +90,8 @@ Neo Geo MVS 1L4B layout:
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | B6 / K3 |
 
+![Type B](../images/usb2neogeo_typeb.svg)
+
 ### Type C Profile
 
 Neo Geo MVS Big Red layout:
@@ -100,6 +106,8 @@ Neo Geo MVS Big Red layout:
 | R1 (RB/R) | B3 / P3 / C |
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | B6 / K3 |
+
+![Type C](../images/usb2neogeo_typec.svg)
 
 ### Type D Profile
 
@@ -116,6 +124,8 @@ Neo Geo MVS U4 layout:
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | (disabled) |
 
+![Type D](../images/usb2neogeo_typed.svg)
+
 ### Pad A Profile
 
 AES pad, classic diamond (A/B/C/D on face buttons):
@@ -131,6 +141,8 @@ AES pad, classic diamond (A/B/C/D on face buttons):
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | (disabled) |
 
+![Pad A](../images/usb2neogeo_pada.svg)
+
 ### Pad B Profile
 
 AES pad, KOF/fighting style:
@@ -145,6 +157,8 @@ AES pad, KOF/fighting style:
 | R1 (RB/R) | B5 / K2 / Select |
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | (disabled) |
+
+![Pad B](../images/usb2neogeo_padb.svg)
 
 ## Runtime Button Mapping
 
@@ -214,16 +228,6 @@ Auto fire overlays the current button mapping without erasing it.
 
 From idle: hold **SELECT** for **2 seconds**, then press **START**. The runtime mapping is erased and the active profile resumes (LED flashes twice).
 
-### Profile Diagrams
-
-![Default Profile](../images/usb2neogeo_default.svg)
-![Type A](../images/usb2neogeo_typea.svg)
-![Type B](../images/usb2neogeo_typeb.svg)
-![Type C](../images/usb2neogeo_typec.svg)
-![Type D](../images/usb2neogeo_typed.svg)
-![Pad A](../images/usb2neogeo_pada.svg)
-![Pad B](../images/usb2neogeo_padb.svg)
-
 ## Supported Boards
 
 | Board | Build Command |
@@ -275,7 +279,24 @@ This implementation uses open-drain logic to prevent voltage collisions between 
 
 ### Latency Testing
 
+Input latency is tested using the  [MiSTer FPGA Input Latency](https://github.com/misteraddons/inputlatency) methodology, but adapted for usb2neogeo use. While the original methodology measures input lag from USB gamepads on a MiSTer FPGA, this setup replaces the MiSTer with the adapter itself.
+
+The process uses an Arduino script that triggers an input on the gamepad via PIN 5. In the original MiSTer setup, the core catches the input and sends a response back to the Arduino via the User Port to PIN 2, triggering an interrupt to calculate the elapsed time.
+
+With this usb2neogeo, the MiSTer is not required. The adapter receives the USB gamepad inputs and routes them directly to the NEOGEO port. This output is then used as the interrupt signal for the Arduino to measure the precise delay between the physical button "press" and the adapter's output.
+
 ![Latency Test Setup](../images/usb2neogeo_latency_diagram.png)
+
+
+### Test Results
+*Note: Outliers filtered using 0.02 lower and 0.995 upper quantiles to ensure statistical accuracy.*
+
+| Setup (Input > Output) | Min (ms) | Avg (ms) | Max (ms) | Std Dev |
+| :--- | :---: | :---: | :---: | :---: |
+| **GP2040 (PS3)** > joypad-usb2neogeo | 0.24 | 0.74 | 1.25 | 0.28 |
+| **GP2040 (PS4)** > joypad-usb2neogeo | 0.24 | 0.73 | 1.26 | 0.28 |
+| **GP2040 (SW)** > joypad-usb2neogeo | 0.18 | 0.67 | 1.18 | 0.28 |
+| **GP2040 (360)** > joypad-usb2neogeo | 0.18 | 0.67 | 1.19 | 0.28 |
 
 ## Troubleshooting
 
