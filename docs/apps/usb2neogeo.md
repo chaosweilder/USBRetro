@@ -146,6 +146,74 @@ AES pad, KOF/fighting style:
 | L2 (LT/ZL) | (disabled) |
 | R2 (RT/ZR) | (disabled) |
 
+## Runtime Button Mapping
+
+In addition to the 7 compiled profiles above, buttons can be remapped on fly. The runtime mapping overlays the active profile and persists until cleared.
+
+**Mappable input buttons:** 
+
+B1 B2 B3 B4 L1 R1 L2 R2 L3 R3 L4 R4
+
+**Mappable output buttons:**
+
+| Slot | Neo Geo |
+|------|---------|
+| 1 | B1 / P1 / A |
+| 2 | B2 / P2 / B |
+| 3 | B3 / P3 / C |
+| 4 | B4 / K1 / D |
+| 5 | B5 / K2 / Select |
+| 6 | B6 / K3 |
+
+> SELECT (Coin) and START are not mappable — they are the trigger/cancel buttons for all three modes.
+
+### Consecutive Remap Mode
+
+1. Hold **SELECT** alone for **2 seconds**
+2. Press the button you want for **B1/A** — LED flashes twice, buttons stop registering
+3. Press the button you want for **B2/B**, then **B3/C**, **B4/D**, **B5/K2**, **B6/K3**
+4. After the 6th button the mapping saves automatically (LED flashes twice)
+5. Press **START** at any point to cancel and clear
+
+Already-assigned buttons are ignored — each input button can only map to one output.
+
+### Alternative Remap Mode (Press Mode)
+
+1. Hold **START + any 2 mappable buttons** for **2 seconds** — LED flashes twice, buttons stop registering
+2. Press a button N times to assign it to Neo Geo slot N (1 press → B1/A, 2 press → B2/B, …, 6 press → B6/K3)
+3. 800ms silence commits the press sequence (LED blinks once per commit)
+4. Press **START** alone to save (LED flashes twice)
+5. Press **SELECT** alone to cancel and clear
+
+Multiple input buttons can be assigned to the same Neo Geo outpu by pressing each the same number of times. Useful for shmups — e.g. press two buttons once each so both map to B1/A, then assign auto-fire only to one of them via Auto Fire Mode.
+
+> **Note:** Entering this mode erases the previous runtime layout entirely.
+
+### Auto Fire Mode
+
+1. Hold **START + exactly 1 mappable button** for **2 seconds** — LED flashes twice, buttons stop registering
+2. Press the target button N times to assign a turbo frequency:
+
+| Press | Frequency |
+|------|-----------|
+| 1 | 30 Hz |
+| 2 | 20 Hz |
+| 3 | 15 Hz |
+| 4 | 12 Hz |
+| 5 | 10 Hz |
+| 6 | 7.5 Hz |
+| 7+ | Disabled |
+
+3. 800ms silence commits the frequency (LED blinks once)
+4. Press **START** alone to save (LED flashes twice)
+5. Press **SELECT** alone to discard and exit
+
+Auto fire overlays the current button mapping without erasing it.
+
+### Clearing the Runtime Mapping
+
+From idle: hold **SELECT** for **2 seconds**, then press **START**. The runtime mapping is erased and the active profile resumes (LED flashes twice).
+
 ### Profile Diagrams
 
 ![Default Profile](../images/usb2neogeo_default.svg)
