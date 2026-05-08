@@ -260,9 +260,11 @@ set(N64_HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/src/N64Controller.c
 )
 
-# GC host sources (GameCube controller reading)
+# GC host sources (GameCube controller reading + GBA-as-controller bridge)
 set(GC_HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc/gc_host.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc/gba_multiboot.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc/gba_payload.c
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/src/joybus.c
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/src/GamecubeController.c
 )
@@ -1991,6 +1993,7 @@ target_include_directories(joypad_gc2usb PUBLIC
 )
 target_link_libraries(joypad_gc2usb PRIVATE pico_stdlib pico_multicore hardware_pio pico_rand tinyusb_device tinyusb_board)
 joypad_target_common(joypad_gc2usb)
+pico_enable_stdio_uart(joypad_gc2usb 1)
 pico_generate_pio_header(joypad_gc2usb ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
 
 # --- GC2USB (GameCube -> USB HID, RP2040-Zero) ---

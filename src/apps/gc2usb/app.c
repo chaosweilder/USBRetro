@@ -15,6 +15,9 @@
 #include "usb/usbd/usbd.h"
 #include "native/host/gc/gc_host.h"
 #include "core/services/leds/leds.h"
+#include "pico/bootrom.h"
+#include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include <stdio.h>
 
 // ============================================================================
@@ -74,7 +77,16 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 
 void app_init(void)
 {
-    printf("[app:gc2usb] Initializing GC2USB v%s\n", APP_VERSION);
+    // Overclock to 130MHz so the joybus PIO clock divider is exactly 13.0
+    // (clean integer, no jitter). At the default 125MHz the divider is 12.5
+    // which introduces fractional jitter that corrupts bits during the GBA
+    // multiboot upload. Reference: joybus-pio examples all run at 130MHz.
+    set_sys_clock_khz(130000, true);
+    // Re-init stdio so UART baud divisor recomputes for the new sys_clk
+    // (otherwise serial output is garbled at the wrong baud rate).
+    stdio_init_all();
+
+    printf("[app:gc2usb] Initializing GC2USB v%s (sys_clk=130MHz)\n", APP_VERSION);
 
     // Configure router for GC -> USB routing
     router_config_t router_cfg = {
@@ -124,6 +136,10 @@ void app_init(void)
 
 void app_task(void)
 {
+    // Reboot-to-bootloader escape hatch on the UART console.
+    int c = getchar_timeout_us(0);
+    if (c == 'B') reset_usb_boot(0, 0);
+
     // Drive button state machine (single/double/triple click + hold detection)
     button_task();
 
