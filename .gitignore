@@ -15,5 +15,6 @@ esp/build/
 esp/sdkconfig
 esp/dependencies.lock
 esp/.cache/
+gba/*/build/
 .vercel
 .claude/

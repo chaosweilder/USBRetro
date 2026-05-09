@@ -12,7 +12,6 @@
 #include "core/input_event.h"
 #include "core/buttons.h"
 #include "core/services/players/feedback.h"
-#include "core/services/leds/leds.h"
 #include "platform/platform.h"
 #include <hardware/pio.h>
 #include <pico/time.h>
@@ -330,21 +329,17 @@ void gc_host_task(void)
                 printf("[gc_host] Port %d: attempting GBA multiboot "
                        "(payload %lu bytes)\n",
                        port, (unsigned long)gba_payload_len);
-                leds_set_color(255, 64, 0);  // amber: trying
                 gba_mb_result_t r = gba_mb_upload(&controller->_port,
                                                   gba_payload, gba_payload_len,
                                                   /*palette*/3, /*speed*/0,
                                                   /*channel*/port);
                 if (r == GBA_MB_OK) {
                     printf("[gc_host] Port %d: GBA boot OK, payload running\n", port);
-                    leds_set_color(0, 255, 0);  // green: boot OK
                     gba_boot_attempted[port] = true;
                     sleep_ms(200);  // let the payload init SIO and halt before we poll
                 } else {
                     printf("[gc_host] Port %d: GBA multiboot failed (%d), retrying in 2s\n",
                            port, (int)r);
-                    // Encode failure code in LED: red base + small green tweak
-                    leds_set_color(255, (uint8_t)(-(int)r * 32), 0);
                     // Don't set gba_boot_attempted — keep retrying until success
                 }
             }
