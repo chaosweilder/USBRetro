@@ -28,6 +28,7 @@ static bool rumble_state[GC_MAX_PORTS] = {false};
 static uint8_t disconnect_debounce[GC_MAX_PORTS] = {0};  // Debounce brief disconnects
 static bool was_connected[GC_MAX_PORTS] = {false};  // Track connection state
 static bool gba_boot_attempted[GC_MAX_PORTS] = {false};  // One multiboot attempt per disconnect cycle
+static bool gba_bridge_owned[GC_MAX_PORTS] = {false};    // True when gba_bridge.c owns the joybus port
 static uint32_t gba_probe_next_ms[GC_MAX_PORTS] = {0};  // Rate-limit GBA probes (500ms)
 
 // Track previous state for edge detection
@@ -225,7 +226,6 @@ void gc_host_task(void)
 {
     if (!initialized) return;
 
-
     // Check feedback system for rumble updates
     for (int port = 0; port < GC_MAX_PORTS; port++) {
         feedback_state_t* feedback = feedback_get_state(port);
@@ -248,6 +248,11 @@ void gc_host_task(void)
         // controller protocol (probe/origin/poll) does NOT match — we must
         // bypass GamecubeController_Poll entirely.
         if (gba_boot_attempted[port]) {
+            // If gba_bridge owns the bus, skip autopoll — its CDC-driven
+            // traffic would race with our reads otherwise.
+            if (gba_bridge_owned[port]) {
+                continue;
+            }
             uint8_t gba_keys[4];
             if (gba_input_read(&controller->_port, gba_keys) < 0) {
                 continue;  // transient bus failure
@@ -322,6 +327,7 @@ void gc_host_task(void)
         if (!success
             && !GamecubeController_IsInitialized(controller)
             && !gba_boot_attempted[port]
+            && !gba_bridge_owned[port]   // daemon owns the bus; don't race
             && gba_payload_len > 0) {
             uint32_t now_ms = to_ms_since_boot(get_absolute_time());
             if (now_ms >= gba_probe_next_ms[port]) {
@@ -516,3 +522,29 @@ const InputInterface gc_input_interface = {
     .is_connected = gc_host_is_connected,
     .get_device_count = gc_get_device_count,
 };
+
+// ============================================================================
+// GBA BRIDGE COORDINATION (called from gba_bridge.c)
+// ============================================================================
+
+joybus_port_t* gc_host_get_gba_port(void)
+{
+    if (!initialized) return NULL;
+    return &gc_controllers[0]._port;
+}
+
+bool gc_host_gba_acquire_for_bridge(void)
+{
+    if (!initialized) return false;
+    // Allow acquire BEFORE autoboot has fired — daemon may want to
+    // upload its own ROM instead of letting gc_host's autoboot install
+    // the embedded joypad payload. Once owned, gc_host_task skips both
+    // its autopoll AND its autoboot path until released.
+    gba_bridge_owned[0] = true;
+    return true;
+}
+
+void gc_host_gba_release_from_bridge(void)
+{
+    gba_bridge_owned[0] = false;
+}

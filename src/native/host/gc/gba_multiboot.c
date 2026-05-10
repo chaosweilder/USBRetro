@@ -222,6 +222,20 @@ bool gba_mb_detect(joybus_port_t* port)
     return id == GBA_TYPE_ID;
 }
 
+bool gba_mb_in_multiboot_wait(joybus_port_t* port)
+{
+    // STATUS handshake; expect GBA type + JSTAT.PSF0 set (BIOS multiboot
+    // ready). Distinguishes a freshly-power-cycled GBA in BIOS wait state
+    // from a GBA already running a payload (joypad / hello / etc), which
+    // also responds with the GBA type but does NOT set PSF0.
+    uint8_t cmd = 0x00;
+    uint8_t r[3];
+    if (jb_xfer(port, &cmd, 1, r, 3) < 0) return false;
+    uint16_t id = (uint16_t)r[0] | ((uint16_t)r[1] << 8);
+    if (id != GBA_TYPE_ID) return false;
+    return (r[2] & JSTAT_PSF0) != 0;
+}
+
 gba_mb_result_t gba_mb_upload(joybus_port_t* port,
                               const uint8_t* rom, uint32_t len,
                               int palette, int speed, int channel)

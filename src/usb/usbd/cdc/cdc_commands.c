@@ -2174,6 +2174,253 @@ static void cmd_pad_config_pins(const char* json)
 #endif // CONFIG_PAD_INPUT
 
 // ============================================================================
+// JOYBUS BRIDGE COMMANDS (gc2usb only)
+// ============================================================================
+//
+// Surface joybus_bridge.c via CDC so a host-side daemon can drive raw
+// joybus traffic — currently used for GBA multiboot upload (Kawasedo
+// cipher in JS), eventually for Dolphin live link traffic and GameCube
+// controller polling. Bus-generic primitive; bridge layer doesn't know
+// or care what protocol the daemon is implementing on top.
+//
+// See .dev/docs/dolphin-gba-bridge.md for the architecture + phasing.
+
+#if defined(__has_include)
+#  if __has_include("native/host/gc/joybus_bridge.h")
+#    define HAVE_JOYBUS_BRIDGE 1
+#    include "native/host/gc/joybus_bridge.h"
+#  endif
+#endif
+
+#ifdef HAVE_JOYBUS_BRIDGE
+
+// Tiny hex parser/emitter — no allocation, no validation overhead. The
+// daemon is trusted; if it sends bad hex we just truncate. Bytes are
+// small (joybus xfers cap at a handful of bytes typically).
+static int hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int parse_hex(const char* json, const char* key,
+                     uint8_t* out, int max_bytes)
+{
+    int len = 0;
+    const char* hex = json_get_string(json, key, &len);
+    if (!hex || len == 0 || (len & 1)) return 0;
+    int bytes = len / 2;
+    if (bytes > max_bytes) bytes = max_bytes;
+    for (int i = 0; i < bytes; i++) {
+        int hi = hex_nibble(hex[2*i]);
+        int lo = hex_nibble(hex[2*i + 1]);
+        if (hi < 0 || lo < 0) return i;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return bytes;
+}
+
+static void emit_hex(char* dst, const uint8_t* src, int n)
+{
+    static const char H[] = "0123456789abcdef";
+    for (int i = 0; i < n; i++) {
+        dst[2*i]   = H[(src[i] >> 4) & 0xF];
+        dst[2*i+1] = H[src[i] & 0xF];
+    }
+    dst[2*n] = '\0';
+}
+
+static void cmd_joybus_bridge_start(const char* json)
+{
+    (void)json;
+    if (!joybus_bridge_start()) {
+        send_error("Could not acquire joybus port (gc_host not initialized?)");
+        return;
+    }
+    send_ok();
+}
+
+static void cmd_joybus_bridge_stop(const char* json)
+{
+    (void)json;
+    joybus_bridge_stop();
+    send_ok();
+}
+
+static void cmd_joybus_bridge_status(const char* json)
+{
+    (void)json;
+    joybus_bridge_state_t s = joybus_bridge_get_state();
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"state\":\"%s\"}",
+             s == JOYBUS_BRIDGE_ACTIVE ? "ACTIVE" : "IDLE");
+    send_json(response_buf);
+}
+
+// JOYBUS.XFER — primitive joybus exchange.
+//   Request:  {"cmd":"JOYBUS.XFER","tx":"<hex>","rx_len":N,"timeout_us":M}
+//   Response: {"ok":true,"rx":"<hex>","got":N}   on success
+//             {"ok":false,"error":"...","code":-N}   on bus error
+//
+// timeout_us defaults to 1000 (1 ms) if omitted; rx_len defaults to 0.
+static void cmd_joybus_xfer(const char* json)
+{
+    uint8_t tx[32];
+    int tx_len = parse_hex(json, "tx", tx, sizeof(tx));
+
+    int rx_len = 0;
+    json_get_int(json, "rx_len", &rx_len);
+    if (rx_len < 0) rx_len = 0;
+    if (rx_len > 32) rx_len = 32;
+
+    int timeout_us = 1000;
+    json_get_int(json, "timeout_us", &timeout_us);
+    if (timeout_us < 1) timeout_us = 1;
+
+    uint8_t rx[32];
+    int got = joybus_bridge_xfer(tx, (uint16_t)tx_len,
+                                 rx, (uint16_t)rx_len,
+                                 (uint32_t)timeout_us);
+    if (got < 0) {
+        snprintf(response_buf, sizeof(response_buf),
+                 "{\"ok\":false,\"error\":\"xfer failed\",\"code\":%d}", got);
+        send_json(response_buf);
+        return;
+    }
+    char hex[2 * 32 + 1];
+    emit_hex(hex, rx, got);
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"rx\":\"%s\",\"got\":%d}", hex, got);
+    send_json(response_buf);
+}
+
+// JOYBUS.BATCH — execute N joybus xfers in a single CDC roundtrip.
+// Per-xfer encoding (binary, hex'd into "ops" string):
+//   tx_len(1) | tx[tx_len] | rx_len(1)
+// Per-xfer response (binary, hex'd into "out" string):
+//   err_abs(1) | got(1) | rx[got]    (err_abs=0 on success)
+//
+// Single batch-wide timeout in JSON ("timeout_us", default 5000).
+//
+// This is the throughput primitive. Single JOYBUS.XFER pays a USB FS
+// roundtrip (~2 ms) per call — devastating for the ~13.5K writes a
+// 54 KB multiboot needs (~30 s of pure USB overhead). With BATCH, a
+// daemon can pack ~70 ops per CDC frame and amortize the USB cost
+// down to well under 1 s for the same upload. Joybus bus time itself
+// is unchanged (~3.4 s for 54 KB), so total ≈ 4 s instead of 30+.
+static void cmd_joybus_batch(const char* json)
+{
+    int ops_hex_len = 0;
+    const char* ops_hex = json_get_string(json, "ops", &ops_hex_len);
+    if (!ops_hex || (ops_hex_len & 1)) { send_error("missing/odd ops"); return; }
+
+    int timeout_us = 5000;
+    json_get_int(json, "timeout_us", &timeout_us);
+    if (timeout_us < 1) timeout_us = 1;
+
+    // Walk encoded ops, execute, accumulate raw response bytes.
+    static uint8_t out_buf[480];   // ~960 hex chars; well under CDC max.
+    int out_len = 0;
+    int i = 0;
+    while (i + 2 <= ops_hex_len) {
+        int tx_len = (hex_nibble(ops_hex[i]) << 4) | hex_nibble(ops_hex[i+1]);
+        i += 2;
+        if (tx_len < 0 || tx_len > 32 || i + tx_len*2 + 2 > ops_hex_len) break;
+
+        uint8_t tx[32];
+        for (int j = 0; j < tx_len; j++) {
+            tx[j] = (hex_nibble(ops_hex[i + 2*j]) << 4) | hex_nibble(ops_hex[i + 2*j + 1]);
+        }
+        i += tx_len * 2;
+
+        int rx_len = (hex_nibble(ops_hex[i]) << 4) | hex_nibble(ops_hex[i+1]);
+        i += 2;
+        if (rx_len < 0 || rx_len > 32) break;
+        if (out_len + 2 + rx_len > (int)sizeof(out_buf)) break;  // would overflow rsp
+
+        uint8_t rx[32];
+        int got = joybus_bridge_xfer(tx, (uint16_t)tx_len, rx, (uint16_t)rx_len,
+                                     (uint32_t)timeout_us);
+        uint8_t err = (got < 0) ? (uint8_t)(-got) : 0;
+        if (got < 0) got = 0;
+        out_buf[out_len++] = err;
+        out_buf[out_len++] = (uint8_t)got;
+        memcpy(&out_buf[out_len], rx, got);
+        out_len += got;
+        // Settle between ops — matches the sleep_us(GBA_DELAY_US=70)
+        // gba_multiboot.c puts before each WRITE. The cable's level-
+        // shifter MCU and the GBA's BIOS multiboot handler both need a
+        // small gap to process the previous exchange before accepting
+        // the next; without it, batched WRITEs land but the BIOS gets
+        // confused and silently rejects the upload at CRC time.
+        sleep_us(70);
+    }
+
+    static char hex_out[2 * sizeof(out_buf) + 1];
+    emit_hex(hex_out, out_buf, out_len);
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"out\":\"%s\"}", hex_out);
+    send_json(response_buf);
+}
+
+// ============================================================================
+// GBA multiboot — staged upload (firmware-native timing)
+// ============================================================================
+// JS-driven upload over JOYBUS.XFER/BATCH can't keep up with the BIOS's
+// inter-WRITE timing tolerance (CDC roundtrips between batches stall the
+// handshake long enough for BIOS to silently reject at CRC). So multiboot
+// gets a specialized path: stream the ROM in via GBA.MB.CHUNK, then fire
+// GBA.MB.UPLOAD which runs the upload natively in firmware.
+//
+// This trades flexibility (host can't tweak per-WRITE timing) for
+// reliability. JS still owns the bus via JOYBUS.BRIDGE.START — the
+// staging path piggybacks on that ownership.
+
+static void cmd_gba_mb_reset(const char* json)
+{
+    (void)json;
+    joybus_bridge_mb_reset();
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"size\":0}");
+    send_json(response_buf);
+}
+
+static void cmd_gba_mb_chunk(const char* json)
+{
+    uint8_t buf[480];   // ~960 hex chars; leaves headroom for JSON keys
+    int n = parse_hex(json, "data", buf, sizeof(buf));
+    if (n <= 0) { send_error("missing/empty data"); return; }
+    if (!joybus_bridge_mb_append(buf, n)) {
+        send_error("buffer overflow (rom > 64 KB)");
+        return;
+    }
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"size\":%lu}",
+             (unsigned long)joybus_bridge_mb_size());
+    send_json(response_buf);
+}
+
+static void cmd_gba_mb_upload(const char* json)
+{
+    int channel = 0;
+    json_get_int(json, "channel", &channel);
+    int r = joybus_bridge_mb_upload(channel);
+    if (r == 0) {
+        snprintf(response_buf, sizeof(response_buf),
+                 "{\"ok\":true,\"size\":%lu}",
+                 (unsigned long)joybus_bridge_mb_size());
+    } else {
+        snprintf(response_buf, sizeof(response_buf),
+                 "{\"ok\":false,\"code\":%d,\"size\":%lu}",
+                 r, (unsigned long)joybus_bridge_mb_size());
+    }
+    send_json(response_buf);
+}
+#endif  // HAVE_JOYBUS_BRIDGE
+
+// ============================================================================
 // COMMAND DISPATCH
 // ============================================================================
 
@@ -2215,6 +2462,16 @@ static const cmd_entry_t commands[] = {
     {"CAPS.GET", cmd_caps_get},
     {"OUTPUT.NATIVE.GET", cmd_output_native_get},
     {"OUTPUT.NATIVE.SET", cmd_output_native_set},
+#ifdef HAVE_JOYBUS_BRIDGE
+    {"JOYBUS.BRIDGE.START", cmd_joybus_bridge_start},
+    {"JOYBUS.BRIDGE.STOP", cmd_joybus_bridge_stop},
+    {"JOYBUS.BRIDGE.STATUS", cmd_joybus_bridge_status},
+    {"JOYBUS.XFER", cmd_joybus_xfer},
+    {"JOYBUS.BATCH", cmd_joybus_batch},
+    {"GBA.MB.RESET", cmd_gba_mb_reset},
+    {"GBA.MB.CHUNK", cmd_gba_mb_chunk},
+    {"GBA.MB.UPLOAD", cmd_gba_mb_upload},
+#endif
     // Player management
     {"PLAYERS.LIST", cmd_players_list},
     // Rumble testing

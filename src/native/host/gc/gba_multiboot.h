@@ -31,6 +31,12 @@ typedef enum {
 // Probe a joybus port: returns true if the device ID matches GBA Type 0x0400.
 bool gba_mb_detect(joybus_port_t* port);
 
+// True only when the GBA is in BIOS multiboot wait state (responds to
+// STATUS with the GBA type AND has JSTAT.PSF0 set). Use this — not
+// gba_mb_detect — to gate autoboot, so the firmware doesn't kick a
+// running payload by trying to upload over the top of it.
+bool gba_mb_in_multiboot_wait(joybus_port_t* port);
+
 // Upload a .gba ROM and trigger GBA boot.
 //   rom/len  : .gba file contents (1..256KB-1, padded internally to mult. of 8)
 //   palette  : boot-logo color, 0..6
