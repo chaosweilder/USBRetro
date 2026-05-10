@@ -175,4 +175,9 @@ const custom_profile_t* flash_get_active_custom_profile(void);
 void flash_cycle_profile_next(void);
 void flash_cycle_profile_prev(void);
 
+// Persist the system-wide D-pad mode (0=dpad, 1=left stick, 2=right stick).
+// Marks router_saved=1 so apps that restore on boot know the value was
+// explicitly chosen (vs the default-zero from a freshly-erased flash).
+void flash_set_dpad_mode(uint8_t mode);
+
 #endif // FLASH_H

@@ -1133,14 +1133,7 @@ static void cmd_router_dpad_set(const char* json)
         return;
     }
     router_set_dpad_mode((uint8_t)mode);
-
-    // Persist to flash (no reboot needed)
-    flash_t flash_data;
-    if (!flash_load(&flash_data)) memset(&flash_data, 0, sizeof(flash_data));
-    flash_data.dpad_mode = (uint8_t)mode;
-    flash_data.router_saved = 1;
-    flash_save(&flash_data);
-
+    flash_set_dpad_mode((uint8_t)mode);   // persist (no reboot needed)
     send_ok();
 }
 

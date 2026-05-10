@@ -498,6 +498,27 @@ uint8_t flash_get_active_profile_index(void)
     return runtime_settings.active_profile_index;
 }
 
+// Persist the system-wide D-pad mode and mark it as explicitly saved.
+// Idempotent — skips the write if value + saved-flag already match.
+void flash_set_dpad_mode(uint8_t mode)
+{
+    if (mode > 2) return;
+    if (!runtime_settings_loaded) {
+        flash_t tmp;
+        if (!flash_load(&tmp)) memset(&tmp, 0, sizeof(tmp));
+        tmp.dpad_mode = mode;
+        tmp.router_saved = 1;
+        flash_save(&tmp);
+        return;
+    }
+    if (runtime_settings.dpad_mode == mode && runtime_settings.router_saved) {
+        return;
+    }
+    runtime_settings.dpad_mode = mode;
+    runtime_settings.router_saved = 1;
+    flash_save(&runtime_settings);
+}
+
 // Set active custom profile index (saves to flash with debouncing)
 void flash_set_active_profile_index(uint8_t index)
 {

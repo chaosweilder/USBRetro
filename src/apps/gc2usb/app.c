@@ -15,6 +15,8 @@
 #include "usb/usbd/usbd.h"
 #include "native/host/gc/gc_host.h"
 #include "core/services/leds/leds.h"
+#include "core/services/storage/flash.h"
+#include "core/buttons.h"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
@@ -100,6 +102,31 @@ void app_init(void)
         .mouse_drain_rate = 0,
     };
     router_init(&router_cfg);
+
+    // Restore the user's last-saved D-pad mode from flash so SELECT+START+
+    // direction (or the web config's ROUTER.DPAD.SET) sticks across reboot.
+    {
+        flash_t flash_data;
+        if (flash_load(&flash_data) && flash_data.router_saved
+                                    && flash_data.dpad_mode <= 2) {
+            router_set_dpad_mode(flash_data.dpad_mode);
+        }
+    }
+
+    // Hotkey combos. Applied at the router level so they fire for ANY
+    // input source — native GC controllers AND the GBA-as-controller
+    // bridge alike. Action code lives in the high byte of output_mask.
+    //   Slot 0: S1+S2+DD → D-Pad mode      (action 1)
+    //   Slot 1: S1+S2+DL → Left Stick mode (action 2)
+    //   Slot 2: S1+S2+DR → Right Stick mode (action 3)
+    //   Slot 3: S1+S2    → A1 (Home/Guide) (action 0 = button remap)
+    // Slot order matters — the dpad combos must fire BEFORE the bare
+    // S1+S2 remap, otherwise the remap consumes S1+S2 and the dpad
+    // combos can never match. The router iterates slots in order.
+    router_set_combo(0, JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DD, (1u << 24));
+    router_set_combo(1, JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DL, (2u << 24));
+    router_set_combo(2, JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DR, (3u << 24));
+    router_set_combo(3, JP_BUTTON_S1 | JP_BUTTON_S2, JP_BUTTON_A1);
 
     // Add route: Native GC -> USB Device
     router_add_route(INPUT_SOURCE_NATIVE_GC, OUTPUT_TARGET_USB_DEVICE, 0);

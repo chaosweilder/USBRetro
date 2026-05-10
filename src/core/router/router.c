@@ -942,14 +942,18 @@ void router_submit_input(const input_event_t* event) {
             case 2:  // D-Pad → Left Stick
             case 3:  // D-Pad → Right Stick
                 if (!router_combos[c].fired) {
-                    router_set_dpad_mode(action - 1);
+                    uint8_t new_mode = action - 1;
+                    router_set_dpad_mode(new_mode);
+                    flash_set_dpad_mode(new_mode);   // persist across reboot
                     router_combos[c].fired = true;
                 }
                 remapped.buttons &= ~in;
                 break;
             case 4:  // Cycle D-Pad mode
                 if (!router_combos[c].fired) {
-                    router_set_dpad_mode((global_dpad_mode + 1) % 3);
+                    uint8_t new_mode = (global_dpad_mode + 1) % 3;
+                    router_set_dpad_mode(new_mode);
+                    flash_set_dpad_mode(new_mode);   // persist across reboot
                     router_combos[c].fired = true;
                 }
                 remapped.buttons &= ~in;
