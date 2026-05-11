@@ -2049,6 +2049,42 @@ target_link_libraries(joypad_gc2usb_pico PRIVATE pico_stdlib pico_multicore hard
 joypad_target_common(joypad_gc2usb_pico)
 pico_generate_pio_header(joypad_gc2usb_pico ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
 
+# --- GC2ETH (GameCube/GBA -> Dolphin TCP via CH9120 Ethernet) ---
+# Waveshare RP2040-ETH (CH9120 UART-to-Ethernet variant). Joybus on
+# GP2, CH9120 on GP17-21. M1 = skeleton/heartbeat only — see
+# .dev/docs/gc2eth-ch9120-bridge.md for the full plan.
+add_executable(joypad_gc2eth)
+target_compile_definitions(joypad_gc2eth PRIVATE
+    CONFIG_GC2ETH=1 CONFIG_USB=1 DISABLE_USB_HOST=1
+    CONFIG_NO_NEOPIXEL=1   # board's WS2812 pin (GP25) may be unrouted on this variant
+    USE_BOOTSEL_BUTTON=1
+    GC_PIN_DATA=2
+)
+# Clone gc2usb_pico exactly: project USB stack + GC host + app. Stays
+# in the default HID-gamepad+CDC branch of tusb_config. The HID
+# gamepad is unused (we publish no router output to it) but the
+# joypad-os CDC interface enumerates as /dev/cu.usbmodem* and
+# carries debug logs via the binary protocol.
+target_sources(joypad_gc2eth PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+    ${GC_HOST_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth/ch9120.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth/wshare_ch9120.c
+)
+target_include_directories(joypad_gc2eth PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/include
+)
+target_link_libraries(joypad_gc2eth PRIVATE
+    pico_stdlib pico_multicore hardware_pio hardware_uart pico_rand
+    tinyusb_device tinyusb_board
+)
+joypad_target_common(joypad_gc2eth)
+pico_generate_pio_header(joypad_gc2eth ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
+pico_enable_stdio_uart(joypad_gc2eth 0)
+
 # --- NEGEO2USB (NEOGEO -> USB HID) ---
 add_executable(joypad_neogeo2usb)
 target_compile_definitions(joypad_neogeo2usb PRIVATE CONFIG_NEOGEO2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1 BUTTON_USER_GPIO=${BOARD_BUTTON_GPIO})

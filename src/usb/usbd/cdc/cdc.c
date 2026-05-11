@@ -8,9 +8,15 @@
 #include "../usbd.h"
 #include "core/services/storage/flash.h"
 #include "tusb.h"
+#include "pico/bootrom.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#ifdef CONFIG_GC2ETH
+#include "apps/gc2eth/ch9120.h"
+#include "apps/gc2eth/app.h"
+#endif
 
 #if CFG_TUD_CDC > 0
 
@@ -130,7 +136,61 @@ static void cdc_process_command(const char* cmd)
         cdc_data_write_str("  MODES     - List available modes\r\n");
         cdc_data_write_str("  VERSION   - Show firmware version\r\n");
         cdc_data_write_str("  HELP      - Show this help\r\n");
+        cdc_data_write_str("  BOOTSEL   - Reboot into UF2 bootloader\r\n");
+#ifdef CONFIG_GC2ETH
+        cdc_data_write_str("  IP?       - Query CH9120 assigned IP address\r\n");
+        cdc_data_write_str("  TCP?      - Query CH9120 TCP connection status\r\n");
+#endif
     }
+    // BOOTSEL — drop into UF2 bootloader. Works from any app since
+    // reset_usb_boot is part of the bootrom.
+    else if (strcmp(cmd, "BOOTSEL") == 0) {
+        cdc_data_write_str("Rebooting to bootloader...\r\n");
+        cdc_data_flush();
+        reset_usb_boot(0, 0);
+    }
+#ifdef CONFIG_GC2ETH
+    // IP? — read CH9120's assigned IP. Drops the chip back into config
+    // mode briefly to query, so doesn't work mid-Dolphin-session.
+    else if (strcmp(cmd, "IP?") == 0) {
+        uint8_t ip[4];
+        if (ch9120_read_ip(ip)) {
+            snprintf(response, sizeof(response),
+                     "IP=%u.%u.%u.%u  port=54970\r\n",
+                     ip[0], ip[1], ip[2], ip[3]);
+            cdc_data_write_str(response);
+        } else {
+            cdc_data_write_str("ERR: CH9120 read_ip failed\r\n");
+        }
+    }
+    // TCP? — non-intrusive: just reads the TCPCS pin state.
+    else if (strcmp(cmd, "TCP?") == 0) {
+        snprintf(response, sizeof(response), "TCP=%s\r\n",
+                 ch9120_is_connected() ? "connected" : "idle");
+        cdc_data_write_str(response);
+    }
+    // FRAMES? — Dolphin command activity counter. Tells us whether
+    // CH9120 is actually forwarding TCP bytes through to UART1.
+    else if (strcmp(cmd, "FRAMES?") == 0) {
+        gc2eth_diag_t d;
+        gc2eth_get_diag(&d);
+        snprintf(response, sizeof(response),
+                 "frames=%lu last_cmd=0x%02x last_n=%d "
+                 "last_rx=%02x%02x%02x%02x%02x\r\n",
+                 (unsigned long)d.frames_seen, d.last_cmd, d.last_n,
+                 d.last_rx[0], d.last_rx[1], d.last_rx[2],
+                 d.last_rx[3], d.last_rx[4]);
+        cdc_data_write_str(response);
+    }
+    // POKE — push a sentinel byte sequence over UART1 to the CH9120
+    // chip. If the chip is forwarding UART→TCP correctly, the probe
+    // listener will see it. Tests the OPPOSITE direction from FRAMES.
+    else if (strcmp(cmd, "POKE") == 0) {
+        const uint8_t poke[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+        ch9120_send_bytes(poke, sizeof(poke));
+        cdc_data_write_str("poked DEADBEEF to UART1\r\n");
+    }
+#endif
     // Unknown command
     else if (strlen(cmd) > 0) {
         snprintf(response, sizeof(response), "ERR: Unknown command '%s'\r\n", cmd);
