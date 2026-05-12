@@ -57,6 +57,7 @@ int joybus_bridge_xfer(const uint8_t* tx, uint16_t tx_len,
 
 void joybus_bridge_mb_reset(void);                          // clear buffer
 bool joybus_bridge_mb_append(const uint8_t* data, uint32_t len);   // accumulate
+void joybus_bridge_mb_trim(uint32_t bytes);                 // drop last N bytes
 uint32_t joybus_bridge_mb_size(void);                       // bytes buffered
 int  joybus_bridge_mb_upload(int channel);                  // run gba_mb_upload, returns gba_mb_result_t
 

@@ -2083,7 +2083,7 @@ target_link_libraries(joypad_gc2eth PRIVATE
 )
 joypad_target_common(joypad_gc2eth)
 pico_generate_pio_header(joypad_gc2eth ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
-pico_enable_stdio_uart(joypad_gc2eth 0)
+pico_enable_stdio_uart(joypad_gc2eth 1)   # USB-CDC breaks CH9120; debug via UART0 (GP0=TX, GP1=RX) @ 115200
 
 # --- NEGEO2USB (NEOGEO -> USB HID) ---
 add_executable(joypad_neogeo2usb)

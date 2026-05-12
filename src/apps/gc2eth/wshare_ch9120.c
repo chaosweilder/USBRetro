@@ -6,7 +6,7 @@ UCHAR CH9120_SUBNET_MASK[4] = {255, 255, 255, 0}; // SUBNET MASK
 UCHAR CH9120_TARGET_IP[4] = {192, 168, 1, 159};   // TARGET_IP = Mac
 UWORD CH9120_PORT1 = 54970;                       // LOCAL PORT1 = 0xD6BA
 UWORD CH9120_TARGET_PORT = 54970;                 // TARGET PORT = probe
-UDOUBLE CH9120_BAUD_RATE = 921600;                // BAUD RATE (chip max — 8× faster than 115200)
+UDOUBLE CH9120_BAUD_RATE = 921600;                // BAUD RATE
 
 UCHAR tx[8] = {0x57, 0xAB};
 
@@ -151,6 +151,10 @@ Info:  Initialize CH9120
 ******************************************************************************/
 void CH9120_init(void)
 {
+    // Keep this call — even though pico_enable_stdio_uart=0 makes it a
+    // mostly-no-op at compile time, removing it broke chip detection in
+    // testing. Treat as a load-bearing artifact of Waveshare's demo;
+    // do not delete without proving on-board that detection still works.
     stdio_init_all();
 
     uart_init(UART_ID1, Inti_BAUD_RATE);
@@ -183,11 +187,39 @@ void CH9120_init(void)
     DEV_Delay_ms(100);
     CH9120_TX_BAUD(CH9120_BAUD_RATE, UART1_BAUD1);//Port 1 baud rate
     DEV_Delay_ms(100);
+
+    // Chip-side TCP forwarding tuning. Dolphin's SI device does NOT loop
+    // its recv() — when our chip splits a 3-byte STATUS response across
+    // TCP packets, Dolphin gets recv()=1 and logs
+    //   "expected_response_length(3) != actual_response_length(1)"
+    // …then Madden retries the SI command instead of progressing. So we
+    // MUST batch multi-byte responses into single TCP packets.
+    //
+    // PKT_LEN=5 (covers our biggest response = 5-byte READ). Multi-byte
+    // responses fit and trigger forwarding immediately. PKT_TIMEOUT=1
+    // (5ms) acts as the fallback for 1-byte WRITE acks. 5ms minimum
+    // per ack means body upload pays ~20s for 4000 WRITEs — slower than
+    // we want, but the only way to satisfy Dolphin's single-shot recv().
+    CH9120_TX_BAUD((UDOUBLE)1, 0x23);    // CMD_PKT_TIMEOUT = 1 (5ms fallback)
+    DEV_Delay_ms(100);
+    CH9120_TX_BAUD((UDOUBLE)5, 0x25);    // CMD_PKT_LEN = 5 (covers max response)
+    DEV_Delay_ms(100);
+
     CH9120_Eed();
     DEV_Delay_ms(500);
     gpio_put(CFG_PIN, 1);
 
     uart_set_baudrate(UART_ID1, Transport_BAUD_RATE);
+
+    // CRITICAL: enable 32-byte HW FIFO. Pico-SDK's uart_init leaves the
+    // FIFO disabled (1-byte holding register), which at 921600 baud means
+    // any non-trivial work between polls (joybus xfer ~250µs ≈ 23 byte-
+    // times) overruns RX. Multiboot streams 13K WRITEs back-to-back, so
+    // a single missed byte desyncs Kawasedo decryption and the GBA never
+    // accepts the bootblock. With the 32-byte FIFO we have ~350 µs of
+    // headroom per drain — more than enough.
+    uart_set_fifo_enabled(UART_ID1, true);
+
     while (uart_is_readable(UART_ID1))
         {
             UBYTE ch1 = uart_getc(UART_ID1);

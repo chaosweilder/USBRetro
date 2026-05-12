@@ -78,6 +78,17 @@ bool joybus_bridge_mb_append(const uint8_t* data, uint32_t len)
     return true;
 }
 
+void joybus_bridge_mb_trim(uint32_t bytes)
+{
+    if (bytes >= s_mb_len) s_mb_len = 0;
+    else s_mb_len -= bytes;
+}
+
+uint8_t* joybus_bridge_mb_buffer(void)
+{
+    return s_mb_buf;
+}
+
 uint32_t joybus_bridge_mb_size(void)
 {
     return s_mb_len;
