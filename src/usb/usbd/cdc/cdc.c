@@ -18,6 +18,11 @@
 #include "apps/gc2eth/app.h"
 #endif
 
+#ifdef CONFIG_GC2ETH_FEATHER
+#include "apps/gc2eth_feather/w5500.h"
+#include "apps/gc2eth_feather/app.h"
+#endif
+
 #if CFG_TUD_CDC > 0
 
 // Command buffer for text commands (legacy support)
@@ -141,6 +146,11 @@ static void cdc_process_command(const char* cmd)
         cdc_data_write_str("  IP?       - Query CH9120 assigned IP address\r\n");
         cdc_data_write_str("  TCP?      - Query CH9120 TCP connection status\r\n");
 #endif
+#ifdef CONFIG_GC2ETH_FEATHER
+        cdc_data_write_str("  W5500?    - Dump W5500 chip state (version, link, IP, MAC, sock0)\r\n");
+        cdc_data_write_str("  TCP?      - Query sock0 status register\r\n");
+        cdc_data_write_str("  FRAMES?   - Show Dolphin command activity counters\r\n");
+#endif
     }
     // BOOTSEL — drop into UF2 bootloader. Works from any app since
     // reset_usb_boot is part of the bootrom.
@@ -189,6 +199,53 @@ static void cdc_process_command(const char* cmd)
         const uint8_t poke[] = { 0xDE, 0xAD, 0xBE, 0xEF };
         ch9120_send_bytes(poke, sizeof(poke));
         cdc_data_write_str("poked DEADBEEF to UART1\r\n");
+    }
+#endif
+#ifdef CONFIG_GC2ETH_FEATHER
+    // W5500? — dump everything we can read back from the chip. The
+    // first line we care about is VERSIONR: if it isn't 0x04 the SPI
+    // wiring or clock is wrong and nothing else matters. PHYCFGR bit 0
+    // is link-up.
+    else if (strcmp(cmd, "W5500?") == 0) {
+        w5500_diag_t d;
+        w5500_get_diag(&d);
+        snprintf(response, sizeof(response),
+                 "VERSIONR=0x%02x PHYCFGR=0x%02x link=%s\r\n",
+                 d.versionr, d.phycfgr, (d.phycfgr & 0x01) ? "up" : "down");
+        cdc_data_write_str(response);
+        snprintf(response, sizeof(response),
+                 "IP=%u.%u.%u.%u  MAC=%02x:%02x:%02x:%02x:%02x:%02x\r\n",
+                 d.sipr[0], d.sipr[1], d.sipr[2], d.sipr[3],
+                 d.shar[0], d.shar[1], d.shar[2], d.shar[3], d.shar[4], d.shar[5]);
+        cdc_data_write_str(response);
+        snprintf(response, sizeof(response),
+                 "sock0: mr=0x%02x port=%u sr=0x%02x\r\n",
+                 d.sn_mr, d.sn_port, d.sn_sr);
+        cdc_data_write_str(response);
+    }
+    // TCP? — non-intrusive: just reads Sn_SR.
+    else if (strcmp(cmd, "TCP?") == 0) {
+        uint8_t sr = w5500_sock0_status();
+        const char* name =
+            sr == 0x00 ? "CLOSED" :
+            sr == 0x13 ? "INIT" :
+            sr == 0x14 ? "LISTEN" :
+            sr == 0x17 ? "ESTABLISHED" :
+            sr == 0x1C ? "CLOSE_WAIT" : "?";
+        snprintf(response, sizeof(response), "TCP=0x%02x (%s)\r\n", sr, name);
+        cdc_data_write_str(response);
+    }
+    // FRAMES? — Dolphin command activity counter for the W5500 path.
+    else if (strcmp(cmd, "FRAMES?") == 0) {
+        gc2eth_diag_t d;
+        gc2eth_get_diag(&d);
+        snprintf(response, sizeof(response),
+                 "frames=%lu last_cmd=0x%02x last_n=%d "
+                 "last_rx=%02x%02x%02x%02x%02x\r\n",
+                 (unsigned long)d.frames_seen, d.last_cmd, d.last_n,
+                 d.last_rx[0], d.last_rx[1], d.last_rx[2],
+                 d.last_rx[3], d.last_rx[4]);
+        cdc_data_write_str(response);
     }
 #endif
     // Unknown command

@@ -2185,11 +2185,12 @@ static void cmd_pad_config_pins(const char* json)
 //
 // See .dev/docs/dolphin-gba-bridge.md for the architecture + phasing.
 
-#if defined(__has_include)
-#  if __has_include("native/host/gc/joybus_bridge.h")
-#    define HAVE_JOYBUS_BRIDGE 1
-#    include "native/host/gc/joybus_bridge.h"
-#  endif
+// Gate on an explicit compile definition rather than __has_include — every
+// target gets src/ on its include path via joypad_target_common, so the
+// header is always reachable even when joybus_bridge.c isn't linked.
+#ifdef CONFIG_JOYBUS_BRIDGE
+#define HAVE_JOYBUS_BRIDGE 1
+#include "native/host/gc/joybus_bridge.h"
 #endif
 
 #ifdef HAVE_JOYBUS_BRIDGE

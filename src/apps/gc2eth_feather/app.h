@@ -1,0 +1,76 @@
+// app.h — gc2eth_feather pin map.
+//
+// Hardware: Adafruit Feather RP2040 USB Host + Adafruit FeatherWing
+// Ethernet (W5500) connected via the standard FeatherWing pinout.
+
+#ifndef GC2ETH_FEATHER_APP_H
+#define GC2ETH_FEATHER_APP_H
+
+#include <stdint.h>
+#include "app_config.h"
+
+// Joybus data line to the GBA. Silkscreen "D4" on the Adafruit
+// Feather RP2040 USB Host = GP4 (Adafruit's silkscreen convention is
+// Dn = GPn for the digital pins on RP2040 boards). Free of SPI / I2C /
+// USB-host (GP16/17/18) conflicts. Wire a 470Ω–1kΩ series resistor
+// between this pin and the GBA JOY-Bus data line (middle pin on the
+// GC↔GBA cable's GC end), and share GND.
+#ifndef GC_DATA_PIN
+#define GC_DATA_PIN              4
+#endif
+
+// W5500 SPI bus (board default SPI1) + chip-select. Silicognition's
+// PoE-FeatherWing routes W5500's CS to Feather IO10 (= GP10 on this
+// Feather) through the default SJCS solder jumper. See:
+// https://silicognition.com/Products/poe-featherwing/
+#define W5500_SPI                spi1
+#define W5500_PIN_SCK            14
+#define W5500_PIN_MOSI           15
+#define W5500_PIN_MISO           8
+#define W5500_PIN_CS             10
+#define W5500_PIN_RST            0xFF   // RST not broken out to a dedicated Feather pin
+#define W5500_SPI_HZ             20000000  // 20 MHz — 33 MHz hurt jitter on this PCB
+
+// Static network config. Tied to a specific en10 subnet — keep en10
+// manually configured to 192.168.1.159/24 in macOS Network settings
+// so DHCP failures (or exo's mesh-discovery races) can't yank it
+// to link-local while we're testing.
+#define W5500_LOCAL_IP_A         192
+#define W5500_LOCAL_IP_B         168
+#define W5500_LOCAL_IP_C         1
+#define W5500_LOCAL_IP_D         250
+#define W5500_GATEWAY_A          192
+#define W5500_GATEWAY_B          168
+#define W5500_GATEWAY_C          1
+#define W5500_GATEWAY_D          1
+#define W5500_SUBNET             255, 255, 255, 0
+#define W5500_LISTEN_PORT        54970   // 0xD6BA = "Dolphin GBA"
+
+// TCP client mode: who we dial out to. Matches the CH9120 working setup
+// where the bridge is the TCP CLIENT and Dolphin / fake-Dolphin is the
+// server listening on port 54970. Set this to the IP of the host
+// running Dolphin (or eth-multiboot.js).
+#define W5500_DEST_IP_A          192
+#define W5500_DEST_IP_B          168
+#define W5500_DEST_IP_C          1
+#define W5500_DEST_IP_D          159
+#define W5500_DEST_PORT          54970
+
+// Dolphin also exposes a clock-sync TCP listener at 0xC10C (49420).
+// We open a second socket to it but discard the bytes — the connection
+// itself is what unblocks Dolphin's GBA SI device, not the data on it.
+#define W5500_CLOCK_PORT         49420
+#define W5500_CLOCK_LOCAL_PORT   49420
+
+// Diag struct exposed via CDC (FRAMES?) for sanity checking from the
+// host. Mirrors gc2eth's diag.
+typedef struct {
+    uint32_t frames_seen;
+    uint8_t  last_cmd;
+    int      last_n;
+    uint8_t  last_rx[5];
+} gc2eth_diag_t;
+
+void gc2eth_get_diag(gc2eth_diag_t* out);
+
+#endif

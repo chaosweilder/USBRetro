@@ -584,7 +584,8 @@ pico_generate_pio_header(joypad_loopy ${CMAKE_CURRENT_LIST_DIR}/native/device/lo
 
 # --- Dreamcast ---
 add_executable(joypad_dc)
-target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1)
+# DEBUG: mirror n642dc config (Core-0 TX, NeoPixel off) to isolate usb2dc dropoff
+target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_NO_NEOPIXEL=1)
 target_sources(joypad_dc PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
@@ -1977,7 +1978,7 @@ pico_generate_pio_header(joypad_nuon2usb ${CMAKE_CURRENT_LIST_DIR}/apps/nuon2usb
 
 # --- GC2USB (GameCube -> USB HID) ---
 add_executable(joypad_gc2usb)
-target_compile_definitions(joypad_gc2usb PRIVATE CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1 GC_PIN_DATA=29
+target_compile_definitions(joypad_gc2usb PRIVATE CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1 GC_PIN_DATA=29
     PICO_DEFAULT_UART=0
     PICO_DEFAULT_UART_TX_PIN=12
     PICO_DEFAULT_UART_RX_PIN=13
@@ -2005,7 +2006,7 @@ pico_generate_pio_header(joypad_gc2usb ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/
 # customers since v2.0.0.
 add_executable(joypad_gc2usb_rp2040zero)
 target_compile_definitions(joypad_gc2usb_rp2040zero PRIVATE
-    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
+    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
     GC_PIN_DATA=29
     WS2812_PIN=16
     USE_BOOTSEL_BUTTON=1
@@ -2029,7 +2030,7 @@ pico_generate_pio_header(joypad_gc2usb_rp2040zero ${CMAKE_CURRENT_LIST_DIR}/lib/
 # for the joybus data line.
 add_executable(joypad_gc2usb_pico)
 target_compile_definitions(joypad_gc2usb_pico PRIVATE
-    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
+    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
     GC_PIN_DATA=28
     BOARD_LED_PIN=25
     USE_BOOTSEL_BUTTON=1
@@ -2055,7 +2056,7 @@ pico_generate_pio_header(joypad_gc2usb_pico ${CMAKE_CURRENT_LIST_DIR}/lib/joybus
 # .dev/docs/gc2eth-ch9120-bridge.md for the full plan.
 add_executable(joypad_gc2eth)
 target_compile_definitions(joypad_gc2eth PRIVATE
-    CONFIG_GC2ETH=1 CONFIG_USB=1 DISABLE_USB_HOST=1
+    CONFIG_GC2ETH=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
     CONFIG_NO_NEOPIXEL=1   # board's WS2812 pin (GP25) may be unrouted on this variant
     USE_BOOTSEL_BUTTON=1
     GC_PIN_DATA=2
@@ -2084,6 +2085,67 @@ target_link_libraries(joypad_gc2eth PRIVATE
 joypad_target_common(joypad_gc2eth)
 pico_generate_pio_header(joypad_gc2eth ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
 pico_enable_stdio_uart(joypad_gc2eth 1)   # USB-CDC breaks CH9120; debug via UART0 (GP0=TX, GP1=RX) @ 115200
+
+# --- GC2ETH_FEATHER (GameCube/GBA -> Dolphin TCP via W5500) ---
+# Adafruit Feather RP2040 USB Host + W5500 Ethernet FeatherWing.
+# W5500 SPI tops out at ~50µs RTT (vs CH9120's 30ms), so Madden's
+# multiboot timing budget actually fits. Same intercept-replay code as
+# gc2eth — only the transport driver changes.
+add_executable(joypad_gc2eth_feather)
+target_compile_definitions(joypad_gc2eth_feather PRIVATE
+    CONFIG_GC2ETH_FEATHER=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
+    CONFIG_NO_NEOPIXEL=1
+    USE_BOOTSEL_BUTTON=1
+    GC_PIN_DATA=4
+)
+target_sources(joypad_gc2eth_feather PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+    ${GC_HOST_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth_feather/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth_feather/w5500.c
+)
+target_include_directories(joypad_gc2eth_feather PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2eth_feather
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/include
+)
+target_link_libraries(joypad_gc2eth_feather PRIVATE
+    pico_stdlib pico_multicore hardware_pio hardware_spi pico_rand
+    tinyusb_device tinyusb_board
+)
+joypad_target_common(joypad_gc2eth_feather)
+pico_generate_pio_header(joypad_gc2eth_feather ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
+pico_enable_stdio_usb(joypad_gc2eth_feather 1)   # CDC over USB-C for debug + remote BOOTSEL
+
+# --- GC2USB_FEATHER_USBHOST (joybus-PIO sanity test on the same hardware) ---
+# Hardware-identical sibling of gc2eth_feather, minus the W5500. Same
+# board, same GP4 wiring — but acts as a USB HID gamepad. Lets us
+# isolate "joybus + GP4 wiring works" from "TCP path works." Plug a
+# real GameCube controller into the cable's GC-end and you should see
+# a HID device on the Mac.
+add_executable(joypad_gc2usb_feather_usbhost)
+target_compile_definitions(joypad_gc2usb_feather_usbhost PRIVATE
+    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
+    CONFIG_NO_NEOPIXEL=1
+    USE_BOOTSEL_BUTTON=1
+    GC_PIN_DATA=4
+)
+target_sources(joypad_gc2usb_feather_usbhost PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+    ${GC_HOST_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2usb/app.c
+)
+target_include_directories(joypad_gc2usb_feather_usbhost PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2usb
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/include
+)
+target_link_libraries(joypad_gc2usb_feather_usbhost PRIVATE
+    pico_stdlib pico_multicore hardware_pio pico_rand
+    tinyusb_device tinyusb_board
+)
+joypad_target_common(joypad_gc2usb_feather_usbhost)
+pico_generate_pio_header(joypad_gc2usb_feather_usbhost ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
 
 # --- NEGEO2USB (NEOGEO -> USB HID) ---
 add_executable(joypad_neogeo2usb)
