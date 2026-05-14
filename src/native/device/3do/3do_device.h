@@ -107,6 +107,19 @@ typedef struct {
   uint8_t dx_low;         // X[7..0]
 } __attribute__((packed)) _3do_mouse_report;
 
+// 3DO Keyboard Report (3 bytes / 24 bits, PBUS field allocation { 24, 16 }).
+// ID must satisfy (id & 0x3F) == 0x0B so the broker's BitTable lookup
+// (EventBroker.c line 1657: BitTable[streamByte & 0x3F]) returns the
+// keyboard slot { 24, 16 }. We use 0x4B; the driverlet's stub accepted 0x02
+// too but 0x02 indexes BitTable[2] = light gun { 32, 8 }, so the broker
+// would over-read by one byte and corrupt the rest of the daisy chain
+// (including any extension pods downstream).
+typedef struct {
+  uint8_t id;        // 0x4B
+  uint8_t scancode;  // current PS/2 byte, held across frames until the driverlet sees a change
+  uint8_t reserved;  // 0 (not consumed)
+} __attribute__((packed)) _3do_keyboard_report;
+
 // 3DO Silly Control Pad Report (2 bytes / 16 bits)
 // Used for arcade JAMMA integration (Orbatak, etc.)
 // ID: 0xC0 0x00
@@ -173,12 +186,14 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index);
 _3do_joypad_report new_3do_joypad_report(void);
 _3do_joystick_report new_3do_joystick_report(void);
 _3do_mouse_report new_3do_mouse_report(void);
+_3do_keyboard_report new_3do_keyboard_report(void);
 _3do_silly_report new_3do_silly_report(void);
 
 // Report update functions
 void update_3do_joypad(_3do_joypad_report report, uint8_t instance);
 void update_3do_joystick(_3do_joystick_report report, uint8_t instance);
 void update_3do_mouse(_3do_mouse_report report, uint8_t instance);
+void update_3do_keyboard(_3do_keyboard_report report, uint8_t instance);
 void update_3do_silly(_3do_silly_report report, uint8_t instance);
 
 // Mode management

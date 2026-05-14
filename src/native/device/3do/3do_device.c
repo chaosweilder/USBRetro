@@ -4,6 +4,7 @@
 
 #include "3do_device.h"
 #include "3do_buttons.h"
+#include "3do_keyboard.h"
 #include "core/services/storage/flash.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
@@ -93,6 +94,12 @@ uint8_t max_usb_controller = 0;
 volatile bool update_report_flag = false;
 volatile uint32_t pio_irq_count = 0;  // Track PIO IRQ calls (incremented in IRQ, read from task)
 
+// Set true in report_done() after a keyboard slot's byte has been latched into
+// the controller_buffer (i.e. the PBUS poll consumed it). update_3do_report
+// reads this to advance to the next PS/2 byte at exactly the PBUS poll rate
+// (~60Hz), regardless of how many main-loop iterations happen in between.
+static volatile bool kb_advance_needed[MAX_PLAYERS] = {true, true, true, true, true, true, true, true};
+
 // Forward declarations
 static void start_dma_transfer(uint8_t channel, uint8_t *buffer, uint32_t count);
 static void report_done(uint8_t instance);
@@ -156,6 +163,12 @@ static void report_done(uint8_t instance) {
     current_reports[instance][1] &= 0xF0;  // Keep buttons, clear dy_up
     current_reports[instance][2] = 0x00;    // Clear dx_up and dy_low
     current_reports[instance][3] = 0x00;    // Clear dx_low
+  }
+  else if (current_reports[instance][0] == 0x4B) {
+    // Keyboard report — the PBUS poll has latched whatever scancode byte
+    // was in current_reports[instance][1]. Signal update_3do_report() that
+    // it can advance the per-slot PS/2 state machine to the next byte.
+    kb_advance_needed[instance] = true;
   }
 }
 
@@ -253,6 +266,13 @@ _3do_mouse_report new_3do_mouse_report(void) {
   // Initialize to 0 to ensure clean state
   memset(&report, 0, sizeof(report));
   report.id = 0x49;
+  return report;
+}
+
+_3do_keyboard_report new_3do_keyboard_report(void) {
+  _3do_keyboard_report report;
+  memset(&report, 0, sizeof(report));
+  report.id = 0x4B;  // (0x4B & 0x3F) == 0x0B → BitTable keyboard slot { 24, 16 }
   return report;
 }
 
@@ -590,6 +610,16 @@ void update_3do_mouse(_3do_mouse_report report, uint8_t instance) {
   max_usb_controller = (max_usb_controller < (instance + 1)) ? (instance + 1) : max_usb_controller;
 }
 
+void update_3do_keyboard(_3do_keyboard_report report, uint8_t instance) {
+  if (instance >= MAX_PLAYERS) return;
+
+  memcpy(&current_reports[instance][0], &report, sizeof(_3do_keyboard_report));
+  report_sizes[instance] = 3;
+  device_attached[instance] = true;
+
+  max_usb_controller = (max_usb_controller < (instance + 1)) ? (instance + 1) : max_usb_controller;
+}
+
 void update_3do_silly(_3do_silly_report report, uint8_t instance) {
   if (instance >= MAX_PLAYERS) return;
 
@@ -812,6 +842,28 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index) {
 
   // Get input from router (3DO supports up to 8 players)
   const input_event_t* event = router_get_output(OUTPUT_TARGET_3DO, player_index);
+
+  // Keyboard slot: drain the PS/2 queue every PBUS frame regardless of whether
+  // a fresh USB event is present. USB HID keyboards typically only send reports
+  // on key state change — once the user releases the last key, no more USB
+  // reports arrive, so router_get_output returns NULL. Without this special-case
+  // path the release sequence (E0 F0 scancode) would sit in the queue forever
+  // and the host driverlet's matrix would show stuck keys.
+  bool is_kb_slot = (current_reports[player_index][0] == 0x4B) ||
+                    (event && event->type == INPUT_TYPE_KEYBOARD);
+  if (is_kb_slot) {
+    if (event && event->type == INPUT_TYPE_KEYBOARD) {
+      tdo_kb_process_event(player_index, event);
+    }
+    if (kb_advance_needed[player_index]) {
+      _3do_keyboard_report report = new_3do_keyboard_report();
+      report.scancode = tdo_kb_next_byte(player_index);
+      update_3do_keyboard(report, player_index);
+      kb_advance_needed[player_index] = false;
+    }
+    return;
+  }
+
   if (!event) return;  // No input for this player slot
 
   // Skip slots without an actual controller attached
@@ -846,6 +898,9 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index) {
     update_3do_mouse(report, player_index);
     return;
   }
+
+  // Keyboard handled at top of function (drain runs every frame, not just on
+  // fresh USB events).
 
   uint32_t buttons = event->buttons;
 

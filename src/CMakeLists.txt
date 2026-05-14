@@ -787,6 +787,7 @@ add_executable(joypad_3do)
 target_compile_definitions(joypad_3do PRIVATE CONFIG_3DO=1)
 target_sources(joypad_3do PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/3do/3do_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/3do/3do_keyboard.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb23do/app.c
 )
 target_include_directories(joypad_3do PUBLIC
@@ -804,6 +805,7 @@ add_executable(joypad_snes3do)
 target_compile_definitions(joypad_snes3do PRIVATE CONFIG_SNES3DO=1)
 target_sources(joypad_snes3do PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/3do/3do_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/3do/3do_keyboard.c
     ${SNES_HOST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/snes23do/app.c
 )
