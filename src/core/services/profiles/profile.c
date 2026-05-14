@@ -836,25 +836,29 @@ void profile_apply(const profile_t* profile,
         output->r2_analog = 255;
     }
 
-    // Set L2/R2 digital buttons based on analog threshold.
-    // When threshold > 0 it OVERRIDES input L2/R2 (e.g. DualSense's early
-    // digital). Threshold == 0 means passthrough.
+    // Optional analog→digital trigger threshold (profile-driven).
+    // When a built-in console profile sets l2_threshold > 0 it OVERRIDES
+    // the input L2/R2 button bits — useful for consoles whose button
+    // layout needs deliberate half/full-press semantics (e.g. avoiding
+    // DualSense's hair-trigger digital firing on a SNES output).
     //
-    // When no built-in profile is active (e.g. usb2usb without a console
-    // profile), fall back to a default half-press threshold of 128 so
-    // analog-only trigger controllers (Xbox BT, etc.) still produce a
-    // digital button bit for output modes that read JP_BUTTON_L2/R2.
-    // Custom profiles may override this post-hoc (see usbd/ble output
-    // paths) using their own per-profile threshold fields.
-    uint8_t eff_l2_thresh = profile ? profile->l2_threshold : 1;
-    uint8_t eff_r2_thresh = profile ? profile->r2_threshold : 1;
-    if (eff_l2_thresh > 0) {
+    // When no profile is active (apps like usb2usb / gc2usb that pass
+    // through to a USB HID gamepad descriptor with both digital and
+    // analog), DO NOTHING here — let the driver's reported L2/R2 button
+    // bits + analog values flow through unchanged. The output mode is
+    // responsible for any per-output trigger interpretation. Defaulting
+    // to a synthesised threshold (previously 1, then briefly 128) caused
+    // false trigger fires on controllers whose analog l/r reading is
+    // non-zero at rest (e.g. GameCube — buttons 13/14 stuck on in gc2usb).
+    // Custom profiles may still override this post-hoc (see usbd/ble
+    // output paths) using their own per-profile threshold fields.
+    if (profile && profile->l2_threshold > 0) {
         output->buttons &= ~JP_BUTTON_L2;
-        if (l2 >= eff_l2_thresh) output->buttons |= JP_BUTTON_L2;
+        if (l2 >= profile->l2_threshold) output->buttons |= JP_BUTTON_L2;
     }
-    if (eff_r2_thresh > 0) {
+    if (profile && profile->r2_threshold > 0) {
         output->buttons &= ~JP_BUTTON_R2;
-        if (r2 >= eff_r2_thresh) output->buttons |= JP_BUTTON_R2;
+        if (r2 >= profile->r2_threshold) output->buttons |= JP_BUTTON_R2;
     }
 
     // Process button combos first (before individual mappings)

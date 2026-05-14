@@ -19,6 +19,10 @@ export class DeviceInfoCard {
                         <div class="row"><span class="label">Serial</span><span class="value" id="deviceSerial">-</span></div>
                         <div class="row"><span class="label">Commit</span><span class="value" id="deviceCommit">-</span></div>
                         <div class="row"><span class="label">Build</span><span class="value" id="deviceBuild">-</span></div>
+                        <div class="row" id="deviceTopologyRow" style="display: none;">
+                            <span class="label">I/O</span>
+                            <span class="value" id="deviceTopology">-</span>
+                        </div>
                     </div>
                 </div>
             </div>`;
@@ -52,8 +56,29 @@ export class DeviceInfoCard {
 
             // Check for updates (non-blocking)
             this.checkUpdate(info.version, info.app, info.board);
+
+            // Topology summary (non-blocking — older firmware may not support CAPS.GET)
+            this.loadTopologySummary();
         } catch (e) {
             this.log(`Failed to get device info: ${e.message}`, 'error');
+        }
+    }
+
+    async loadTopologySummary() {
+        try {
+            const caps = await this.protocol.getCapabilities();
+            const inputs = (caps.inputs || []).map(i => i.name).join(' + ') || '—';
+            const outputs = (caps.outputs || []).map(o => o.name).join(' + ') || '—';
+            const mode = (caps.routing?.mode_name || '').replace(/^./, c => c.toUpperCase());
+            const merge = caps.routing?.mode_name === 'merge'
+                ? `/${(caps.routing?.merge_mode_name || '').replace(/^./, c => c.toUpperCase())}`
+                : '';
+            const summary = `${inputs} → ${outputs}${mode ? ` · ${mode}${merge}` : ''}`;
+            this.setText('deviceTopology', summary);
+            const row = document.getElementById('deviceTopologyRow');
+            if (row) row.style.display = '';
+        } catch (e) {
+            // Older firmware without CAPS.GET — leave row hidden.
         }
     }
 

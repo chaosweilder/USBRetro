@@ -39,6 +39,8 @@ typedef struct {
 static uint8_t xbone_dev_addr = 0;
 static uint8_t xbone_instance = 0;
 static bool dongle_ready = false;
+static uint32_t dongle_mount_time_ms = 0;
+#define DONGLE_ANNOUNCE_TIMEOUT_MS  500   // mark ready even without announce after this
 
 static xgip_t incoming_xgip;
 static xgip_t outgoing_xgip;
@@ -116,10 +118,28 @@ void xbone_auth_task(void)
     // Forward auth from console to controller
     xbone_auth_state_t state = xbone_auth_get_state();
 
+    // Fallback: if a controller is mounted (xbone_dev_addr != 0) but it never
+    // sent an ANNOUNCE within the timeout, mark ready anyway so console auth
+    // can proceed. Some dongles (Mayflash Magic-X v1.30) just sit silent in
+    // Xbox One mode and respond only when console actually pokes them.
+    if (!dongle_ready && xbone_dev_addr != 0) {
+        uint32_t now_ms = platform_time_ms();
+        if (now_ms - dongle_mount_time_ms > DONGLE_ANNOUNCE_TIMEOUT_MS) {
+            printf("[xbone_auth] No ANNOUNCE within timeout — marking dongle ready anyway\n");
+            dongle_ready = true;
+        }
+    }
+
     if (!dongle_ready) {
-        // Log if we're missing auth requests due to no controller
+        // Throttle the warning to once per second so we don't flood the log
         if (state == XBONE_AUTH_SEND_CONSOLE_TO_DONGLE) {
-            printf("[xbone_auth] WARNING: Auth request pending but no controller ready! dev_addr=%d\n", xbone_dev_addr);
+            static uint32_t last_warn_ms = 0;
+            uint32_t now_ms = platform_time_ms();
+            if (now_ms - last_warn_ms > 1000) {
+                printf("[xbone_auth] WARNING: Auth request pending but dongle not initialized yet (dev_addr=%d)\n",
+                       xbone_dev_addr);
+                last_warn_ms = now_ms;
+            }
         }
         return;
     }
@@ -183,10 +203,16 @@ void xbone_auth_register(uint8_t dev_addr, uint8_t instance)
     xgip_reset(&incoming_xgip);
     xgip_reset(&outgoing_xgip);
 
-    // Mark as ready immediately - Xbox One controllers are already initialized
-    // by xinput_host.c (unlike dongles which need the announce/descriptor handshake)
-    dongle_ready = true;
-    printf("[xbone_auth] Controller ready for auth passthrough!\n");
+    // Wait for a real announce → descriptor → POWER_ON handshake when the
+    // dongle cooperates (matches GP2040-CE behavior). But Mayflash Magic-X
+    // sometimes mounts in Xbox One mode and just sits silent without
+    // announcing — in that case xbone_auth_task will fall back to marking
+    // dongle_ready=true after DONGLE_ANNOUNCE_TIMEOUT_MS so console-side auth
+    // can still proceed.
+    dongle_ready = false;
+    dongle_mount_time_ms = platform_time_ms();
+    printf("[xbone_auth] Controller mounted, waiting for ANNOUNCE (or %dms timeout)...\n",
+           DONGLE_ANNOUNCE_TIMEOUT_MS);
 }
 
 void xbone_auth_unregister(uint8_t dev_addr)
@@ -210,8 +236,16 @@ void xbone_auth_xmount(uint8_t dev_addr, uint8_t instance,
 void xbone_auth_report_received(uint8_t dev_addr, uint8_t instance,
                                 uint8_t const* report, uint16_t len)
 {
-    printf("[xbone_auth] Report received from controller: dev=%d inst=%d len=%d cmd=0x%02x\n",
-           dev_addr, instance, len, report[0]);
+    printf("[xbone_auth] Report received from controller: dev=%d inst=%d len=%d cmd=0x%02x bytes=%02x %02x %02x %02x %02x %02x %02x %02x\n",
+           dev_addr, instance, len, report[0],
+           report[0],
+           len > 1 ? report[1] : 0,
+           len > 2 ? report[2] : 0,
+           len > 3 ? report[3] : 0,
+           len > 4 ? report[4] : 0,
+           len > 5 ? report[5] : 0,
+           len > 6 ? report[6] : 0,
+           len > 7 ? report[7] : 0);
 
     if (dev_addr != xbone_dev_addr || instance != xbone_instance) {
         printf("[xbone_auth] Ignoring - not our registered controller\n");
@@ -228,14 +262,19 @@ void xbone_auth_report_received(uint8_t dev_addr, uint8_t instance,
         return;
     }
 
-    // Send ACK if required
-    if (xgip_ack_required(&incoming_xgip)) {
-        printf("[xbone_auth] Sending ACK to controller\n");
+    uint8_t cmd = xgip_get_command(&incoming_xgip);
+
+    // Send ACK if required by header, OR for any chunked GIP_AUTH response.
+    // The MS Xbox Wireless controller (PID 0x0B12) stops sending mid-stream
+    // unless we ACK every chunk during auth, even when its own needs_ack=0.
+    bool force_ack = xgip_is_chunked(&incoming_xgip) &&
+                     (cmd == GIP_AUTH || cmd == GIP_FINAL_AUTH);
+    if (xgip_ack_required(&incoming_xgip) || force_ack) {
+        printf("[xbone_auth] Sending ACK to controller (forced=%d)\n", force_ack && !xgip_ack_required(&incoming_xgip));
         queue_host_report(xgip_generate_ack(&incoming_xgip),
                          xgip_get_packet_length(&incoming_xgip));
     }
 
-    uint8_t cmd = xgip_get_command(&incoming_xgip);
     printf("[xbone_auth] Parsed command: 0x%02x\n", cmd);
 
     switch (cmd) {
@@ -278,8 +317,14 @@ void xbone_auth_report_received(uint8_t dev_addr, uint8_t instance,
         case GIP_AUTH:
         case GIP_FINAL_AUTH:
             // Forward auth response to console
-            printf("[xbone_auth] Got auth response from controller! cmd=0x%02x chunked=%d\n",
-                   cmd, xgip_is_chunked(&incoming_xgip));
+            printf("[xbone_auth] Got auth response from controller! cmd=0x%02x chunked=%d eoc=%d datalen=%d totalchunk=%d hdr_len=%d hdr_chunk_start=%d actual_recv=%d\n",
+                   cmd, xgip_is_chunked(&incoming_xgip),
+                   xgip_end_of_chunk(&incoming_xgip),
+                   xgip_get_data_length(&incoming_xgip),
+                   incoming_xgip.total_chunk_length,
+                   incoming_xgip.header.length,
+                   incoming_xgip.header.chunk_start,
+                   incoming_xgip.actual_data_received);
             if (!xgip_is_chunked(&incoming_xgip) ||
                 (xgip_is_chunked(&incoming_xgip) && xgip_end_of_chunk(&incoming_xgip))) {
 

@@ -24,6 +24,10 @@
 #endif
 #include "usb/usbd/usbd.h"
 
+#ifdef CONFIG_UART_HOST
+#include "native/host/uart/uart_host.h"
+#endif
+
 #ifdef ENABLE_BTSTACK
 #include "bt/btstack/btstack_host.h"
 #include "bt/transport/bt_transport.h"
@@ -275,19 +279,23 @@ static void oled_init(void) {
     }
 
     // FeatherWing buttons: A (GPIO 9), B (GPIO 6), C (GPIO 5)
-    // Button A conflicts with MAX3421E INT on USB host builds — only init if available
+    // On the MAX3421E USB Host FeatherWing build, A (D9→GPIO9) is INT and
+    // B (D6→GPIO8) is MISO — both unavailable, only C is exposed.
 #ifdef OLED_BUTTON_A_PIN
     gpio_init(OLED_BUTTON_A_PIN);
     gpio_set_dir(OLED_BUTTON_A_PIN, GPIO_IN);
     gpio_pull_up(OLED_BUTTON_A_PIN);
 #endif
+#ifdef OLED_BUTTON_B_PIN
     gpio_init(OLED_BUTTON_B_PIN);
     gpio_set_dir(OLED_BUTTON_B_PIN, GPIO_IN);
     gpio_pull_up(OLED_BUTTON_B_PIN);
-
+#endif
+#ifdef OLED_BUTTON_C_PIN
     gpio_init(OLED_BUTTON_C_PIN);
     gpio_set_dir(OLED_BUTTON_C_PIN, GPIO_IN);
     gpio_pull_up(OLED_BUTTON_C_PIN);
+#endif
 
     joy_anim_init();
     eyes_anim_init();
@@ -295,31 +303,29 @@ static void oled_init(void) {
     eyes_anim_event(EYES_EVENT_BOOT);
     oled_current_page = oled_default_page;
 
-    printf("[app:usb2usb] OLED FeatherWing initialized (I2C%d, buttons"
+    printf("[app:usb2usb] OLED FeatherWing initialized (I2C%d", OLED_I2C_INST);
 #ifdef OLED_BUTTON_A_PIN
-           " A=%d"
+    printf(", A=%d", OLED_BUTTON_A_PIN);
 #endif
-           " B=%d C=%d)\n",
-           OLED_I2C_INST,
-#ifdef OLED_BUTTON_A_PIN
-           OLED_BUTTON_A_PIN,
+#ifdef OLED_BUTTON_B_PIN
+    printf(", B=%d", OLED_BUTTON_B_PIN);
 #endif
-           OLED_BUTTON_B_PIN, OLED_BUTTON_C_PIN);
+#ifdef OLED_BUTTON_C_PIN
+    printf(", C=%d", OLED_BUTTON_C_PIN);
+#endif
+    printf(")\n");
 }
 
 static void oled_handle_buttons(void) {
     // Skip when no display present — buttons live on the FeatherWing.
     if (!display_is_initialized()) return;
 
-    static bool last_a = true, last_b = true, last_c = true;  // Active-low (pull-up)
-    static uint32_t debounce_a = 0, debounce_b = 0, debounce_c = 0;
     uint32_t now = platform_time_ms();
 
-    bool b = gpio_get(OLED_BUTTON_B_PIN);
-    bool c = gpio_get(OLED_BUTTON_C_PIN);
-
-    // Button A: page up (when available — conflicts with MAX3421E INT on USB host builds)
+    // Button A: page up (conflicts with MAX3421E INT on USB host builds)
 #ifdef OLED_BUTTON_A_PIN
+    static bool last_a = true;
+    static uint32_t debounce_a = 0;
     bool a = gpio_get(OLED_BUTTON_A_PIN);
     if (!a && last_a && (now - debounce_a > 200)) {
         debounce_a = now;
@@ -328,7 +334,11 @@ static void oled_handle_buttons(void) {
     last_a = a;
 #endif
 
-    // Button B: cycle USB output mode
+    // Button B: cycle USB output mode (conflicts with MAX3421E MISO on USB host builds)
+#ifdef OLED_BUTTON_B_PIN
+    static bool last_b = true;
+    static uint32_t debounce_b = 0;
+    bool b = gpio_get(OLED_BUTTON_B_PIN);
     if (!b && last_b && (now - debounce_b > 200)) {
         debounce_b = now;
         usb_output_mode_t next = usbd_get_next_mode();
@@ -337,13 +347,19 @@ static void oled_handle_buttons(void) {
         usbd_set_mode(next);
     }
     last_b = b;
+#endif
 
     // Button C: page down
+#ifdef OLED_BUTTON_C_PIN
+    static bool last_c = true;
+    static uint32_t debounce_c = 0;
+    bool c = gpio_get(OLED_BUTTON_C_PIN);
     if (!c && last_c && (now - debounce_c > 200)) {
         debounce_c = now;
         oled_page_down();
     }
     last_c = c;
+#endif
 }
 #elif defined(OLED_I2C_DISPLAY)
 static void oled_init(void) {
@@ -659,6 +675,16 @@ void app_init(void)
     router_add_route(INPUT_SOURCE_BLE_CENTRAL, OUTPUT_TARGET_USB_DEVICE, 0);
 #endif
 
+#ifdef CONFIG_UART_HOST
+    // UART input host shares the stdio UART (UART0 on GPIO0/1 by default).
+    // RX is consumed by uart_host's parser; TX continues to carry printf logs.
+    // Baud must match what the upstream serial bridge uses — 115200 matches
+    // pico_enable_stdio_uart's default and the existing log path.
+    uart_host_init_pins(CONFIG_UART_HOST_TX_PIN, CONFIG_UART_HOST_RX_PIN,
+                        CONFIG_UART_HOST_BAUD);
+    uart_host_set_mode(UART_HOST_MODE_NORMAL);
+#endif
+
     printf("[app:usb2usb] Initialization complete\n");
     printf("[app:usb2usb]   Routing: USB Host → USB Device (HID Gamepad)\n");
     printf("[app:usb2usb]   Player slots: %d\n", MAX_PLAYER_SLOTS);
@@ -673,6 +699,10 @@ void app_task(void)
 {
     // Process button input
     button_task();
+
+#ifdef CONFIG_UART_HOST
+    uart_host_task();
+#endif
 
     // Update LED color when USB output mode changes
     static usb_output_mode_t last_led_mode = USB_OUTPUT_MODE_COUNT;

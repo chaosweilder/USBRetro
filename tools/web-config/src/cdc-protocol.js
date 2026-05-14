@@ -732,6 +732,11 @@ class CDCProtocol {
         return this.sendCommand('ROUTER.GET');
     }
 
+    // App capabilities — list of registered input/output interfaces and routes
+    async getCapabilities() {
+        return this.sendCommand('CAPS.GET');
+    }
+
     async setRouter(config) {
         return this.sendCommand('ROUTER.SET', config);
     }

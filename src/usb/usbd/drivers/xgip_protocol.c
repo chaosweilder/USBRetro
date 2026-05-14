@@ -123,6 +123,13 @@ bool xgip_parse(xgip_t* xgip, const uint8_t* buffer, uint16_t len)
         xgip->num_chunks_sent++;
         xgip->is_valid = true;
 
+        // Some controllers (e.g. MS Xbox Wireless 0x045E:0x0B12) don't send an
+        // explicit length=0 end-of-chunk marker — they rely on actual_data_received
+        // reaching the declared data_length. Mark complete in that case too.
+        if (xgip->data_length > 0 && xgip->actual_data_received >= xgip->data_length) {
+            xgip->chunk_ended = true;
+        }
+
     } else {
         // Non-chunked data
         xgip_reset(xgip);

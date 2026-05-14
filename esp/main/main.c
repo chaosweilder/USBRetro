@@ -14,6 +14,7 @@
 #include "tusb.h"
 #include "esp_private/usb_phy.h"
 #include "platform/platform.h"
+#include "core/app_registry.h"
 #include "core/input_interface.h"
 #include "core/output_interface.h"
 #include "core/services/players/manager.h"
@@ -163,6 +164,9 @@ void app_main(void)
         max3421_host_enable_int();
     }
 #endif
+
+    // Publish active interfaces so shared code (CDC, router) can introspect.
+    app_registry_set(inputs, input_count, outputs, output_count);
 
     ESP_LOGI(TAG, "Entering main loop");
 

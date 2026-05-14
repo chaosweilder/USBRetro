@@ -16,6 +16,12 @@
 
 static gip_input_report_t xbone_report;
 
+// Tracks Guide-bit edges so we can emit a separate GIP_VIRTUAL_KEYCODE
+// packet on press and release. Console only opens the Guide overlay on
+// receipt of that packet — the bit in the standard input report alone
+// does nothing.
+static bool prev_guide = false;
+
 // ============================================================================
 // CONVERSION HELPER
 // ============================================================================
@@ -68,6 +74,15 @@ static bool xbone_mode_send_report(uint8_t player_index,
 
     xbone_report.guide = (buttons & JP_BUTTON_A1) ? 1 : 0;
     xbone_report.sync = (buttons & JP_BUTTON_A2) ? 1 : 0;
+
+    // Edge-detect the Guide button so we can emit a paired virtual keycode
+    // packet (press → release). Send before the input report so the console
+    // sees the keycode on the same loop tick as the bit.
+    bool now_guide = (buttons & JP_BUTTON_A1) != 0;
+    if (now_guide != prev_guide) {
+        tud_xbone_send_guide(now_guide);
+        prev_guide = now_guide;
+    }
 
     xbone_report.left_thumb = (buttons & JP_BUTTON_L3) ? 1 : 0;
     xbone_report.right_thumb = (buttons & JP_BUTTON_R3) ? 1 : 0;

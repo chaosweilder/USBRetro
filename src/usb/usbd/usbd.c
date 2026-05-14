@@ -1699,6 +1699,18 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
     }
 }
 
+// USB 2.0 device qualifier — Xbox console enumeration requests this during
+// the SET_CONFIGURATION dance. Returning NULL causes a STALL which some
+// hosts tolerate but the Xbox console treats as a hard failure for XBONE
+// mode (matching GP2040-CE which always returns a valid qualifier).
+uint8_t const *tud_descriptor_device_qualifier_cb(void)
+{
+    if (output_mode == USB_OUTPUT_MODE_XBONE) {
+        return xbone_device_qualifier;
+    }
+    return NULL;
+}
+
 // ============================================================================
 // STRING DESCRIPTORS
 // ============================================================================
@@ -1726,10 +1738,25 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 
     // Xbox One uses custom string handling via vendor control requests
     if (output_mode == USB_OUTPUT_MODE_XBONE) {
-        // Return basic descriptors - specialized ones handled in vendor callback
-        static uint16_t _xbone_str[32];
-        uint8_t xbone_chr_count;
+        // Buffer must hold the Xbox Security Method string (~92 chars)
+        static uint16_t _xbone_str[100];
+        uint16_t xbone_chr_count = 0;
         const char* xbone_str = NULL;
+
+        // Microsoft OS String Descriptor — Xbox console / Windows requests at index 0xEE
+        if (index == 0xEE) {
+            // "MSFT100" + bMS_VendorCode (0x20) + bPad (0x00)
+            _xbone_str[0] = (TUSB_DESC_STRING << 8) | 0x12;
+            _xbone_str[1] = 'M';
+            _xbone_str[2] = 'S';
+            _xbone_str[3] = 'F';
+            _xbone_str[4] = 'T';
+            _xbone_str[5] = '1';
+            _xbone_str[6] = '0';
+            _xbone_str[7] = '0';
+            _xbone_str[8] = 0x0020;  // vendor code 0x20, pad 0x00
+            return _xbone_str;
+        }
 
         switch (index) {
             case 0:  // Language ID
@@ -1745,15 +1772,19 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             case 3:  // Serial
                 xbone_str = usb_serial_str;
                 break;
+            case 4:  // Xbox Security Method — Xbox console verifies this string
+                xbone_str = xbone_security_method;
+                break;
             default:
                 return NULL;
         }
 
         if (xbone_str) {
             xbone_chr_count = strlen(xbone_str);
-            if (xbone_chr_count > 31) xbone_chr_count = 31;
-            for (uint8_t i = 0; i < xbone_chr_count; i++) {
-                _xbone_str[1 + i] = xbone_str[i];
+            if (xbone_chr_count > 99) xbone_chr_count = 99;
+            // Cast to uint8_t to avoid sign-extension on chars >= 0x80 (e.g. © = 0xA9)
+            for (uint16_t i = 0; i < xbone_chr_count; i++) {
+                _xbone_str[1 + i] = (uint8_t)xbone_str[i];
             }
         }
         _xbone_str[0] = (TUSB_DESC_STRING << 8) | (2 * xbone_chr_count + 2);

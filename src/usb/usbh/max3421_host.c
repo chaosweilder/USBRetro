@@ -93,8 +93,14 @@ bool max3421_host_init(void)
     gpio_set_dir(MAX3421_INTR_PIN, GPIO_IN);
     gpio_pull_up(MAX3421_INTR_PIN);
 
-    // SPI init
-    spi_init(MAX3421_SPI, 4 * 1000 * 1000);
+    // SPI init at 16 MHz. The MAX3421E datasheet allows up to 26 MHz; the
+    // 4 MHz default in TinyUSB BSP and reference code is conservative and
+    // adds enough per-transaction latency that chunked GIP_AUTH (Xbox One
+    // dongle pass-through) exceeds Magic-X's response window — the dongle
+    // gives up partway through the chunked exchange and returns empty
+    // responses. 16 MHz is well within tolerance for short FeatherWing
+    // traces and cuts each SPI byte time by 4x, restoring auth headroom.
+    spi_init(MAX3421_SPI, 16 * 1000 * 1000);
     gpio_set_function(MAX3421_SCK_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MAX3421_MOSI_PIN, GPIO_FUNC_SPI);
     gpio_set_function(MAX3421_MISO_PIN, GPIO_FUNC_SPI);

@@ -17,6 +17,7 @@
 
 #include "tusb.h"
 #include "platform/platform.h"
+#include "core/app_registry.h"
 #include "core/input_interface.h"
 #include "core/output_interface.h"
 #include "core/services/players/manager.h"
@@ -203,6 +204,9 @@ int main(void)
     }
 
     printf("[joypad] tusb_inited=%d\n", tud_inited());
+
+    // Publish active interfaces so shared code (CDC, router) can introspect.
+    app_registry_set(inputs, input_count, outputs, output_count);
 
     // Trigger USB enumeration (handles VBUS already present at boot)
     usb_power_init();

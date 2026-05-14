@@ -1,0 +1,32 @@
+{
+  "name": "joypad-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for driving a Joypad OS adapter as a synthetic player",
+  "type": "module",
+  "bin": {
+    "joypad-mcp": "dist/server.js"
+  },
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc && npm run copy-static",
+    "copy-static": "mkdir -p dist/web dist/autoplay && cp src/web/ui.html dist/web/ && cp src/autoplay/tetris_soul.md dist/autoplay/",
+    "watch": "tsc --watch",
+    "start": "node dist/server.js",
+    "dev": "npm run build && node dist/server.js",
+    "test": "node --test --import tsx test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "serialport": "^12.0.0",
+    "sharp": "^0.34.5",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
