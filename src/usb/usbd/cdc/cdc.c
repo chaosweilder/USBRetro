@@ -235,6 +235,63 @@ static void cdc_process_command(const char* cmd)
         snprintf(response, sizeof(response), "TCP=0x%02x (%s)\r\n", sr, name);
         cdc_data_write_str(response);
     }
+    // STATUSCACHE — tune the STATUS-poll cache (Phase 2). N=0 disables
+    // (every STATUS goes to joybus); N>0 serves up to N consecutive
+    // STATUS polls from a local cache before forcing a refresh. Higher
+    // N = more speedup but staler RECV-bit visibility for Dolphin.
+    else if (strcmp(cmd, "STATUSCACHE?") == 0) {
+        uint32_t hits = gc2eth_status_cache_hits();
+        uint32_t miss = gc2eth_status_cache_miss();
+        uint32_t total = hits + miss;
+        unsigned pct = total ? (unsigned)((100ULL * hits) / total) : 0;
+        snprintf(response, sizeof(response),
+                 "status_cache_n=%u  hits=%lu miss=%lu (%u%% hit rate)\r\n",
+                 (unsigned)gc2eth_status_cache_get_n(),
+                 (unsigned long)hits, (unsigned long)miss, pct);
+        cdc_data_write_str(response);
+    }
+    else if (strncmp(cmd, "STATUSCACHE=", 12) == 0) {
+        int n = atoi(cmd + 12);
+        if (n < 0) n = 0;
+        if (n > 65535) n = 65535;
+        gc2eth_status_cache_set_n((uint16_t)n);
+        snprintf(response, sizeof(response),
+                 "status_cache_n=%u\r\n", (unsigned)n);
+        cdc_data_write_str(response);
+    }
+    // TRACE.START / TRACE.STOP / TRACE.DUMP — capture (cmd, response,
+    // delta_us) for every joybus exchange so we can profile the
+    // command-mix during real gameplay (Phase 1 of intercept-replay).
+    // Run TRACE.START, play a game for ~30 s, then TRACE.DUMP.
+    else if (strcmp(cmd, "TRACE.START") == 0) {
+        gc2eth_trace_start();
+        cdc_data_write_str("trace armed\r\n");
+    }
+    else if (strcmp(cmd, "TRACE.STOP") == 0) {
+        gc2eth_trace_stop();
+        snprintf(response, sizeof(response),
+                 "trace stopped — %lu entries captured\r\n",
+                 (unsigned long)gc2eth_trace_count());
+        cdc_data_write_str(response);
+    }
+    else if (strcmp(cmd, "TRACE.DUMP") == 0) {
+        // Header makes the output greppable / parseable downstream.
+        cdc_data_write_str("# idx delta_us cmd n rx0 rx1 rx2 rx3 rx4\r\n");
+        uint32_t total = gc2eth_trace_count();
+        for (uint32_t i = 0; i < total; i++) {
+            gc2eth_trace_entry_t e;
+            if (!gc2eth_trace_get(i, &e)) break;
+            snprintf(response, sizeof(response),
+                     "%lu %lu %02x %d %02x %02x %02x %02x %02x\r\n",
+                     (unsigned long)i, (unsigned long)e.delta_us,
+                     e.cmd, (int)e.n,
+                     e.rx[0], e.rx[1], e.rx[2], e.rx[3], e.rx[4]);
+            cdc_data_write_str(response);
+        }
+        snprintf(response, sizeof(response),
+                 "# end (%lu entries)\r\n", (unsigned long)total);
+        cdc_data_write_str(response);
+    }
     // FRAMES? — Dolphin command activity counter for the W5500 path.
     else if (strcmp(cmd, "FRAMES?") == 0) {
         gc2eth_diag_t d;

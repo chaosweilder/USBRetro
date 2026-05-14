@@ -203,6 +203,64 @@ static volatile uint8_t  g_last_rx[5] = {0};
 static volatile int      g_last_n = 0;
 static volatile uint32_t g_short_tx = 0;
 
+// Phase 2: STATUS cache. Refreshes every N polls (default 4 — chosen
+// from FFCC trace where ~14-15 polls separate RECV-bit transitions, so
+// 4 keeps Dolphin's view of RECV transitions ≤4 polls stale = ~4ms).
+static uint8_t  s_status_cache_rx[3] = {0,0,0};
+static bool     s_status_cache_have  = false;
+static uint16_t s_status_polls_since = 0;
+static uint16_t s_status_refresh_n   = 4;
+static volatile uint32_t s_status_cache_hits = 0;
+static volatile uint32_t s_status_cache_miss = 0;
+uint32_t gc2eth_status_cache_hits(void) { return s_status_cache_hits; }
+uint32_t gc2eth_status_cache_miss(void) { return s_status_cache_miss; }
+
+void gc2eth_status_cache_set_n(uint16_t n) {
+    s_status_refresh_n = n;
+    s_status_polls_since = n;  // force refresh on next STATUS
+}
+uint16_t gc2eth_status_cache_get_n(void) { return s_status_refresh_n; }
+
+// ----- Trace ring (Phase 1: profiling) ----------------------------------
+// Sized to cover ~2 sec at 60Hz × ~10 cmds/frame; bigger if RAM allows.
+// Each entry is 12B → 8K entries = 96 KB. Way too big. Cap at 4K → 48KB
+// (RP2040 has 264KB SRAM — fits comfortably).
+#define TRACE_SIZE 4096
+static gc2eth_trace_entry_t s_trace[TRACE_SIZE];
+static volatile uint32_t    s_trace_pos    = 0;
+static volatile bool        s_trace_armed  = false;
+static uint32_t             s_trace_last_us = 0;
+
+bool gc2eth_trace_armed(void) { return s_trace_armed; }
+
+void gc2eth_trace_start(void) {
+    s_trace_pos = 0;
+    s_trace_last_us = time_us_32();
+    s_trace_armed = true;
+}
+
+void gc2eth_trace_stop(void) { s_trace_armed = false; }
+
+void gc2eth_trace_record(uint8_t cmd, int n, const uint8_t* rx, int rx_len) {
+    if (!s_trace_armed) return;
+    if (s_trace_pos >= TRACE_SIZE) { s_trace_armed = false; return; }
+    uint32_t now = time_us_32();
+    gc2eth_trace_entry_t* e = &s_trace[s_trace_pos++];
+    e->delta_us = now - s_trace_last_us;
+    e->cmd      = cmd;
+    e->n        = (int8_t)((n < -128) ? -128 : (n > 127 ? 127 : n));
+    for (int i = 0; i < 5; i++) e->rx[i] = (i < rx_len) ? rx[i] : 0;
+    s_trace_last_us = now;
+}
+
+uint32_t gc2eth_trace_count(void) { return s_trace_pos; }
+
+bool gc2eth_trace_get(uint32_t idx, gc2eth_trace_entry_t* out) {
+    if (idx >= s_trace_pos) return false;
+    *out = s_trace[idx];
+    return true;
+}
+
 void gc2eth_get_diag(gc2eth_diag_t* out) {
     out->frames_seen = g_frames_seen;
     out->last_cmd    = g_last_cmd;
@@ -298,6 +356,30 @@ static bool process_dolphin_frame_one(void)
         }
     }
 
+    // STATUS cache (Phase 2): in steady-state gameplay, ~94% of joybus
+    // traffic is STATUS polls returning the same jstat byte over and over
+    // (FFCC profile measured ~15 polls of jstat=0 then 1 of jstat=0x08
+    // then a READ, repeating). Each round-trip costs ~1ms TCP RTT — so
+    // serving ~3 of every 4 STATUS polls from a local cache cuts FFCC's
+    // per-frame bridge time by ~3x. Trade-off: up to N polls of latency
+    // before the bridge notices a real RECV-bit transition; we minimize
+    // that by force-refreshing whenever Dolphin issues a READ or WRITE
+    // (which can change GBA state) or after N consecutive cached polls.
+    //
+    // Set N=0 to disable; set higher to favor speed over freshness.
+    if (tx[0] == 0x00 && s_status_refresh_n > 0
+        && s_status_cache_have && s_status_polls_since < s_status_refresh_n) {
+        // Cache hit — short-circuit. No joybus, no trace (cached path
+        // is uninteresting; we want the trace to still reflect real
+        // GBA traffic so jstat-flip transitions are visible).
+        w5500_sock0_send((uint8_t*)s_status_cache_rx, 3);
+        s_status_polls_since++;
+        s_status_cache_hits++;
+        g_last_n = 3;
+        for (int i = 0; i < 3; i++) g_last_rx[i] = s_status_cache_rx[i];
+        return true;
+    }
+
     // PASSTHROUGH: forward command to joybus, watch for state transitions.
     uint8_t rx[5];
     // Per-command joybus timeout. READ (0x14) carries the Kawasedo
@@ -309,6 +391,7 @@ static bool process_dolphin_frame_one(void)
     const uint32_t to_us = (tx[0] == 0x14) ? 5000 : 1000;
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, to_us);
+    gc2eth_trace_record(tx[0], n, rx, rx_len);
     if (n < 0) {
         for (int i = 0; i < rx_len; i++) rx[i] = 0;
         n = rx_len;
@@ -316,6 +399,19 @@ static bool process_dolphin_frame_one(void)
         for (int i = n; i < rx_len; i++) rx[i] = 0;
     }
     w5500_sock0_send(rx, rx_len);
+
+    // Update / invalidate status cache based on what just happened.
+    if (tx[0] == 0x00 && rx_len >= 3) {
+        // Real STATUS reply — refresh the cache.
+        for (int i = 0; i < 3; i++) s_status_cache_rx[i] = rx[i];
+        s_status_cache_have = true;
+        s_status_polls_since = 0;
+        s_status_cache_miss++;
+    } else if (tx[0] == 0x14 || tx[0] == 0x15 || tx[0] == 0xFF) {
+        // READ/WRITE/RESET can flip the GBA's RECV bit — force the next
+        // STATUS to go to the wire so we observe the new state promptly.
+        s_status_polls_since = s_status_refresh_n;  // expire cache
+    }
 
     // Arm intercept on STATUS-with-PSF0
     if (s_intercept_enabled && s_mb_state == MB_PASSTHROUGH

@@ -7,6 +7,7 @@
 #define GC2ETH_FEATHER_APP_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "app_config.h"
 
 // Joybus data line to the GBA. Silkscreen "D4" on the Adafruit
@@ -72,5 +73,41 @@ typedef struct {
 } gc2eth_diag_t;
 
 void gc2eth_get_diag(gc2eth_diag_t* out);
+
+// ----- Trace ring for intercept-replay profiling --------------------------
+// Captures (cmd, n_returned, rx[5], delta_us_since_prev) per joybus
+// exchange. Goal: figure out which commands are worth caching locally
+// in the bridge (so we don't have to round-trip every poll).
+//
+// Workflow:
+//   TRACE.START          → arm capture (also clears the ring)
+//   <run game ~30 sec>
+//   TRACE.STOP           → freeze the ring
+//   TRACE.DUMP           → spit ASCII rows over CDC for offline analysis
+//
+// Capture is gated by gc2eth_trace_armed() so the hot-path overhead is
+// near-zero when not tracing.
+typedef struct {
+    uint32_t delta_us;     // since previous record (0 for first)
+    uint8_t  cmd;
+    int8_t   n;            // bytes the GBA actually returned (or <0 = timeout)
+    uint8_t  rx[5];
+} gc2eth_trace_entry_t;
+
+// Phase 2: STATUS-cache tunable. N=0 disables (every STATUS goes to
+// joybus). N>0 means serve up to N consecutive STATUS polls from a
+// local cache before forcing a refresh. Higher N = more speedup but
+// up to N polls of latency before Dolphin sees a RECV-bit change.
+void     gc2eth_status_cache_set_n(uint16_t n);
+uint16_t gc2eth_status_cache_get_n(void);
+uint32_t gc2eth_status_cache_hits(void);
+uint32_t gc2eth_status_cache_miss(void);
+
+bool     gc2eth_trace_armed(void);
+void     gc2eth_trace_start(void);
+void     gc2eth_trace_stop(void);
+void     gc2eth_trace_record(uint8_t cmd, int n, const uint8_t* rx, int rx_len);
+uint32_t gc2eth_trace_count(void);
+bool     gc2eth_trace_get(uint32_t idx, gc2eth_trace_entry_t* out);
 
 #endif
