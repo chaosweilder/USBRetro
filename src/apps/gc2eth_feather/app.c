@@ -215,6 +215,62 @@ static volatile uint32_t s_status_cache_miss = 0;
 uint32_t gc2eth_status_cache_hits(void) { return s_status_cache_hits; }
 uint32_t gc2eth_status_cache_miss(void) { return s_status_cache_miss; }
 
+// Speculative pre-send of STATUS replies (Phase 2.5). After answering
+// a STATUS request, we push more 3-byte STATUS replies into Dolphin's
+// TCP recv buffer for the next-N expected STATUS requests. Each future
+// STATUS request then completes with 0 TCP RTT on Dolphin's side
+// (data already buffered). Only refills when the cached jstat is
+// "boring" (no RECV bit set) — when we see RECV set, Dolphin is about
+// to issue a READ and pre-sent bytes would corrupt that.
+//
+// Set spec_depth=0 to disable. Higher = more potential speedup but
+// brittle if Dolphin sends unexpected non-STATUS cmds.
+static uint8_t  s_spec_depth = 0;
+static uint8_t  s_spec_outstanding = 0;
+static volatile uint32_t s_spec_corruption = 0;
+
+void gc2eth_spec_set_depth(uint8_t n) { s_spec_depth = n; }
+uint8_t gc2eth_spec_get_depth(void) { return s_spec_depth; }
+uint8_t gc2eth_spec_get_outstanding(void) { return s_spec_outstanding; }
+uint32_t gc2eth_spec_get_corruption(void) { return s_spec_corruption; }
+
+// WRITE-ack cache (Phase 3). In games like Madden the WRITE→jstat reply
+// is constant across many commands (always 0x32 in the play-call loop).
+// Mirroring the STATUS cache: serve up to N consecutive WRITEs from a
+// cached 1-byte reply before forcing a refresh. N=0 disables.
+static uint8_t  s_write_cache_rx     = 0;
+static bool     s_write_cache_have   = false;
+static uint16_t s_write_polls_since  = 0;
+static uint16_t s_write_refresh_n    = 0;     // off by default; opt-in
+static volatile uint32_t s_write_cache_hits = 0;
+static volatile uint32_t s_write_cache_miss = 0;
+
+void gc2eth_write_cache_set_n(uint16_t n) {
+    s_write_refresh_n = n;
+    s_write_polls_since = n;  // expire so first call refreshes
+}
+uint16_t gc2eth_write_cache_get_n(void) { return s_write_refresh_n; }
+uint32_t gc2eth_write_cache_hits(void) { return s_write_cache_hits; }
+uint32_t gc2eth_write_cache_miss(void) { return s_write_cache_miss; }
+
+// READ-reply cache (Phase 4). Risky: READ replies can carry actual
+// game-state changes (e.g. a GBA button press the game wants to see),
+// so cached/stale replies delay input responsiveness. Use sparingly.
+static uint8_t  s_read_cache_rx[5]   = {0,0,0,0,0};
+static bool     s_read_cache_have    = false;
+static uint16_t s_read_polls_since   = 0;
+static uint16_t s_read_refresh_n     = 0;     // off by default
+static volatile uint32_t s_read_cache_hits = 0;
+static volatile uint32_t s_read_cache_miss = 0;
+
+void gc2eth_read_cache_set_n(uint16_t n) {
+    s_read_refresh_n = n;
+    s_read_polls_since = n;
+}
+uint16_t gc2eth_read_cache_get_n(void) { return s_read_refresh_n; }
+uint32_t gc2eth_read_cache_hits(void) { return s_read_cache_hits; }
+uint32_t gc2eth_read_cache_miss(void) { return s_read_cache_miss; }
+
 void gc2eth_status_cache_set_n(uint16_t n) {
     s_status_refresh_n = n;
     s_status_polls_since = n;  // force refresh on next STATUS
@@ -301,6 +357,9 @@ static bool process_dolphin_frame_one(void)
         s_capture_writes = 0;
         s_armed = false;
         joybus_bridge_mb_reset();
+        // Speculative replies (if any) are now stale — start fresh.
+        s_spec_outstanding = 0;
+        s_status_cache_have = false;
     }
 
     // INTERCEPT DISABLED — pure passthrough only. Madden polls STATUS
@@ -356,27 +415,67 @@ static bool process_dolphin_frame_one(void)
         }
     }
 
-    // STATUS cache (Phase 2): in steady-state gameplay, ~94% of joybus
-    // traffic is STATUS polls returning the same jstat byte over and over
-    // (FFCC profile measured ~15 polls of jstat=0 then 1 of jstat=0x08
-    // then a READ, repeating). Each round-trip costs ~1ms TCP RTT — so
-    // serving ~3 of every 4 STATUS polls from a local cache cuts FFCC's
-    // per-frame bridge time by ~3x. Trade-off: up to N polls of latency
-    // before the bridge notices a real RECV-bit transition; we minimize
-    // that by force-refreshing whenever Dolphin issues a READ or WRITE
-    // (which can change GBA state) or after N consecutive cached polls.
-    //
-    // Set N=0 to disable; set higher to favor speed over freshness.
+    // STATUS handling (Phase 2 + 2.5):
+    //   - Cache the last real GBA STATUS reply, serve N polls from it
+    //     before forcing a refresh.
+    //   - Optionally pre-send K more replies speculatively (Phase 2.5)
+    //     so Dolphin's next K STATUS requests complete with 0 RTT on
+    //     Dolphin's side. Only does this when the cached jstat is
+    //     "boring" (no RECV bit); when we see RECV we stop refilling
+    //     because Dolphin is about to issue a READ.
     if (tx[0] == 0x00 && s_status_refresh_n > 0
         && s_status_cache_have && s_status_polls_since < s_status_refresh_n) {
-        // Cache hit — short-circuit. No joybus, no trace (cached path
-        // is uninteresting; we want the trace to still reflect real
-        // GBA traffic so jstat-flip transitions are visible).
-        w5500_sock0_send((uint8_t*)s_status_cache_rx, 3);
+        // Cache hit. If Dolphin already consumed a speculative reply
+        // from its recv buffer, this request doesn't need a new one.
+        if (s_spec_outstanding > 0) {
+            s_spec_outstanding--;
+        } else {
+            w5500_sock0_send((uint8_t*)s_status_cache_rx, 3);
+        }
+        // Refill speculative pre-sends iff the cached jstat is boring.
+        bool boring = (s_status_cache_rx[2] & 0x10) == 0;
+        if (boring) {
+            while (s_spec_outstanding < s_spec_depth) {
+                w5500_sock0_send((uint8_t*)s_status_cache_rx, 3);
+                s_spec_outstanding++;
+            }
+        }
         s_status_polls_since++;
         s_status_cache_hits++;
         g_last_n = 3;
         for (int i = 0; i < 3; i++) g_last_rx[i] = s_status_cache_rx[i];
+        return true;
+    }
+    // Any non-STATUS arriving while we have speculative bytes in flight
+    // means Dolphin's recv buffer has stale STATUS bytes that will
+    // corrupt the response we're about to send. Log it; we can't
+    // recover without protocol-level help.
+    if (tx[0] != 0x00 && s_spec_outstanding > 0) {
+        s_spec_corruption++;
+        s_spec_outstanding = 0;  // give up tracking; corruption already happened
+    }
+
+    // WRITE-ack cache (Phase 3). Mostly useful for games where WRITE
+    // replies are constant (e.g. Madden's play-call WRITE → 0x32).
+    // Opt-in via WRITECACHE=N.
+    if (tx[0] == 0x15 && s_write_refresh_n > 0
+        && s_write_cache_have && s_write_polls_since < s_write_refresh_n) {
+        w5500_sock0_send(&s_write_cache_rx, 1);
+        s_write_polls_since++;
+        s_write_cache_hits++;
+        g_last_n = 1;
+        g_last_rx[0] = s_write_cache_rx;
+        return true;
+    }
+    // READ-reply cache (Phase 4). Riskier than the others — READ can
+    // carry game-state. Opt-in via READCACHE=N.
+    if (tx[0] == 0x14 && s_read_refresh_n > 0
+        && s_read_cache_have && s_read_polls_since < s_read_refresh_n) {
+        w5500_sock0_send(s_read_cache_rx, 5);
+        s_read_polls_since++;
+        s_read_cache_hits++;
+        g_last_n = 5;
+        for (int i = 0; i < 5; i++) g_last_rx[i] = s_read_cache_rx[i];
         return true;
     }
 
@@ -407,10 +506,40 @@ static bool process_dolphin_frame_one(void)
         s_status_cache_have = true;
         s_status_polls_since = 0;
         s_status_cache_miss++;
+        // If jstat is "boring" (no RECV bit) we can speculatively
+        // pre-send replies for upcoming STATUS requests. Otherwise
+        // (RECV set) Dolphin is about to issue a READ — don't speculate.
+        if ((rx[2] & 0x10) == 0) {
+            while (s_spec_outstanding < s_spec_depth) {
+                w5500_sock0_send(rx, 3);
+                s_spec_outstanding++;
+            }
+        }
     } else if (tx[0] == 0x14 || tx[0] == 0x15 || tx[0] == 0xFF) {
         // READ/WRITE/RESET can flip the GBA's RECV bit — force the next
         // STATUS to go to the wire so we observe the new state promptly.
         s_status_polls_since = s_status_refresh_n;  // expire cache
+    }
+    if (tx[0] == 0x15 && rx_len >= 1) {
+        // Real WRITE reply — refresh write cache.
+        s_write_cache_rx     = rx[0];
+        s_write_cache_have   = true;
+        s_write_polls_since  = 0;
+        s_write_cache_miss++;
+    } else if (tx[0] == 0xFF) {
+        // Cipher state changes — invalidate.
+        s_write_cache_have   = false;
+        s_write_polls_since  = s_write_refresh_n;
+    }
+    if (tx[0] == 0x14 && rx_len >= 5) {
+        // Real READ reply — refresh read cache.
+        for (int i = 0; i < 5; i++) s_read_cache_rx[i] = rx[i];
+        s_read_cache_have   = true;
+        s_read_polls_since  = 0;
+        s_read_cache_miss++;
+    } else if (tx[0] == 0xFF) {
+        s_read_cache_have   = false;
+        s_read_polls_since  = s_read_refresh_n;
     }
 
     // Arm intercept on STATUS-with-PSF0

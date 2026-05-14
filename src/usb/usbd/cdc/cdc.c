@@ -250,6 +250,63 @@ static void cdc_process_command(const char* cmd)
                  (unsigned long)hits, (unsigned long)miss, pct);
         cdc_data_write_str(response);
     }
+    else if (strcmp(cmd, "READCACHE?") == 0) {
+        uint32_t hits = gc2eth_read_cache_hits();
+        uint32_t miss = gc2eth_read_cache_miss();
+        uint32_t total = hits + miss;
+        unsigned pct = total ? (unsigned)((100ULL * hits) / total) : 0;
+        snprintf(response, sizeof(response),
+                 "read_cache_n=%u  hits=%lu miss=%lu (%u%% hit rate)\r\n",
+                 (unsigned)gc2eth_read_cache_get_n(),
+                 (unsigned long)hits, (unsigned long)miss, pct);
+        cdc_data_write_str(response);
+    }
+    else if (strncmp(cmd, "READCACHE=", 10) == 0) {
+        int n = atoi(cmd + 10);
+        if (n < 0) n = 0;
+        if (n > 65535) n = 65535;
+        gc2eth_read_cache_set_n((uint16_t)n);
+        snprintf(response, sizeof(response),
+                 "read_cache_n=%u  (warning: delays GBA input visibility)\r\n",
+                 (unsigned)n);
+        cdc_data_write_str(response);
+    }
+    else if (strcmp(cmd, "WRITECACHE?") == 0) {
+        uint32_t hits = gc2eth_write_cache_hits();
+        uint32_t miss = gc2eth_write_cache_miss();
+        uint32_t total = hits + miss;
+        unsigned pct = total ? (unsigned)((100ULL * hits) / total) : 0;
+        snprintf(response, sizeof(response),
+                 "write_cache_n=%u  hits=%lu miss=%lu (%u%% hit rate)\r\n",
+                 (unsigned)gc2eth_write_cache_get_n(),
+                 (unsigned long)hits, (unsigned long)miss, pct);
+        cdc_data_write_str(response);
+    }
+    else if (strncmp(cmd, "WRITECACHE=", 11) == 0) {
+        int n = atoi(cmd + 11);
+        if (n < 0) n = 0;
+        if (n > 65535) n = 65535;
+        gc2eth_write_cache_set_n((uint16_t)n);
+        snprintf(response, sizeof(response),
+                 "write_cache_n=%u\r\n", (unsigned)n);
+        cdc_data_write_str(response);
+    }
+    else if (strcmp(cmd, "SPEC?") == 0) {
+        snprintf(response, sizeof(response),
+                 "spec_depth=%u  outstanding=%u  corruption_events=%lu\r\n",
+                 (unsigned)gc2eth_spec_get_depth(),
+                 (unsigned)gc2eth_spec_get_outstanding(),
+                 (unsigned long)gc2eth_spec_get_corruption());
+        cdc_data_write_str(response);
+    }
+    else if (strncmp(cmd, "SPEC=", 5) == 0) {
+        int n = atoi(cmd + 5);
+        if (n < 0) n = 0;
+        if (n > 255) n = 255;
+        gc2eth_spec_set_depth((uint8_t)n);
+        snprintf(response, sizeof(response), "spec_depth=%u\r\n", (unsigned)n);
+        cdc_data_write_str(response);
+    }
     else if (strncmp(cmd, "STATUSCACHE=", 12) == 0) {
         int n = atoi(cmd + 12);
         if (n < 0) n = 0;

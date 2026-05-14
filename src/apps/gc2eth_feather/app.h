@@ -103,6 +103,34 @@ uint16_t gc2eth_status_cache_get_n(void);
 uint32_t gc2eth_status_cache_hits(void);
 uint32_t gc2eth_status_cache_miss(void);
 
+// Phase 2.5: speculative STATUS pre-send. depth=0 disables; higher
+// values push more 3-byte STATUS replies into Dolphin's TCP recv
+// buffer ahead of demand so future STATUS requests complete with 0
+// RTT on Dolphin's side. Risky if Dolphin sends unexpected
+// non-STATUS commands (the pre-sent bytes corrupt that response);
+// `corruption` counts how often that's happened.
+void    gc2eth_spec_set_depth(uint8_t n);
+uint8_t gc2eth_spec_get_depth(void);
+uint8_t gc2eth_spec_get_outstanding(void);
+uint32_t gc2eth_spec_get_corruption(void);
+
+// Phase 3: WRITE-ack cache. N=0 disables. Useful for games where the
+// WRITE jstat reply is constant across many commands (e.g. Madden's
+// play-call loop, which always returns 0x32). Serves up to N WRITEs
+// from cache before forcing a refresh. RESET invalidates immediately.
+void     gc2eth_write_cache_set_n(uint16_t n);
+uint16_t gc2eth_write_cache_get_n(void);
+uint32_t gc2eth_write_cache_hits(void);
+uint32_t gc2eth_write_cache_miss(void);
+
+// Phase 4: READ-reply cache. RISKY — READ replies can carry actual
+// game state (button presses, world updates). Caching them delays
+// input responsiveness by up to N polls. Off by default.
+void     gc2eth_read_cache_set_n(uint16_t n);
+uint16_t gc2eth_read_cache_get_n(void);
+uint32_t gc2eth_read_cache_hits(void);
+uint32_t gc2eth_read_cache_miss(void);
+
 bool     gc2eth_trace_armed(void);
 void     gc2eth_trace_start(void);
 void     gc2eth_trace_stop(void);
