@@ -2305,15 +2305,11 @@ joypad_add_btstack(joypad_ami_rp2040zero)
 add_executable(joypad_ami_xiao)
 target_compile_definitions(joypad_ami_xiao PRIVATE
     CONFIG_AMIGA=1
-    CONFIG_USB=1
+    CONFIG_USB_HOST=1
     WS2812_PIN=12
     WS2812_POWER_PIN=11
     REQUIRE_FLASH_SETTINGS=1
     DISABLE_BUTTON_SERVICE=1
-    # PIO USB host on GP2/GP3 (USB-A port) — native USB-C = bootloader only
-    CONFIG_PIO_USB_DP_PIN=2
-    PICO_DEFAULT_PIO_USB_DP_PIN=2
-    BOARD_TUH_RHPORT=1
     AMIGA_PIN_UP=26
     AMIGA_PIN_DOWN=27
     AMIGA_PIN_LEFT=28
@@ -2322,16 +2318,15 @@ target_compile_definitions(joypad_ami_xiao PRIVATE
     AMIGA_PIN_JOYMODE=7
     AMIGA_PIN_DATA=0
 )
-target_sources(joypad_ami_xiao PUBLIC ${COMMON_SOURCES} ${USB_DEVICE_SOURCES}
+target_sources(joypad_ami_xiao PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga/amiga_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami/app.c
 )
 target_include_directories(joypad_ami_xiao PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2ami
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/amiga
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
 )
-target_link_libraries(joypad_ami_xiao PRIVATE ${COMMON_LIBRARIES} pico_multicore tinyusb_device tinyusb_pico_pio_usb)
+target_link_libraries(joypad_ami_xiao PRIVATE ${COMMON_LIBRARIES} pico_multicore)
 joypad_target_common(joypad_ami_xiao)
 joypad_add_btstack(joypad_ami_xiao)
 pico_enable_stdio_uart(joypad_ami_xiao 0)
