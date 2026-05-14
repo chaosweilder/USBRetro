@@ -1,6 +1,6 @@
 import { DirtyTracker } from './dirty-tracker.js';
 
-/** Router Page — Input routing and D-Pad mode configuration */
+/** Router Page — Topology, Input routing, and D-Pad mode configuration */
 export class RouterCard {
     constructor(container, protocol, log) {
         this.protocol = protocol;
@@ -36,6 +36,13 @@ export class RouterCard {
                 </div>
             </div>
 
+            <div class="card" id="topologyCard">
+                <h2>I/O</h2>
+                <div class="card-content">
+                    <div id="topologyBody" class="hint">Loading…</div>
+                </div>
+            </div>
+
             <div class="card">
                 <h2>D-Pad Mode</h2>
                 <div class="card-content">
@@ -59,7 +66,7 @@ export class RouterCard {
 
         // Dirty tracking — only the routing/merge mode card needs save+reboot
         this.dirty = new DirtyTracker(
-            this.el.querySelector('.card'),  // first card (Router)
+            this.el.querySelectorAll('.card')[0],  // first card (Router config)
             this.el.querySelector('#routerSaveBtn')
         );
     }
@@ -76,6 +83,85 @@ export class RouterCard {
         } catch (e) {
             this.log(`Failed to load router config: ${e.message}`, 'error');
         }
+
+        // Load topology (CAPS.GET) — gracefully no-op on older firmware
+        try {
+            const caps = await this.protocol.getCapabilities();
+            this.renderTopology(caps);
+        } catch (e) {
+            const body = this.el.querySelector('#topologyBody');
+            if (body) body.textContent = 'Capabilities not reported by this firmware.';
+        }
+    }
+
+    renderTopology(caps) {
+        const body = this.el.querySelector('#topologyBody');
+        if (!body) return;
+
+        const inputs = caps.inputs || [];
+        const outputs = caps.outputs || [];
+        const routes = caps.routes || [];
+        const routing = caps.routing || {};
+
+        const modeLabel = (routing.mode_name || '').replace(/^./, c => c.toUpperCase()) || '—';
+        const showMerge = routing.mode_name === 'merge';
+        const mergeLabel = (routing.merge_mode_name || '').replace(/^./, c => c.toUpperCase());
+
+        const inputCard = inputs.length === 0
+            ? '<div class="topology-empty">No inputs registered</div>'
+            : inputs.map(i => `
+                <div class="topology-node" data-source="${i.source}">
+                    <div class="topology-node-name">${i.name}</div>
+                    <div class="topology-node-meta">
+                        <span class="topology-tag">${i.source_name}</span>
+                        ${i.connected === true ? `<span class="topology-tag topology-tag-ok">${i.devices} connected</span>` : ''}
+                        ${i.connected === false ? '<span class="topology-tag topology-tag-dim">none connected</span>' : ''}
+                    </div>
+                </div>`).join('');
+
+        const outputCard = outputs.length === 0
+            ? '<div class="topology-empty">No outputs registered</div>'
+            : outputs.map(o => `
+                <div class="topology-node" data-target="${o.target}">
+                    <div class="topology-node-name">${o.name}</div>
+                    <div class="topology-node-meta">
+                        <span class="topology-tag">${o.target_name}</span>
+                        <span class="topology-tag">${o.max_players} ${o.max_players === 1 ? 'player' : 'players'}</span>
+                    </div>
+                </div>`).join('');
+
+        const routesList = routes.length === 0
+            ? '<div class="hint">No routes registered.</div>'
+            : `<ul class="topology-routes">${routes.map(r => `
+                <li>
+                    <span class="topology-pill">${r.input_name}</span>
+                    <span class="topology-arrow">→</span>
+                    <span class="topology-pill">${r.output_name}</span>
+                    <span class="hint">priority ${r.priority}</span>
+                </li>`).join('')}</ul>`;
+
+        body.innerHTML = `
+            <div class="topology-header">
+                <span class="topology-tag topology-tag-mode">${modeLabel}</span>
+                ${showMerge ? `<span class="topology-tag">strategy: ${mergeLabel}</span>` : ''}
+                <span class="hint">${inputs.length} input${inputs.length === 1 ? '' : 's'} · ${outputs.length} output${outputs.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="topology-grid">
+                <div class="topology-col">
+                    <div class="topology-col-title">Inputs</div>
+                    ${inputCard}
+                </div>
+                <div class="topology-divider">→</div>
+                <div class="topology-col">
+                    <div class="topology-col-title">Outputs</div>
+                    ${outputCard}
+                </div>
+            </div>
+            <div class="topology-routes-section">
+                <div class="topology-col-title">Routes</div>
+                ${routesList}
+            </div>
+        `;
     }
 
     async save() {

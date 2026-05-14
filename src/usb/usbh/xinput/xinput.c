@@ -9,6 +9,7 @@
 #include "xinput_host.h"
 #include "chatpad.h"
 #include "core/input_event.h"
+#include "usb/usbd/usbd.h"  // for usbd_get_mode() / USB_OUTPUT_MODE_XBONE
 
 // Xbox One auth passthrough - weak stubs for non-USB-device builds
 // These are overridden by xbone_auth.c when linked (usb2usb build)
@@ -17,6 +18,12 @@ __attribute__((weak)) void xbone_auth_task(void) {}
 __attribute__((weak)) void xbone_auth_register(uint8_t dev_addr, uint8_t instance) { (void)dev_addr; (void)instance; }
 __attribute__((weak)) void xbone_auth_unregister(uint8_t dev_addr) { (void)dev_addr; }
 __attribute__((weak)) void xbone_auth_report_received(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) { (void)dev_addr; (void)instance; (void)report; (void)len; }
+
+// USB device mode lookup — weak stub for builds without USB device sources.
+// Strong implementation lives in usbd.c. When USB device is not linked
+// (e.g. native console output targets), we just report HID as a non-XBONE
+// default so the Xbox One mode-cycle suppression below stays inert.
+__attribute__((weak)) usb_output_mode_t usbd_get_mode(void) { return USB_OUTPUT_MODE_HID; }
 
 // BTstack driver for Bluetooth dongles
 #if CFG_TUH_BTD
@@ -166,6 +173,19 @@ void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_inter
   {
     printf("[xinput] Xbox One controller detected - registering for auth passthrough\n");
     xbone_auth_register(dev_addr, instance);
+  }
+
+  // When we're outputting as Xbox One to the console, refuse to send any
+  // Xbox-360-specific commands to the dongle. Mode-cycling adapters like
+  // Mayflash Magic-X interpret Xbox-360 LED/init traffic as "host is Xbox 360"
+  // and lock onto Xbox 360 identity. Staying silent makes them cycle to the
+  // next identity (eventually Xbox One).
+  bool ignore_for_mode_cycle = (usbd_get_mode() == USB_OUTPUT_MODE_XBONE) &&
+                               (xinput_itf->type != XBOXONE);
+  if (ignore_for_mode_cycle) {
+    printf("[xinput] Output is XBONE — not initializing type=%d, hoping dongle cycles\n",
+           xinput_itf->type);
+    return;
   }
 
   // If this is a Xbox 360 Wireless controller we need to wait for a connection packet

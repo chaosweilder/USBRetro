@@ -6,7 +6,10 @@
 #include "cdc_protocol.h"
 #include "../usbd.h"
 #include "app.h"
+#include "core/app_registry.h"
+#include "core/router/router.h"
 #include "core/services/storage/flash.h"
+#include "core/services/leds/neopixel/ws2812.h"
 #include "core/services/profiles/profile.h"
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
@@ -1141,6 +1144,120 @@ static void cmd_router_dpad_set(const char* json)
     send_ok();
 }
 
+// Capabilities: report the active app's input/output interfaces, current
+// routing mode, and registered routes. Read-only — used by the web config
+// to visualize what the running firmware supports.
+static void cmd_caps_get(const char* json)
+{
+    (void)json;
+
+#ifndef ROUTING_MODE
+#define ROUTING_MODE 0
+#endif
+#ifndef MERGE_MODE
+#define MERGE_MODE 0
+#endif
+
+    // Routing mode honors any persisted override (matches cmd_router_get).
+    flash_t flash_data;
+    uint8_t rm = ROUTING_MODE, mm = MERGE_MODE;
+    if (flash_load(&flash_data) && flash_data.router_saved) {
+        if (flash_data.routing_mode <= 2) rm = flash_data.routing_mode;
+        if (flash_data.merge_mode <= 2) mm = flash_data.merge_mode;
+    }
+
+    char* out = response_buf;
+    int rem = (int)sizeof(response_buf);
+    int n;
+
+    n = snprintf(out, rem,
+                 "{\"ok\":true,\"routing\":{\"mode\":%u,\"mode_name\":\"%s\","
+                 "\"merge_mode\":%u,\"merge_mode_name\":\"%s\"},\"inputs\":[",
+                 rm, app_registry_routing_mode_name(rm),
+                 mm, app_registry_merge_mode_name(mm));
+    if (n < 0 || n >= rem) goto overflow;
+    out += n; rem -= n;
+
+    uint8_t in_count = 0;
+    const InputInterface* const* ins = app_registry_inputs(&in_count);
+    for (uint8_t i = 0; i < in_count; i++) {
+        const InputInterface* it = ins ? ins[i] : NULL;
+        if (!it) continue;
+        const char* name = it->name ? it->name : "";
+        bool has_conn = (it->is_connected != NULL);
+        bool connected = has_conn ? it->is_connected() : false;
+        bool has_devs = (it->get_device_count != NULL);
+        uint8_t devs = has_devs ? it->get_device_count() : 0;
+        n = snprintf(out, rem,
+                     "%s{\"name\":\"%s\",\"source\":%d,\"source_name\":\"%s\""
+                     ",\"connected\":%s,\"devices\":%u}",
+                     i == 0 ? "" : ",",
+                     name, (int)it->source,
+                     app_registry_input_source_name(it->source),
+                     has_conn ? (connected ? "true" : "false") : "null",
+                     has_devs ? devs : 0);
+        if (n < 0 || n >= rem) goto overflow;
+        out += n; rem -= n;
+    }
+
+    n = snprintf(out, rem, "],\"outputs\":[");
+    if (n < 0 || n >= rem) goto overflow;
+    out += n; rem -= n;
+
+    uint8_t out_count = 0;
+    const OutputInterface* const* outs = app_registry_outputs(&out_count);
+    for (uint8_t i = 0; i < out_count; i++) {
+        const OutputInterface* ot = outs ? outs[i] : NULL;
+        if (!ot) continue;
+        const char* name = ot->name ? ot->name : "";
+        uint8_t max_players = 0;
+        if (ot->target >= 0 && ot->target < OUTPUT_TARGET_COUNT) {
+            max_players = router_get_max_players(ot->target);
+        }
+        n = snprintf(out, rem,
+                     "%s{\"name\":\"%s\",\"target\":%d,\"target_name\":\"%s\""
+                     ",\"max_players\":%u}",
+                     i == 0 ? "" : ",",
+                     name, (int)ot->target,
+                     app_registry_output_target_name(ot->target),
+                     max_players);
+        if (n < 0 || n >= rem) goto overflow;
+        out += n; rem -= n;
+    }
+
+    n = snprintf(out, rem, "],\"routes\":[");
+    if (n < 0 || n >= rem) goto overflow;
+    out += n; rem -= n;
+
+    uint8_t route_count = router_get_route_count();
+    bool first_route = true;
+    for (uint8_t i = 0; i < route_count; i++) {
+        const route_entry_t* r = router_get_route(i);
+        if (!r || !r->active) continue;
+        n = snprintf(out, rem,
+                     "%s{\"input\":%d,\"input_name\":\"%s\""
+                     ",\"output\":%d,\"output_name\":\"%s\""
+                     ",\"priority\":%u}",
+                     first_route ? "" : ",",
+                     (int)r->input,
+                     app_registry_input_source_name(r->input),
+                     (int)r->output,
+                     app_registry_output_target_name(r->output),
+                     r->priority);
+        if (n < 0 || n >= rem) goto overflow;
+        out += n; rem -= n;
+        first_route = false;
+    }
+
+    n = snprintf(out, rem, "]}");
+    if (n < 0 || n >= rem) goto overflow;
+    send_json(response_buf);
+    return;
+
+overflow:
+    send_error("response too large");
+}
+
 static void cmd_router_set(const char* json)
 {
     flash_t flash_data;
@@ -1773,34 +1890,39 @@ static void cmd_pad_config_get(const char* json)
                     (flash_data.flags & PAD_FLAG_INVERT_RY) ? "true" : "false",
                     (flash_data.flags & PAD_FLAG_SINPUT_RGB) ? "true" : "false");
 
-    // LED (raw pad config + system defaults)
-    {
-#ifndef WS2812_NUM_PIXELS
-#define WS2812_NUM_PIXELS 0
-#endif
-#ifndef WS2812_PIN
-#define WS2812_PIN -1
-#endif
-        pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
-                        ",\"led_pin\":%d,\"led_count\":%d,\"sys_led_pin\":%d,\"sys_led_count\":%d"
-                        ",\"onboard_led\":%d",
-                        flash_data.led_pin, flash_data.led_count, WS2812_PIN, WS2812_NUM_PIXELS,
-                        flash_data.onboard_led);
-    }
+    // LED (effective pad config + system defaults).
+    //   stored 0  → reported as sys default (what the firmware actually uses)
+    //   stored >0 → reported as override pin
+    //   stored <0 → reported as -1 (explicitly disabled by user)
+    // This way both old + new web-config JS render the right pin.
+    int report_led_pin   = (flash_data.led_pin == 0) ? WS2812_PIN : flash_data.led_pin;
+    int report_led_count = (flash_data.led_pin == 0 && flash_data.led_count == 0)
+                                ? WS2812_NUM_PIXELS : flash_data.led_count;
+    pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
+                    ",\"led_pin\":%d,\"led_count\":%d,\"sys_led_pin\":%d,\"sys_led_count\":%d"
+                    ",\"onboard_led\":%d",
+                    report_led_pin, report_led_count, WS2812_PIN, WS2812_NUM_PIXELS,
+                    flash_data.onboard_led);
 
     // Speaker
     pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
                     ",\"speaker_pin\":%d,\"speaker_enable_pin\":%d",
                     flash_data.speaker_pin, flash_data.speaker_enable_pin);
 
-    // USB host
-#ifndef PIO_USB_DP_PIN_DEFAULT
-#define PIO_USB_DP_PIN_DEFAULT -1
+    // USB host. sys_usb_host_dp must reflect the actual compile-time pin
+    // the firmware uses, not pico-pio-usb's library-internal default.
+    // We set PICO_DEFAULT_PIO_USB_DP_PIN per-target in CMakeLists.txt; if
+    // that isn't defined for this build, USB host isn't wired at all.
+#ifdef PICO_DEFAULT_PIO_USB_DP_PIN
+#define SYS_USB_HOST_DP PICO_DEFAULT_PIO_USB_DP_PIN
+#else
+#define SYS_USB_HOST_DP -1
 #endif
+    int report_usb_host_dp = (flash_data.usb_host_dp == 0) ? SYS_USB_HOST_DP : flash_data.usb_host_dp;
     pos += snprintf(response_buf + pos, sizeof(response_buf) - pos,
                     ",\"usb_host_dp\":%d,\"sys_usb_host_dp\":%d"
                     ",\"joywing\":[[%d,%d,%d,%d],[%d,%d,%d,%d]]",
-                    flash_data.usb_host_dp, PIO_USB_DP_PIN_DEFAULT,
+                    report_usb_host_dp, SYS_USB_HOST_DP,
                     flash_data.joywing[0].i2c_bus, flash_data.joywing[0].sda, flash_data.joywing[0].scl, flash_data.joywing[0].addr,
                     flash_data.joywing[1].i2c_bus, flash_data.joywing[1].sda, flash_data.joywing[1].scl, flash_data.joywing[1].addr);
 
@@ -2161,6 +2283,7 @@ static const cmd_entry_t commands[] = {
     {"ROUTER.GET", cmd_router_get},
     {"ROUTER.SET", cmd_router_set},
     {"ROUTER.DPAD.SET", cmd_router_dpad_set},
+    {"CAPS.GET", cmd_caps_get},
     {"OUTPUT.NATIVE.GET", cmd_output_native_get},
     {"OUTPUT.NATIVE.SET", cmd_output_native_set},
     // Player management

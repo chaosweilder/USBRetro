@@ -440,11 +440,17 @@ void __not_in_flash_func(update_output)(void)
   }
   else
   {
-    // Keyboard mode
-    uint8_t gc_key = gc_kb_key_lookup(event->keys);
-    new_report.keyboard.keypress[0] = gc_key;
-    new_report.keyboard.keypress[1] = GC_KEY_NOT_FOUND;
-    new_report.keyboard.keypress[2] = GC_KEY_NOT_FOUND;
+    // Keyboard mode. event->keys packs up to 3 simultaneous USB HID
+    // keycodes (low byte = keycode[0], next byte = keycode[1], etc. — see
+    // process_hid_keyboard in hid_keyboard.c). Translate each independently
+    // and fill all three GC keypress slots so the report supports the
+    // protocol's 3-key rollover instead of just the first key.
+    uint8_t k0 = (uint8_t)((event->keys >>  0) & 0xFF);
+    uint8_t k1 = (uint8_t)((event->keys >>  8) & 0xFF);
+    uint8_t k2 = (uint8_t)((event->keys >> 16) & 0xFF);
+    new_report.keyboard.keypress[0] = gc_kb_key_lookup(k0);
+    new_report.keyboard.keypress[1] = gc_kb_key_lookup(k1);
+    new_report.keyboard.keypress[2] = gc_kb_key_lookup(k2);
     new_report.keyboard.checksum = new_report.keyboard.keypress[0] ^
                                   new_report.keyboard.keypress[1] ^
                                   new_report.keyboard.keypress[2] ^ gc_kb_counter;

@@ -414,8 +414,12 @@ void process_hid_keyboard(uint8_t dev_addr, uint8_t instance, uint8_t const* hid
   if (hatSwitchKeys) {
     uint8_t hat_switch_x, hat_switch_y;
     calculate_coordinates(hatSwitchKeys, 100, &hat_switch_x, &hat_switch_y);
-    dpad_up = hat_switch_y > 128;
-    dpad_down = hat_switch_y < 128;
+    // calculate_coordinates returns screen-style coords: 0° (Up) → small Y,
+    // 180° (Down) → large Y. Dpad bools follow the same screen convention,
+    // so up = y < 128, down = y > 128. The previous comparisons inverted
+    // up/down on arrow-key (and W/S) → dpad output.
+    dpad_up = hat_switch_y < 128;
+    dpad_down = hat_switch_y > 128;
     dpad_left = hat_switch_x < 128;
     dpad_right = hat_switch_x > 128;
   }

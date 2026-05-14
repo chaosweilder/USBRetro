@@ -1,11 +1,11 @@
 // uart_host.h - UART Host Interface
 //
-// Receives controller inputs from a remote device (ESP32, another RP2040, etc.)
-// over UART and submits them to the router. This makes the RP2040 the "host"
-// of inputs arriving via UART.
+// Receives controller inputs from a remote device (another RP2040, MCP-driven
+// AI agent, etc.) over UART and submits them to the router. This makes the
+// RP2040 the "host" of inputs arriving via UART.
 //
 // Use cases:
-//   - ESP32-S3 AI platform sending AI-controlled inputs
+//   - joypad-mcp driving the adapter as a synthetic player
 //   - Another Joypad board sharing its USB controller inputs
 //   - Any external MCU sending controller data
 //
@@ -47,10 +47,7 @@
 typedef enum {
     UART_HOST_MODE_OFF = 0,         // UART host disabled
     UART_HOST_MODE_NORMAL,          // Submit UART inputs to router (like USB/native)
-    UART_HOST_MODE_AI_BLEND,        // Blend UART inputs with existing player inputs
 } uart_host_mode_t;
-
-// AI blend modes are defined in uart_protocol.h (uart_blend_mode_t)
 
 // ============================================================================
 // PUBLIC API
@@ -69,14 +66,6 @@ void uart_host_task(void);
 // Set operating mode
 void uart_host_set_mode(uart_host_mode_t mode);
 uart_host_mode_t uart_host_get_mode(void);
-
-// Get AI injection for a player (when in AI_BLEND mode)
-// Called by router to blend AI inputs with player inputs
-// Returns true if AI has input to inject for this player
-bool uart_host_get_injection(uint8_t player_index, input_event_t* out);
-
-// Get AI blend mode for a player
-uart_blend_mode_t uart_host_get_blend_mode(uint8_t player_index);
 
 // Check if remote device is connected (received valid packet recently)
 bool uart_host_is_connected(void);

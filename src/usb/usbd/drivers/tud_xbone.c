@@ -24,6 +24,8 @@ __attribute__((weak)) bool xbone_auth_is_available(void) { return false; }
 #define ANNOUNCE_DELAY         500   // ms minimum before sending announce
 #define ANNOUNCE_MAX_WAIT      5000  // ms maximum wait for auth controller
 #define ACK_WAIT_TIMEOUT       2000  // ms to wait for ACK
+#define IDLE_REPORT_INTERVAL   25    // ms between idle reports during auth
+#define KEEPALIVE_INTERVAL     15000 // ms between keep-alive packets after auth
 
 // Vendor request types
 #define USB_SETUP_DEVICE_TO_HOST       0x80
@@ -77,6 +79,20 @@ static xbone_auth_t auth_data = { 0 };
 
 // Auth ready marker
 static const uint8_t auth_ready[] = { 0x01, 0x00 };
+
+// Rolling sequence number for input reports + keep-alive (skips 0 on rollover)
+static uint8_t input_report_sequence = 1;
+static uint8_t keepalive_sequence = 1;
+static uint32_t last_idle_report_ms = 0;
+static uint32_t last_keepalive_ms = 0;
+
+// Idle gamepad payload sent during auth — matches GP2040-CE xboneIdle (32 data bytes)
+static const uint8_t xbone_idle_payload[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
+    0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -165,6 +181,13 @@ static void xbone_init(void)
     queue_tail = 0;
     queue_count = 0;
 
+    // Reset auth + sequence state so a re-enumeration starts clean
+    memset(&auth_data, 0, sizeof(auth_data));
+    input_report_sequence = 1;
+    keepalive_sequence = 1;
+    last_idle_report_ms = 0;
+    last_keepalive_ms = 0;
+
     driver_state = XBONE_STATE_READY_ANNOUNCE;
     memset(&xbone_itf, 0, sizeof(xbone_itf));
 }
@@ -224,8 +247,13 @@ static uint16_t xbone_open(uint8_t rhport, tusb_desc_interface_t const* itf_desc
     return drv_len;
 }
 
-static bool xbone_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const* request)
+// Class-type / standard requests at INTERFACE recipient land here. Vendor-type
+// requests are dispatched directly by TinyUSB to tud_vendor_control_xfer_cb,
+// not here, so this can stay a no-op.
+static bool xbone_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                                  tusb_control_request_t const* request)
 {
+    (void)rhport; (void)stage; (void)request;
     return true;
 }
 
@@ -335,15 +363,96 @@ bool tud_xbone_send_report(gip_input_report_t* report)
     // Set up GIP header
     report->header.command = GIP_INPUT_REPORT;
     report->header.internal = 0;
-    report->header.sequence = 0;
+    report->header.client = 0;
+    report->header.needs_ack = 0;
+    report->header.chunk_start = 0;
+    report->header.chunked = 0;
+    report->header.sequence = input_report_sequence;
     report->header.length = sizeof(gip_input_report_t) - sizeof(gip_header_t);
 
-    return send_report_internal((uint8_t*)report, sizeof(gip_input_report_t));
+    if (send_report_internal((uint8_t*)report, sizeof(gip_input_report_t))) {
+        input_report_sequence++;
+        if (input_report_sequence == 0) input_report_sequence = 1;
+        return true;
+    }
+    return false;
+}
+
+bool tud_xbone_send_virtual_keycode(uint8_t keycode, bool pressed)
+{
+    // GIP virtual keycode packet: header(4) + payload(2)
+    //   payload[0] = pressed flag (0x01 = down, 0x00 = up)
+    //   payload[1] = keycode (Guide = 0x5B)
+    // needs_ack=1 + internal=1 matches the form real controllers send. The
+    // bit in the standard input report is informational; consoles only open
+    // the Guide overlay on receipt of this packet pair.
+    uint8_t pkt[sizeof(gip_header_t) + 2] = { 0 };
+    gip_header_t* hdr = (gip_header_t*)pkt;
+    hdr->command = GIP_VIRTUAL_KEYCODE;
+    hdr->client = 0;
+    hdr->needs_ack = 1;
+    hdr->internal = 1;
+    hdr->chunk_start = 0;
+    hdr->chunked = 0;
+    hdr->sequence = input_report_sequence;
+    hdr->length = 2;
+    pkt[sizeof(gip_header_t) + 0] = pressed ? 0x01 : 0x00;
+    pkt[sizeof(gip_header_t) + 1] = keycode;
+
+    if (send_report_internal(pkt, sizeof(pkt))) {
+        input_report_sequence++;
+        if (input_report_sequence == 0) input_report_sequence = 1;
+        return true;
+    }
+    return false;
+}
+
+bool tud_xbone_send_guide(bool pressed)
+{
+    return tud_xbone_send_virtual_keycode(0x5B, pressed);
 }
 
 void tud_xbone_update(void)
 {
     uint32_t now = platform_time_ms();
+
+    // Keep the console from disconnecting (runs every iteration, independent of
+    // ACK wait state — GP2040-CE process() does these unconditionally):
+    //  - while auth is pending, push idle GIP_INPUT_REPORTs continuously
+    //  - after auth completes, push GIP_KEEPALIVE every 15s
+    if (driver_state == XBONE_STATE_SETUP_AUTH) {
+        if (!auth_data.auth_completed) {
+            if ((now - last_idle_report_ms) >= IDLE_REPORT_INTERVAL) {
+                gip_input_report_t idle = { 0 };
+                idle.header.command = GIP_INPUT_REPORT;
+                idle.header.internal = 0;
+                idle.header.sequence = input_report_sequence;
+                idle.header.length = sizeof(gip_input_report_t) - sizeof(gip_header_t);
+                memcpy(((uint8_t*)&idle) + sizeof(gip_header_t),
+                       xbone_idle_payload, sizeof(xbone_idle_payload));
+                if (send_report_internal((uint8_t*)&idle, sizeof(gip_input_report_t))) {
+                    input_report_sequence++;
+                    if (input_report_sequence == 0) input_report_sequence = 1;
+                    last_idle_report_ms = now;
+                }
+            }
+        } else {
+            if ((now - last_keepalive_ms) >= KEEPALIVE_INTERVAL) {
+                uint8_t pkt[8] = {
+                    GIP_KEEPALIVE,
+                    0x20,  // internal=1, client=0, ack=0, chunk=0
+                    keepalive_sequence,
+                    0x04,
+                    0x80, 0x00, 0x00, 0x00
+                };
+                if (send_report_internal(pkt, sizeof(pkt))) {
+                    keepalive_sequence++;
+                    if (keepalive_sequence == 0) keepalive_sequence = 1;
+                    last_keepalive_ms = now;
+                }
+            }
+        }
+    }
 
     // Process report queue
     if (queue_count > 0 && (now - last_report_queue_sent) > REPORT_QUEUE_INTERVAL) {
@@ -373,26 +482,22 @@ void tud_xbone_update(void)
 
     switch (driver_state) {
         case XBONE_STATE_READY_ANNOUNCE:
-            // Wait for minimum delay AND (auth controller ready OR max wait exceeded)
+            // Wait for the auth dongle to be ready before announcing to the
+            // console — otherwise the console issues auth challenges we can't
+            // answer and gives up on us. xbone_auth_is_available() returns
+            // true once the dongle has either run the announce/descriptor/
+            // POWER_ON handshake OR hit the post-mount fallback timeout.
             if (now - timer_announce > ANNOUNCE_DELAY) {
-                bool auth_ready = xbone_auth_is_available();
-                bool max_wait_exceeded = (now - timer_announce > ANNOUNCE_MAX_WAIT);
-
-                if (!auth_ready && !max_wait_exceeded) {
-                    // Still waiting for auth controller
+                if (!xbone_auth_is_available()) {
                     static uint32_t last_wait_log = 0;
-                    if (now - last_wait_log > 1000) {
-                        printf("[tud_xbone] Waiting for auth passthrough controller...\n");
+                    if (now - last_wait_log > 2000) {
+                        printf("[tud_xbone] Waiting for auth dongle before announce...\n");
                         last_wait_log = now;
                     }
                     break;
                 }
 
-                if (auth_ready) {
-                    printf("[tud_xbone] Auth passthrough controller ready, announcing to console\n");
-                } else {
-                    printf("[tud_xbone] Auth passthrough timeout, announcing without controller\n");
-                }
+                printf("[tud_xbone] Announce — auth dongle is ready\n");
 
                 xgip_reset(&outgoing_xgip);
                 xgip_set_attributes(&outgoing_xgip, GIP_ANNOUNCE, 1, 1, 0, 0);

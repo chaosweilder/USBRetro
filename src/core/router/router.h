@@ -160,6 +160,9 @@ bool router_has_updates(output_target_t output);
 // Get player count for this output
 uint8_t router_get_player_count(output_target_t output);
 
+// Get max-player capacity configured for this output (router_config.max_players_per_output)
+uint8_t router_get_max_players(output_target_t output);
+
 // ============================================================================
 // ROUTING TABLES (Phase 6)
 // ============================================================================

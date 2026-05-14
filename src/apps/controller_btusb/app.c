@@ -6,6 +6,7 @@
 
 #include "app.h"
 #include "core/router/router.h"
+#include "native/host/uart/uart_host.h"
 #include "core/services/players/manager.h"
 #include "core/services/button/button.h"
 #include "core/input_interface.h"
@@ -13,16 +14,19 @@
 #include "usb/usbd/usbd.h"
 #include "core/services/leds/leds.h"
 #include "core/services/leds/neopixel/ws2812.h"
-#include "core/services/storage/flash.h"
-#ifdef CONFIG_SD
-#include "platform/platform_sd.h"
-#include "core/services/sd/sd.h"
+#ifdef PLAYER_LED_PIN_1
+#include "core/services/leds/player_leds_gpio.h"
 #endif
+#include "core/services/storage/flash.h"
 #include "core/services/profiles/profile.h"
 #include "core/buttons.h"
 #include "platform/platform.h"
 
 #include "tusb.h"
+#if !defined(PLATFORM_NRF) && !defined(PLATFORM_ESP32)
+#include "pico/stdlib.h"
+#include "hardware/clocks.h"
+#endif
 #include <stdio.h>
 
 #ifdef BTSTACK_USE_CYW43
@@ -391,6 +395,29 @@ void app_init(void)
 {
     printf("[app:controller_btusb] Initializing ControllerBTUSB v%s\n", APP_VERSION);
 
+    // (Do NOT call set_sys_clock_khz here — pico-pio-usb adapts its bit-bang
+    // timing to whatever clk_sys is, and changing the clock after stdio_init
+    // shifts the UART divisor so all subsequent printf becomes garbled at
+    // 115200. usb2usb_feather_rp2040_usb_host works at the default 125 MHz.)
+
+#if defined(PICO_DEFAULT_PIO_USB_VBUSEN_PIN) && !defined(DISABLE_USB_HOST)
+    // Drive the USB host VBUS load switch high IMMEDIATELY — before any
+    // other init that may reconfigure GPIO state. usbh_init re-asserts
+    // this later, but a USB controller plugged into the host port draws
+    // current as soon as VBUS is on, which may be before usbh_init runs.
+    // PICO_DEFAULT_PIO_USB_VBUSEN_STATE is the active level for the
+    // load switch (1 = active high on Feather RP2040 USB Host).
+    gpio_init(PICO_DEFAULT_PIO_USB_VBUSEN_PIN);
+    gpio_set_dir(PICO_DEFAULT_PIO_USB_VBUSEN_PIN, GPIO_OUT);
+#ifdef PICO_DEFAULT_PIO_USB_VBUSEN_STATE
+    gpio_put(PICO_DEFAULT_PIO_USB_VBUSEN_PIN, PICO_DEFAULT_PIO_USB_VBUSEN_STATE);
+#else
+    gpio_put(PICO_DEFAULT_PIO_USB_VBUSEN_PIN, 1);
+#endif
+    printf("[app:controller_btusb] VBUS asserted on GPIO %d (early)\n",
+           PICO_DEFAULT_PIO_USB_VBUSEN_PIN);
+#endif
+
     // Initialize button service
     button_init();
     button_set_callback(on_button_event);
@@ -420,15 +447,25 @@ void app_init(void)
     watchdog_enable(8000, true);
 #endif
     {
-        // Apply LED config and settings from pad config
+        // Apply LED config and settings from pad config.
+        // Tri-state: >0 = override pin, 0 = use compile-time default,
+        // <0 = explicitly disabled by user.
+        //
+        // leds_init() already ran neopixel_init() at boot with the compile-
+        // time WS2812_PIN. Only reinit if the saved pin is genuinely
+        // different — calling neopixel_init() twice claims a second PIO SM
+        // and double-loads the program, leaving the original SM orphaned
+        // and the LED visually dead.
         const pad_device_config_t* led_cfg = pad_config_load_runtime();
         if (led_cfg) {
-            if (led_cfg->led_pin >= 0) {
+            if (led_cfg->led_pin > 0 && led_cfg->led_pin != WS2812_PIN) {
                 neopixel_set_pin(led_cfg->led_pin);
-                neopixel_init();  // Reinitialize with new pin
-            } else if (led_cfg->led_pin == -1) {
+                neopixel_init();  // Reinitialize with new pin (override)
+            } else if (led_cfg->led_pin < 0) {
                 neopixel_disable();
             }
+            // led_pin == 0 OR matches WS2812_PIN → leave the existing
+            // boot-time init alone.
             sinput_rgb_override = led_cfg->sinput_rgb;
         }
     }
@@ -447,8 +484,11 @@ void app_init(void)
         printf("[app:controller_btusb] Pad: %s (%s)\n", pad_cfg->name,
                pad_config_has_custom() ? "flash" : "default");
 #ifndef DISABLE_USB_HOST
-        // Set PIO-USB D+ pin from pad config (before usbh_init runs)
-        if (pad_cfg->usb_host_dp >= 0) {
+        // Override PIO-USB D+ pin from pad config (before usbh_init runs).
+        // Tri-state: >0 = override, 0 = use compile-time default,
+        // <0 = explicitly disabled by user. Only > 0 sets an override;
+        // the compile-time default in usbh.c handles the 0 case.
+        if (pad_cfg->usb_host_dp > 0) {
             usbh_set_pio_dp_pin(pad_cfg->usb_host_dp);
         }
 #endif
@@ -667,29 +707,22 @@ void app_init(void)
     };
     profile_init(&profile_cfg);
 
-#ifdef CONFIG_SD
-    // SD card — best-effort init. If no card / wiring fault we just
-    // log and continue; the app stays fully functional without storage.
-    {
-        static const platform_sd_config_t sd_cfg = {
-            .spi_inst = SD_SPI_INST,
-            .sck_pin = SD_SCK_PIN,
-            .mosi_pin = SD_MOSI_PIN,
-            .miso_pin = SD_MISO_PIN,
-            .cs_pin = SD_CS_PIN,
-            .cd_pin = PLATFORM_SD_NO_CD,
-            .init_freq_hz = 200000,
-            .run_freq_hz = 12500000,
-        };
-        platform_sd_t dev = platform_sd_init(&sd_cfg);
-        if (dev && sd_init(dev)) {
-            printf("[app:controller_btusb] SD mounted (%llu bytes free / %llu total)\n",
-                   (unsigned long long)sd_free_bytes(),
-                   (unsigned long long)sd_total_bytes());
-        } else {
-            printf("[app:controller_btusb] SD not mounted (no card or not FAT)\n");
-        }
-    }
+#ifdef CONFIG_UART_HOST
+    // UART input host shares the stdio UART (UART0 on GPIO0/1 by default).
+    // RX is consumed by uart_host's parser; TX continues to carry printf
+    // logs. Lets joypad-mcp drive synthetic input on dev_addr 0xD0+slot
+    // through the same TX/RX bridge that carries the boot logs.
+    uart_host_init_pins(CONFIG_UART_HOST_TX_PIN, CONFIG_UART_HOST_RX_PIN,
+                        CONFIG_UART_HOST_BAUD);
+    uart_host_set_mode(UART_HOST_MODE_NORMAL);
+#endif
+
+#ifdef PLAYER_LED_PIN_1
+    // 4-LED player indicator on raw GPIOs (PS3/Switch-style: LED1..LED4 ↔
+    // bits 0..3 of the PLAYER_LEDS[] bitmap). Active-high. See
+    // .dev/docs/player_leds_gpio.md.
+    player_leds_gpio_init(PLAYER_LED_PIN_1, PLAYER_LED_PIN_2,
+                          PLAYER_LED_PIN_3, PLAYER_LED_PIN_4);
 #endif
 
     printf("[app:controller_btusb] Initialization complete\n");
@@ -704,6 +737,18 @@ void app_init(void)
 
 void app_task(void)
 {
+#ifdef CONFIG_UART_HOST
+    // Drain UART RX → INPUT_EVENT packets → router. Every loop iteration
+    // because the parser is called from main thread; latency is dominated
+    // by tap/press wait times anyway.
+    uart_host_task();
+#endif
+
+#ifdef PLAYER_LED_PIN_1
+    // Mirror feedback_state.led.pattern (slot 0) onto the 4 GPIO LEDs.
+    player_leds_gpio_task();
+#endif
+
 #ifdef PAD_CONFIG_BOOT_WATCHDOG
     // Feed the boot-attempt watchdog every iteration. After 5s of
     // running normally, mark this boot as "succeeded" by zeroing the
@@ -1091,7 +1136,10 @@ void app_task(void)
                 static bool usb_host_pin_valid = false;
                 if (!usb_host_pin_checked) {
                     const pad_device_config_t* ucfg = pad_config_load_runtime();
-                    usb_host_pin_valid = ucfg && ucfg->usb_host_dp >= 0;
+                    // USB host considered "valid" (active) when pad config
+                    // doesn't explicitly disable it. >=0 covers both the 0
+                    // (use compile-time default) and >0 (override) cases.
+                    usb_host_pin_valid = !ucfg || ucfg->usb_host_dp >= 0;
                     usb_host_pin_checked = true;
                 }
                 if (usb_host_pin_valid) {

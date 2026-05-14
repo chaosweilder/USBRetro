@@ -85,6 +85,8 @@ typedef struct TU_ATTR_PACKED {
     int16_t left_stick_y;
     int16_t right_stick_x;
     int16_t right_stick_y;
+
+    uint8_t reserved[18];    // GP2040-CE / Xbox console expects 36-byte report
 } gip_input_report_t;
 
 // Xbox One Device Descriptor
@@ -103,6 +105,19 @@ static const tusb_desc_device_t xbone_device_descriptor = {
     .iProduct           = 0x02,
     .iSerialNumber      = 0x03,
     .bNumConfigurations = 0x01
+};
+
+// Xbox One Device Qualifier (for USB 2.0 device qualifier requests)
+static const uint8_t xbone_device_qualifier[] = {
+    0x0A,        // bLength
+    0x06,        // bDescriptorType (Device Qualifier)
+    0x00, 0x02,  // bcdUSB 2.00
+    0xFF,        // bDeviceClass
+    0xFF,        // bDeviceSubClass
+    0xFF,        // bDeviceProtocol
+    0x40,        // bMaxPacketSize0 = 64
+    0x01,        // bNumConfigurations
+    0x00         // bReserved
 };
 
 // Xbox One Configuration Descriptor

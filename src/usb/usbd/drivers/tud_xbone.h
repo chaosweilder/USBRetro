@@ -7,7 +7,7 @@
 
 #include "tusb.h"
 #include "device/usbd_pvt.h"
-#include "descriptors/xbone_descriptors.h"
+#include "../descriptors/xbone_descriptors.h"
 #include "xgip_protocol.h"
 
 // Xbox One driver state machine
@@ -46,6 +46,14 @@ bool tud_xbone_ready(void);
 
 // Send input report to console
 bool tud_xbone_send_report(gip_input_report_t* report);
+
+// Send a GIP_VIRTUAL_KEYCODE press/release. Real Xbox controllers raise the
+// Guide button this way (keycode 0x5B); the bit in the standard input report
+// alone does NOT open the Guide overlay on console.
+bool tud_xbone_send_virtual_keycode(uint8_t keycode, bool pressed);
+
+// Convenience wrapper for the Guide button (keycode 0x5B).
+bool tud_xbone_send_guide(bool pressed);
 
 // Update driver (called from task loop)
 void tud_xbone_update(void);
