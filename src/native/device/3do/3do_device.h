@@ -86,20 +86,25 @@ typedef struct {
 } __attribute__((packed)) _3do_joystick_report;
 
 // 3DO Mouse Report (4 bytes / 32 bits)
-// Mouse with relative motion and buttons
+// Layout matches Portfolio OS MouseDriver.c parsing:
+//   rawBits = base[0]<<24 | base[1]<<16 | base[2]<<8 | base[3]
+//   X delta = rawBits & 0x3FF              (bits  0..9)  → X[0..7]=base[3], X[8..9]=base[2] bits 0..1
+//   Y delta = (rawBits >> 10) & 0x3FF      (bits 10..19) → Y[0..5]=base[2] bits 2..7, Y[6..9]=base[1] bits 0..3
+//   Buttons = (rawBits << 8) & 0xF0000000  (base[1] bits 4..7)
+// Both deltas are 10-bit signed two's complement (driver sign-extends bit 9).
 typedef struct {
-  uint8_t id;           // Device ID (0x49)
+  uint8_t id;             // 0x49
 
-  uint8_t dy_up     : 4;  // Y delta upper nibble
-  uint8_t shift     : 1;  // Shift button
-  uint8_t right     : 1;  // Right mouse button
-  uint8_t middle    : 1;  // Middle mouse button
-  uint8_t left      : 1;  // Left mouse button
+  uint8_t dy_up     : 4;  // Y[9..6] (top 4 bits, bit 9 = sign)
+  uint8_t shift     : 1;
+  uint8_t right     : 1;
+  uint8_t middle    : 1;
+  uint8_t left      : 1;
 
-  uint8_t dx_up     : 2;  // X delta upper 2 bits
-  uint8_t dy_low    : 6;  // Y delta lower 6 bits
+  uint8_t dx_up     : 2;  // X[9..8] (top 2 bits, bit 9 = sign)
+  uint8_t dy_low    : 6;  // Y[5..0]
 
-  uint8_t dx_low;         // X delta lower 8 bits
+  uint8_t dx_low;         // X[7..0]
 } __attribute__((packed)) _3do_mouse_report;
 
 // 3DO Silly Control Pad Report (2 bytes / 16 bits)

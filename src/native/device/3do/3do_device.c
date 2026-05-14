@@ -818,6 +818,35 @@ void __not_in_flash_func(update_3do_report)(uint8_t player_index) {
   // INPUT_TYPE_NONE means no USB device connected to this slot
   if (event->type == INPUT_TYPE_NONE) return;
 
+  // Mouse input → emit a 3DO mouse report (ID 0x49) for this slot.
+  // Per-input device-type routing takes precedence over the global SILLY mode
+  // (silly is for arcade JAMMA pads; mice should always present as mice).
+  if (event->type == INPUT_TYPE_MOUSE) {
+    _3do_mouse_report report = new_3do_mouse_report();
+
+    // hid_mouse driver maps: left=B1, right=B2, middle=S2 (forward=S1, back=B3 unused here)
+    report.left   = (event->buttons & JP_BUTTON_B1) ? 1 : 0;
+    report.right  = (event->buttons & JP_BUTTON_B2) ? 1 : 0;
+    report.middle = (event->buttons & JP_BUTTON_S2) ? 1 : 0;
+    report.shift  = 0;
+
+    // 3DO mouse delta: 10-bit signed two's complement.
+    // Per Portfolio MouseDriver: X is bits 0..9, Y is bits 10..19 of the
+    // big-endian 32-bit word. Split: X = 8+2, Y = 6+4.
+    // Router clears deltas on read so they don't repeat across frames.
+    int16_t dx = (int16_t)event->delta_x;
+    int16_t dy = (int16_t)event->delta_y;
+    uint16_t dx10 = (uint16_t)(dx & 0x03FF);
+    uint16_t dy10 = (uint16_t)(dy & 0x03FF);
+    report.dx_low = dx10 & 0xFF;          // X[7..0]
+    report.dx_up  = (dx10 >> 8) & 0x03;   // X[9..8]
+    report.dy_low = dy10 & 0x3F;          // Y[5..0]
+    report.dy_up  = (dy10 >> 6) & 0x0F;   // Y[9..6]
+
+    update_3do_mouse(report, player_index);
+    return;
+  }
+
   uint32_t buttons = event->buttons;
 
   // Track player 0 buttons for profile combo detection (uses raw unmapped buttons)
