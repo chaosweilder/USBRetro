@@ -174,10 +174,16 @@ void vmu_init(uint8_t port_addr) {
     write_block=0xFFFF; write_phases=0;
     memset(vmu_ram, 0xFF, sizeof(vmu_ram));
     vmu_preformat();
-    // Try to load saved VMU from SD card (overwrites pre-formatted image if found)
+    // SD init deferred to vmu_sd_load() — called after Maple Bus enumeration
+    // to avoid blocking DC detection during boot
+    printf("[VMU] Initialized (SD load deferred)\n");
+}
+
+// Called after controller enumerates with DC — loads saved VMU from SD
+// Separated from vmu_init() to avoid blocking Maple Bus enumeration
+void vmu_sd_load(void) {
     vmu_sd_init();
-    dreamcast_enable_vmu();
-    printf("[VMU] Initialized\n");
+    printf("[VMU] SD load complete\n");
 }
 
 void vmu_set_slot(uint8_t slot)  { (void)slot; }
