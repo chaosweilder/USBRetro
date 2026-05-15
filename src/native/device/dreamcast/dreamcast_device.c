@@ -1282,12 +1282,22 @@ void dreamcast_task(void)
     // Deferred VMU+rumble advertisement — after start
     // Controller enumerates cleanly first, then VMU+PuruPuru are added
     // SD card load also deferred here to avoid blocking Maple Bus enumeration at boot
+    //
+    // Gated on CONFIG_SD: builds without SD (KB2040, n642dc) link vmu.c for
+    // symbol resolution but stay as plain controllers — VMU emulation has
+    // only been validated alongside SD-backed persistence on the rp2040zero
+    // target, and advertising a non-functional VMU makes games report
+    // "memory card not connected" when they try to access it.
+#ifdef CONFIG_SD
     if (!vmu_enabled && time_us_32() > vmu_enable_time) {
         vmu_sd_load();          // Load saved VMU from SD (deferred from boot)
         dreamcast_enable_vmu(); // Advertise VMU to DC
         vmu_enabled = true;
         printf("[DC] VMU+rumble advertisement enabled (addr 0x23)\n");
     }
+#else
+    (void)vmu_enabled; (void)vmu_enable_time;
+#endif
 
     // Periodic debug output (every 5 seconds)
     uint32_t now = time_us_32();
