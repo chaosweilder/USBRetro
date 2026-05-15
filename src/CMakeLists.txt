@@ -225,6 +225,7 @@ set(USB_DEVICE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/xac_mode.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/kbmouse_mode.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/gc_adapter_mode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/modes/gba_link_mode.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc_protocol.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd/cdc/cdc_commands.c
@@ -595,12 +596,17 @@ pico_generate_pio_header(joypad_loopy ${CMAKE_CURRENT_LIST_DIR}/native/device/lo
 
 # --- Dreamcast ---
 add_executable(joypad_dc)
-target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1)
+# CONFIG_USB_MSC=1 enables the TinyUSB MSC host class so a flash drive plugged
+# into a hub alongside the controller will enumerate; vmu_storage decides at
+# boot whether to advertise the VMU (drive present) or stay as a plain
+# controller (no drive).
+target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1 CONFIG_USB_MSC=1)
 target_sources(joypad_dc PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/msc/msc_host.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2dc/app.c
 )
 target_include_directories(joypad_dc PUBLIC

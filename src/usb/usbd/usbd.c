@@ -114,6 +114,7 @@ static const char* mode_names[] = {
     [USB_OUTPUT_MODE_GC_ADAPTER] = "GC Adapter",
     [USB_OUTPUT_MODE_PCEMINI] = "PCE Mini",
     [USB_OUTPUT_MODE_CDC] = "CDC Config",
+    [USB_OUTPUT_MODE_GBA_LINK] = "GBA Link (Dolphin)",
 };
 
 // ============================================================================
@@ -145,6 +146,9 @@ void usbd_register_modes(void)
     usbd_modes[USB_OUTPUT_MODE_PCEMINI] = &pcemini_mode;
 #if CFG_TUD_GC_ADAPTER
     usbd_modes[USB_OUTPUT_MODE_GC_ADAPTER] = &gc_adapter_mode;
+#endif
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+    usbd_modes[USB_OUTPUT_MODE_GBA_LINK] = &gba_link_mode;
 #endif
 }
 
@@ -840,6 +844,17 @@ void usbd_task(void)
                     usbd_send_report(0);
                 }
             }
+            break;
+        }
+#endif
+
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+        case USB_OUTPUT_MODE_GBA_LINK: {
+            // GBA Link bridge: process CDC + drain vendor RX → joybus → vendor TX
+            cdc_task();
+            const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_GBA_LINK];
+            if (mode && mode->task) mode->task();
+            // No HID report — vendor mode is bidirectional and event-driven.
             break;
         }
 #endif

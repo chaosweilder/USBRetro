@@ -112,7 +112,13 @@
 #define CFG_TUH_HUB                 1
 #define CFG_TUH_CDC                 0
 #define CFG_TUH_HID                 8   // Max 8 HID interfaces total (2 per device typical)
+// Mass storage host: opt-in per target via CONFIG_USB_MSC. Default-off so
+// targets that don't link msc_host.c don't drag in the TinyUSB MSC class.
+#ifdef CONFIG_USB_MSC
+#define CFG_TUH_MSC                 1
+#else
 #define CFG_TUH_MSC                 0
+#endif
 #define CFG_TUH_VENDOR              0
 #define CFG_TUH_XINPUT              4   // Max 4 XInput interfaces (Xbox wireless adapter has 4 ports)
 
@@ -177,7 +183,12 @@
 
   #define CFG_TUD_MSC               0   // No mass storage
   #define CFG_TUD_MIDI              0   // No MIDI
-  #define CFG_TUD_VENDOR            0   // No vendor-specific
+  // Vendor class enabled to support USB_OUTPUT_MODE_GBA_LINK (the
+  // direct-to-Dolphin GBA-link bridge). Other modes ignore it.
+  #define CFG_TUD_VENDOR            1
+  #define CFG_TUD_VENDOR_RX_BUFSIZE 64
+  #define CFG_TUD_VENDOR_TX_BUFSIZE 64
+  #define CFG_TUD_VENDOR_EPSIZE     64
 
   // HID buffer sizes
   #define CFG_TUD_HID_EP_BUFSIZE    64
