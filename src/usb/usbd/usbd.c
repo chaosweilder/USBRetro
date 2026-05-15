@@ -27,6 +27,9 @@
 #include "descriptors/xac_descriptors.h"
 #include "descriptors/kbmouse_descriptors.h"
 #include "descriptors/gc_adapter_descriptors.h"
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+#include "descriptors/gba_link_descriptors.h"
+#endif
 #include "descriptors/pcemini_descriptors.h"
 #include "kbmouse/kbmouse.h"
 #include "drivers/tud_xid.h"
@@ -357,6 +360,9 @@ bool usbd_set_mode(usb_output_mode_t mode)
         mode != USB_OUTPUT_MODE_KEYBOARD_MOUSE &&
         mode != USB_OUTPUT_MODE_GC_ADAPTER &&
         mode != USB_OUTPUT_MODE_PCEMINI &&
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+        mode != USB_OUTPUT_MODE_GBA_LINK &&
+#endif
         mode != USB_OUTPUT_MODE_CDC) {
         printf("[usbd] Mode %d not yet supported\n", mode);
         return false;
@@ -559,6 +565,9 @@ void usbd_init(void)
                 settings->usb_output_mode == USB_OUTPUT_MODE_KEYBOARD_MOUSE ||
                 settings->usb_output_mode == USB_OUTPUT_MODE_GC_ADAPTER ||
                 settings->usb_output_mode == USB_OUTPUT_MODE_PCEMINI ||
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+                settings->usb_output_mode == USB_OUTPUT_MODE_GBA_LINK ||
+#endif
                 settings->usb_output_mode == USB_OUTPUT_MODE_CDC) {
                 output_mode = (usb_output_mode_t)settings->usb_output_mode;
                 printf("[usbd] Loaded mode from flash: %s\n", mode_names[output_mode]);
@@ -684,6 +693,16 @@ void usbd_init(void)
         case USB_OUTPUT_MODE_CDC:
             // CDC-only mode: no HID init needed
             break;
+
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+        case USB_OUTPUT_MODE_GBA_LINK:
+            // GBA Link mode: delegate to mode interface (claims joybus
+            // bridge from gc_host, sets up vendor RX/TX dispatch).
+            if (usbd_modes[USB_OUTPUT_MODE_GBA_LINK] && usbd_modes[USB_OUTPUT_MODE_GBA_LINK]->init) {
+                usbd_modes[USB_OUTPUT_MODE_GBA_LINK]->init();
+            }
+            break;
+#endif
 
         case USB_OUTPUT_MODE_HID:
             // Initialize HID mode via mode interface
@@ -1562,6 +1581,10 @@ uint8_t const *tud_descriptor_device_cb(void)
             return (uint8_t const *)&sinput_device_descriptor;
         case USB_OUTPUT_MODE_GC_ADAPTER:
             return (uint8_t const *)&gc_adapter_device_descriptor;
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+        case USB_OUTPUT_MODE_GBA_LINK:
+            return (uint8_t const *)&gba_link_device_descriptor;
+#endif
         case USB_OUTPUT_MODE_HID:
         default:
             return (uint8_t const *)&desc_device_hid;
@@ -1708,6 +1731,10 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
             return runtime_desc_sinput;
         case USB_OUTPUT_MODE_GC_ADAPTER:
             return gc_adapter_config_descriptor;
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+        case USB_OUTPUT_MODE_GBA_LINK:
+            return gba_link_config_descriptor;
+#endif
         case USB_OUTPUT_MODE_HID:
         default:
             return runtime_desc_hid;
