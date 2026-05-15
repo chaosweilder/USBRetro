@@ -1,3 +1,4 @@
+
 cmake_minimum_required(VERSION 3.12)
 
 # Pull in SDK from local submodule (must be before project)
@@ -315,6 +316,16 @@ set(CONTROLLER_SOURCES
 )
 
 # Common sources (core + USB host)
+# SD card sources — opt-in via ${SD_SOURCES} in target_sources + lib/fatfs in target_include_directories
+set(SD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/fatfs/ff.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/fatfs/ffsystem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/fatfs/ffunicode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/sd/sd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/sd/diskio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/rp2040/platform_sd_rp2040.c
+)
+
 set(COMMON_SOURCES ${CORE_SOURCES} ${USB_HOST_SOURCES})
 
 # Common libraries for USB host apps
@@ -589,6 +600,8 @@ target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFI
 target_sources(joypad_dc PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2dc/app.c
 )
 target_include_directories(joypad_dc PUBLIC
@@ -609,17 +622,27 @@ target_compile_definitions(joypad_dc_rp2040zero PRIVATE
     MAPLE_PIN5=15
     WS2812_PIN=16
     USE_BOOTSEL_BUTTON=1
+    # SD card on SPI1: SCK=GP10, MOSI=GP11, MISO=GP12, CS=GP13
+    CONFIG_SD=1
+    SD_SPI_INST=1
+    SD_SCK_PIN=10
+    SD_MOSI_PIN=11
+    SD_MISO_PIN=12
+    SD_CS_PIN=13
 )
-target_sources(joypad_dc_rp2040zero PUBLIC ${COMMON_SOURCES}
+target_sources(joypad_dc_rp2040zero PUBLIC ${COMMON_SOURCES} ${SD_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2dc/app.c
 )
 target_include_directories(joypad_dc_rp2040zero PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2dc
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/fatfs
 )
-target_link_libraries(joypad_dc_rp2040zero PRIVATE ${COMMON_LIBRARIES} hardware_dma)
+target_link_libraries(joypad_dc_rp2040zero PRIVATE ${COMMON_LIBRARIES} hardware_dma hardware_spi pico_multicore)
 joypad_target_common(joypad_dc_rp2040zero)
 joypad_add_btstack(joypad_dc_rp2040zero)
 pico_generate_pio_header(joypad_dc_rp2040zero ${CMAKE_CURRENT_LIST_DIR}/native/device/dreamcast/maple.pio)
@@ -686,6 +709,8 @@ target_sources(joypad_n642dc PUBLIC ${COMMON_SOURCES}
     ${N64_HOST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/n642dc/app.c
 )
 target_include_directories(joypad_n642dc PUBLIC
@@ -718,6 +743,8 @@ target_sources(joypad_n642dc_pico2_w PUBLIC ${COMMON_SOURCES}
     ${N64_HOST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/n642dc/app.c
 )
 target_include_directories(joypad_n642dc_pico2_w PUBLIC
@@ -938,17 +965,13 @@ target_compile_definitions(joypad_usb_feather_rp2040_max3421 PRIVATE
     MAX3421_CS_PIN=10
     MAX3421_INTR_PIN=9
     USE_BOOTSEL_BUTTON=1
-    # FeatherWing OLED 128x64 (SH1107) over I2C on STEMMA QT.
-    # Button silkscreen labels D6/D5 → RP2040 GPIO 8/7 (NOT 6/5 — the
-    # Adafruit Feather pin labels do not map 1:1 to GPIO numbers).
-    # Button A on D9 (GPIO 9) conflicts with MAX3421 INT here, so it's
-    # not defined.
+    # FeatherWing OLED 128x64 (SH1107) over I2C on STEMMA QT
     OLED_I2C_INST=1
     OLED_I2C_SDA_PIN=2
     OLED_I2C_SCL_PIN=3
     OLED_I2C_ADDR=0x3C
-    OLED_BUTTON_B_PIN=8
-    OLED_BUTTON_C_PIN=7
+    OLED_BUTTON_B_PIN=6
+    OLED_BUTTON_C_PIN=5
     I2C_PEER_ENABLED=1
 )
 target_sources(joypad_usb_feather_rp2040_max3421 PUBLIC
@@ -958,7 +981,6 @@ target_sources(joypad_usb_feather_rp2040_max3421 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/joy_anim.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/eyes_anim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c
 )
 target_include_directories(joypad_usb_feather_rp2040_max3421 PUBLIC
@@ -987,14 +1009,13 @@ target_compile_definitions(joypad_usb_feather_rp2040_usb_host_max3421 PRIVATE
     MAX3421_MISO_PIN=8
     MAX3421_CS_PIN=10
     MAX3421_INTR_PIN=9
-    # FeatherWing OLED 128x64 (SH1107) over I2C on STEMMA QT.
-    # Button A (D9 → GPIO 9) and B (D6 → GPIO 8) both conflict with
-    # MAX3421 (INT=9, MISO=8) on this build — only C is exposed.
+    # FeatherWing OLED 128x64 (SH1107) over I2C on STEMMA QT
     OLED_I2C_INST=1
     OLED_I2C_SDA_PIN=2
     OLED_I2C_SCL_PIN=3
     OLED_I2C_ADDR=0x3C
-    OLED_BUTTON_C_PIN=7
+    OLED_BUTTON_B_PIN=6
+    OLED_BUTTON_C_PIN=5
     I2C_PEER_ENABLED=1
     # MCP-driven synthetic input over the same UART that carries stdio logs
     # (UART0 on GPIO0/1, 115200 baud — KB2040 USB-UART bridge).
@@ -1011,8 +1032,10 @@ target_sources(joypad_usb_feather_rp2040_usb_host_max3421 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/joy_anim.c
+
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/eyes_anim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/host/uart/uart_host.c
+
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c
 )
 target_include_directories(joypad_usb_feather_rp2040_usb_host_max3421 PUBLIC
@@ -2375,19 +2398,11 @@ joypad_target_common(joypad_controller_macropad)
 # JoyWing + OLED share I2C1 on STEMMA QT (SDA=2, SCL=3).
 add_executable(joypad_controller_btusb_feather_rp2040)
 target_compile_definitions(joypad_controller_btusb_feather_rp2040 PRIVATE
-    CONFIG_CONTROLLER_BTUSB=1
-    CONFIG_USB=1
-    CONFIG_PAD_INPUT=1
     DISABLE_USB_HOST=1
     BOARD_FEATHER_RP2040=1
     USE_BOOTSEL_BUTTON=1
     REQUIRE_BLE_OUTPUT=0
-    SENSOR_PAD=1
     SENSOR_JOYWING=1
-    # Boot-attempts watchdog: hardware watchdog fires if init hangs;
-    # after 3 consecutive failed boots, the saved pad config is auto-
-    # wiped. Configs persist on normal boot, bricks self-recover.
-    PAD_CONFIG_BOOT_WATCHDOG=1
     PICO_DEFAULT_UART=0
     PICO_DEFAULT_UART_TX_PIN=0
     PICO_DEFAULT_UART_RX_PIN=1
@@ -2396,24 +2411,19 @@ target_compile_definitions(joypad_controller_btusb_feather_rp2040 PRIVATE
     OLED_I2C_SDA_PIN=2
     OLED_I2C_SCL_PIN=3
     OLED_I2C_ADDR=0x3C
-    # FeatherWing OLED 128x64 buttons. Pin labels on the FeatherWing
-    # silkscreen (D9/D6/D5) map to RP2040 GPIO 9/8/7 — NOT 9/6/5.
     OLED_BUTTON_A_PIN=9
-    OLED_BUTTON_B_PIN=8
-    OLED_BUTTON_C_PIN=7
+    OLED_BUTTON_B_PIN=6
+    OLED_BUTTON_C_PIN=5
 )
 target_sources(joypad_controller_btusb_feather_rp2040 PUBLIC
     ${CORE_SOURCES}
     ${USB_DEVICE_SOURCES}
-    ${CONTROLLER_SOURCES}     # pad subsystem + speaker + display.c + display_spi.c + uart
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs_peripheral.c
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/joywing/joywing_input.c
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/seesaw/seesaw.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/rp2040/platform_i2c_rp2040.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/joy_anim.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/eyes_anim.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/menu.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/controller_btusb/app.c
 )
 target_include_directories(joypad_controller_btusb_feather_rp2040 PUBLIC
@@ -2421,9 +2431,7 @@ target_include_directories(joypad_controller_btusb_feather_rp2040 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
 )
 target_link_libraries(joypad_controller_btusb_feather_rp2040 PRIVATE
-    pico_stdlib pico_multicore pico_rand
-    hardware_pio hardware_i2c hardware_adc hardware_pwm hardware_spi
-    tinyusb_device tinyusb_board
+    pico_stdlib pico_multicore hardware_pio hardware_i2c pico_rand tinyusb_device tinyusb_board
 )
 joypad_target_common(joypad_controller_btusb_feather_rp2040)
 pico_enable_stdio_uart(joypad_controller_btusb_feather_rp2040 1)

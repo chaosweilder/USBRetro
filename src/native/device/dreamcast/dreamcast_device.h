@@ -163,6 +163,11 @@ uint8_t dreamcast_get_rumble(uint8_t port);
 // Returns true if rumble enabled, fills power (0-7), freq, inc
 bool dreamcast_get_purupuru_state(uint8_t port, uint8_t* power, uint8_t* freq, uint8_t* inc);
 
+// Enable VMU sub-peripheral advertisement
+// Call once VMU is initialized and ready to respond to Maple Bus queries
+// Rebuilds controller Device Info packets to include ADDRESS_SUBPERIPHERAL0
+void dreamcast_enable_vmu(void);
+
 // OutputInterface accessor
 #include "core/output_interface.h"
 extern const OutputInterface dreamcast_output_interface;
