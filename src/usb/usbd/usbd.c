@@ -1883,6 +1883,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
                 str = XAC_MANUFACTURER;
             } else if (output_mode == USB_OUTPUT_MODE_GC_ADAPTER) {
                 str = GC_ADAPTER_MANUFACTURER;
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+            } else if (output_mode == USB_OUTPUT_MODE_GBA_LINK) {
+                str = GBA_LINK_MANUFACTURER;
+#endif
             } else if (output_mode == USB_OUTPUT_MODE_CDC) {
                 str = USB_CDC_MANUFACTURER;
             } else {
@@ -1910,6 +1914,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
                 str = XAC_PRODUCT;
             } else if (output_mode == USB_OUTPUT_MODE_GC_ADAPTER) {
                 str = GC_ADAPTER_PRODUCT;
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+            } else if (output_mode == USB_OUTPUT_MODE_GBA_LINK) {
+                str = GBA_LINK_PRODUCT;
+#endif
             } else if (output_mode == USB_OUTPUT_MODE_CDC) {
                 str = USB_CDC_PRODUCT;
             } else {

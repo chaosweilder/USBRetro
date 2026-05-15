@@ -243,6 +243,16 @@ void gc_host_task(void)
     for (int port = 0; port < GC_MAX_PORTS; port++) {
         GamecubeController* controller = &gc_controllers[port];
 
+        // Bridge owns the joybus PIO for this port — skip ALL gc_host
+        // activity (autopoll AND multiboot). The previous skip below
+        // only fired *after* gba_boot_attempted was set, so a fresh
+        // bridge-mode boot (where gc_host hasn't autobooted yet) would
+        // still race with our bridge's joybus_bridge_xfer on the same
+        // PIO state machine, causing every transfer to time out.
+        if (gba_bridge_owned[port]) {
+            continue;
+        }
+
         // GBA-as-controller path: after multiboot, the GBA-side payload uses
         // joybus mode (0x14 READ → 4 bytes of input state). The standard GC
         // controller protocol (probe/origin/poll) does NOT match — we must

@@ -151,7 +151,36 @@ static void cdc_process_command(const char* cmd)
         cdc_data_write_str("  TCP?      - Query sock0 status register\r\n");
         cdc_data_write_str("  FRAMES?   - Show Dolphin command activity counters\r\n");
 #endif
+#if CFG_TUD_VENDOR
+        cdc_data_write_str("  GBALINK?  - GBA Link USB bridge stats (frames, joybus timeouts)\r\n");
+#endif
     }
+#if CFG_TUD_VENDOR
+    // GBALINK? — diagnostics for the vendor-bulk GBA Link bridge
+    // (USB_OUTPUT_MODE_GBA_LINK). Tells us whether Dolphin's libusb is
+    // actually pushing bytes through (frames>0) and what joybus is
+    // returning to those commands.
+    else if (strcmp(cmd, "GBALINK?") == 0) {
+        extern uint32_t gba_link_mode_get_frames(void);
+        extern uint32_t gba_link_mode_get_short_tx(void);
+        extern uint32_t gba_link_mode_get_joybus_to(void);
+        extern uint8_t  gba_link_mode_get_last_cmd(void);
+        extern int      gba_link_mode_get_last_n(void);
+        extern void     gba_link_mode_get_last_rx(uint8_t out[5]);
+        uint8_t lr[5];
+        gba_link_mode_get_last_rx(lr);
+        snprintf(response, sizeof(response),
+                 "frames=%lu short_tx=%lu joybus_to=%lu  "
+                 "last_cmd=0x%02x n=%d rx=%02x%02x%02x%02x%02x\r\n",
+                 (unsigned long)gba_link_mode_get_frames(),
+                 (unsigned long)gba_link_mode_get_short_tx(),
+                 (unsigned long)gba_link_mode_get_joybus_to(),
+                 gba_link_mode_get_last_cmd(),
+                 gba_link_mode_get_last_n(),
+                 lr[0], lr[1], lr[2], lr[3], lr[4]);
+        cdc_data_write_str(response);
+    }
+#endif
     // BOOTSEL — drop into UF2 bootloader. Works from any app since
     // reset_usb_boot is part of the bootrom.
     else if (strcmp(cmd, "BOOTSEL") == 0) {
