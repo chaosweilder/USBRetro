@@ -596,17 +596,17 @@ pico_generate_pio_header(joypad_loopy ${CMAKE_CURRENT_LIST_DIR}/native/device/lo
 
 # --- Dreamcast ---
 add_executable(joypad_dc)
-# CONFIG_USB_MSC=1 enables the TinyUSB MSC host class so a flash drive plugged
-# into a hub alongside the controller will enumerate; vmu_storage decides at
-# boot whether to advertise the VMU (drive present) or stay as a plain
-# controller (no drive).
-target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1 CONFIG_USB_MSC=1)
+# WORKAROUND: KB2040 + Core-1 TX hits an enumeration-dropoff bug we haven't
+# root-caused (works fine on RP2040 Zero where gill validated the PR).
+# Mirror n642dc's Core-0 TX config until the underlying issue is diagnosed.
+# VMU sources intentionally not linked — vmu_ram is 128KB BSS which would
+# leave KB2040 + BTstack with too little headroom for stack/USB buffers.
+# USB MSC + VMU storage on KB2040 will land as a follow-up once the dropoff
+# is fixed and we have a real flash drive to test with.
+target_compile_definitions(joypad_dc PRIVATE CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_NO_NEOPIXEL=1)
 target_sources(joypad_dc PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/msc/msc_host.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2dc/app.c
 )
 target_include_directories(joypad_dc PUBLIC
@@ -622,7 +622,7 @@ pico_generate_pio_header(joypad_dc ${CMAKE_CURRENT_LIST_DIR}/native/device/dream
 # USB4Maple-compatible pinout: GPIO 14/15 for Maple Bus
 add_executable(joypad_dc_rp2040zero)
 target_compile_definitions(joypad_dc_rp2040zero PRIVATE
-    CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1
+    CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1 CONFIG_VMU=1
     MAPLE_PIN1=14
     MAPLE_PIN5=15
     WS2812_PIN=16
@@ -714,8 +714,6 @@ target_sources(joypad_n642dc PUBLIC ${COMMON_SOURCES}
     ${N64_HOST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/n642dc/app.c
 )
 target_include_directories(joypad_n642dc PUBLIC
@@ -748,8 +746,6 @@ target_sources(joypad_n642dc_pico2_w PUBLIC ${COMMON_SOURCES}
     ${N64_HOST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/vmu_sd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/n642dc/app.c
 )
 target_include_directories(joypad_n642dc_pico2_w PUBLIC

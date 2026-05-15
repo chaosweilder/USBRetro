@@ -15,7 +15,9 @@
 
 #include "dreamcast_device.h"
 #include "maple_state_machine.h"
+#ifdef CONFIG_VMU
 #include "vmu.h"
+#endif
 #include "maple.pio.h"
 #include "core/output_interface.h"
 #include "core/router/router.h"
@@ -237,6 +239,7 @@ static FAllInfoPacket PuruPuruAllInfoPacket;
 static FControllerPacket ControllerPacket;
 static FACKPacket ACKPacket;
 
+#ifdef CONFIG_VMU
 // Shadow packets — built at init with VMU address, never modified after
 // dreamcast_enable_vmu() switches pointers atomically (safe on Cortex-M0+)
 static FInfoPacket InfoPacket_vmu;
@@ -249,6 +252,14 @@ static FInfoPacket * volatile pInfoPacket = &InfoPacket;
 static FAllInfoPacket * volatile pAllInfoPacket = &AllInfoPacket;
 static FControllerPacket * volatile pControllerPacket = &ControllerPacket;
 static FACKPacket * volatile pACKPacket = &ACKPacket;
+#else
+// Non-VMU builds: pointer indirection unused; map to direct packet refs so
+// we don't have to wrap every send-site reference in #ifdef.
+#define pInfoPacket (&InfoPacket)
+#define pAllInfoPacket (&AllInfoPacket)
+#define pControllerPacket (&ControllerPacket)
+#define pACKPacket (&ACKPacket)
+#endif
 static FPuruPuruDeviceInfoPacket PuruPuruDeviceInfoPacket;
 static FPuruPuruInfoPacket PuruPuruInfoPacket;
 static FPuruPuruConditionPacket PuruPuruConditionPacket;
@@ -325,15 +336,17 @@ static uint32_t __not_in_flash_func(CalcCRC)(const uint32_t *Words, uint32_t Num
 // PACKET BUILDERS
 // ============================================================================
 
-// Controller address — initially advertises no sub-peripherals
-// VMU sub-peripheral (0x01) is added dynamically when VMU is ready via dreamcast_enable_vmu()
+// Controller address — VMU builds start without sub-peripherals and add VMU
+// (sub 0) + PuruPuru (sub 1) atomically once VMU is ready. Non-VMU builds
+// keep the pre-PR behavior of advertising controller + PuruPuru directly.
+#ifdef CONFIG_VMU
 #define ADDRESS_CONTROLLER_ONLY     (ADDRESS_CONTROLLER)
 #define ADDRESS_CONTROLLER_AND_VMU  (ADDRESS_CONTROLLER | ADDRESS_SUBPERIPHERAL0 | ADDRESS_SUBPERIPHERAL1)
-
-// Current advertisement — starts as controller only, updated when VMU ready
 static uint8_t current_controller_address = ADDRESS_CONTROLLER_ONLY;
-
 #define ADDRESS_CONTROLLER_AND_SUBS (current_controller_address)
+#else
+#define ADDRESS_CONTROLLER_AND_SUBS (ADDRESS_CONTROLLER | ADDRESS_SUBPERIPHERAL1)
+#endif
 
 static void BuildInfoPacket(void)
 {
@@ -531,6 +544,7 @@ static void BuildACKPacket(void)
     ACKPacket.CRC = CalcCRC((uint32_t *)&ACKPacket.Header, sizeof(ACKPacket) / sizeof(uint32_t) - 2);
 }
 
+#ifdef CONFIG_VMU
 // Enable VMU advertisement — call once VMU is ready to respond
 // Switches packet pointers atomically — no rebuild during live operation
 // Safe on Cortex-M0+: pointer writes are atomic for naturally-aligned 32-bit values
@@ -544,6 +558,7 @@ void dreamcast_enable_vmu(void)
     current_controller_address = ADDRESS_CONTROLLER_AND_VMU;
     printf("[DC] VMU advertisement enabled (addr 0x%02X)\n", current_controller_address);
 }
+#endif
 
 // ============================================================================
 // PACKET SENDING
@@ -659,6 +674,7 @@ static bool __not_in_flash_func(ConsumePacket)(uint32_t Size)
             break;
         }
     }
+#ifdef CONFIG_VMU
     // Handle VMU (memory card) at slot 0 — address 0x01
     else if (DestPeripheral == ADDRESS_SUBPERIPHERAL0) {
         switch (Header->Command) {
@@ -720,6 +736,7 @@ static bool __not_in_flash_func(ConsumePacket)(uint32_t Size)
             break;
         }
     }
+#endif  // CONFIG_VMU
     // Handle PuruPuru (rumble pack) at slot 1 — address 0x02
     else if (DestPeripheral == ADDRESS_SUBPERIPHERAL1) {
         switch (Header->Command) {
@@ -1004,6 +1021,7 @@ static void __no_inline_not_in_flash_func(core1_rx_task)(void)
                         case SEND_ACK:
                             SendPacket((uint32_t *)pACKPacket, sizeof(ACKPacket) / sizeof(uint32_t));
                             break;
+#ifdef CONFIG_VMU
                         case SEND_VMU_WRITE_COMPLETE_ACK: {
                             // WR_COMPLETE ACK — must use VMU ACK (origin=0x01), not controller ACK
                             uint32_t sz;
@@ -1011,6 +1029,7 @@ static void __no_inline_not_in_flash_func(core1_rx_task)(void)
                             SendPacketVMU((uint32_t *)pkt, sz);
                             break;
                         }
+#endif
                         case SEND_PURUPURU_INFO:
                             SendPacket((uint32_t *)&PuruPuruDeviceInfoPacket, sizeof(PuruPuruDeviceInfoPacket) / sizeof(uint32_t));
                             break;
@@ -1026,6 +1045,7 @@ static void __no_inline_not_in_flash_func(core1_rx_task)(void)
                         case SEND_PURUPURU_BLOCK_READ:
                             SendPacket((uint32_t *)&PuruPuruBlockReadPacket, sizeof(PuruPuruBlockReadPacket) / sizeof(uint32_t));
                             break;
+#ifdef CONFIG_VMU
                         case SEND_VMU_INFO: {
                             uint32_t sz;
                             const void *pkt = vmu_get_device_info_packet(&sz);
@@ -1072,6 +1092,7 @@ static void __no_inline_not_in_flash_func(core1_rx_task)(void)
                             SendPacket((uint32_t *)pkt, sz);
                             break;
                         }
+#endif
                         default:
                             break;
                         }
@@ -1198,6 +1219,7 @@ void dreamcast_init(void)
     BuildPuruPuruConditionPacket();
     BuildPuruPuruBlockReadPacket();
 
+#ifdef CONFIG_VMU
     // Initialize VMU RAM and packets, but defer advertisement until dreamcast_task()
     // starts — this lets the controller enumerate cleanly before the DC starts
     // querying the VMU sub-peripheral (which triggers filesystem reads).
@@ -1233,6 +1255,13 @@ void dreamcast_init(void)
 
     // Restore controller-only address for boot
     current_controller_address = ADDRESS_CONTROLLER_ONLY;
+#else
+    // Non-VMU builds: build packets directly with controller + PuruPuru advertisement.
+    BuildInfoPacket();
+    BuildAllInfoPacket();
+    BuildControllerPacket();
+    BuildACKPacket();
+#endif
 
     printf("[DC] Maple Bus initialized on GPIO %d/%d\n", MAPLE_PIN1, MAPLE_PIN5);
 
@@ -1282,13 +1311,7 @@ void dreamcast_task(void)
     // Deferred VMU+rumble advertisement — after start
     // Controller enumerates cleanly first, then VMU+PuruPuru are added
     // SD card load also deferred here to avoid blocking Maple Bus enumeration at boot
-    //
-    // Gated on CONFIG_SD: builds without SD (KB2040, n642dc) link vmu.c for
-    // symbol resolution but stay as plain controllers — VMU emulation has
-    // only been validated alongside SD-backed persistence on the rp2040zero
-    // target, and advertising a non-functional VMU makes games report
-    // "memory card not connected" when they try to access it.
-#ifdef CONFIG_SD
+#ifdef CONFIG_VMU
     if (!vmu_enabled && time_us_32() > vmu_enable_time) {
         vmu_sd_load();          // Load saved VMU from SD (deferred from boot)
         dreamcast_enable_vmu(); // Advertise VMU to DC
@@ -1367,6 +1390,7 @@ void dreamcast_task(void)
             case SEND_PURUPURU_BLOCK_READ:
                 SendPacket((uint32_t *)&PuruPuruBlockReadPacket, sizeof(PuruPuruBlockReadPacket) / sizeof(uint32_t));
                 break;
+#ifdef CONFIG_VMU
             case SEND_VMU_INFO: {
                 uint32_t sz;
                 const void *pkt = vmu_get_device_info_packet(&sz);
@@ -1417,6 +1441,7 @@ void dreamcast_task(void)
                 SendPacket((uint32_t *)pkt, sz);
                 break;
             }
+#endif
             default:
                 break;
             }
@@ -1454,6 +1479,7 @@ void dreamcast_task(void)
         case SEND_PURUPURU_BLOCK_READ:
             SendPacket((uint32_t *)&PuruPuruBlockReadPacket, sizeof(PuruPuruBlockReadPacket) / sizeof(uint32_t));
             break;
+#ifdef CONFIG_VMU
         case SEND_VMU_INFO: {
             uint32_t sz;
             const void *pkt = vmu_get_device_info_packet(&sz);
@@ -1504,6 +1530,7 @@ void dreamcast_task(void)
             SendPacket((uint32_t *)pkt, sz);
             break;
         }
+#endif
         default:
             break;
         }
@@ -1514,8 +1541,10 @@ void dreamcast_task(void)
     // These are lower priority than responding to DC commands
     dreamcast_update_output();
 
+#ifdef CONFIG_VMU
     // VMU write-back task — flush SD card after 1 second idle
     vmu_task();
+#endif
 
     // Rumble timeout check - auto-stop if no new commands received
     uint32_t now_ms = time_us_32() / 1000;
