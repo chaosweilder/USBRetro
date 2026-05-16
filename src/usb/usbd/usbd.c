@@ -15,6 +15,9 @@
 
 #include "usbd.h"
 #include "usbd_mode.h"
+#if defined(CONFIG_JOYBUS_BRIDGE)
+#include "hardware/clocks.h"  // set_sys_clock_khz — see joybus clock note in usbd_init
+#endif
 #include "descriptors/hid_descriptors.h"
 #include "descriptors/sinput_descriptors.h"
 #include "descriptors/xbox_og_descriptors.h"
@@ -537,6 +540,14 @@ void usbd_init(void)
 #ifdef DISABLE_USB_DEVICE
     printf("[usbd] USB device DISABLED\n");
     return;
+#endif
+#if defined(CONFIG_JOYBUS_BRIDGE)
+    // Joybus-bridge apps need 130 MHz before tusb_init AND before
+    // gc_host_init so USB SOF timing and the joybus PIO divider both
+    // see the final clock. Without this, the divider ends up ~4% off
+    // and GBA replies never decode (rx=000000 timeouts).
+    bool clk_ok = set_sys_clock_khz(130000, true);
+    printf("[usbd] sys_clock=130MHz set: %s\n", clk_ok ? "OK" : "FAIL");
 #endif
     printf("[usbd] Initializing USB device output\n");
 

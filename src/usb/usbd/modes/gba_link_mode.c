@@ -62,10 +62,12 @@ static void gba_link_init(void) {
     gc_host_init();
 
     if (!joybus_bridge_start()) {
-        printf("[gba_link] joybus_bridge_start() failed — bus owned elsewhere\n");
+        printf("[gba_link] joybus_bridge_start() FAILED — bus owned elsewhere\n");
     } else {
         printf("[gba_link] vendor mode active, joybus owned, awaiting Dolphin\n");
     }
+    printf("[gba_link] joybus_bridge state=%d (1=ACTIVE)\n",
+           (int)joybus_bridge_get_state());
 }
 
 // ============================================================================
