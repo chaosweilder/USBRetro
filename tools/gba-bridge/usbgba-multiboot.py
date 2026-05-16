@@ -127,29 +127,40 @@ def multiboot(out_ep, in_ep, rom: bytes, channel: int = 0) -> bool:
     rom_len = len(rom)
     print(f"[mb] starting multiboot of {rom_len} bytes (0x{rom_len:X})")
 
-    # Step 1: RESET
+    # Step 1: RESET — first cmd of a cold start is flaky (~50% miss rate
+    # even with firmware-side retries). The GBA can take a few seconds
+    # after power-cycle before joybus replies are stable. Hammer until we
+    # get the expected 0x0400 type reply or 50 attempts pass (~5s).
     print("[mb] step 1: RESET")
-    rx = xfer(out_ep, in_ep, bytes([CMD_RESET]), 3)
-    print(f"[mb]   rx {rx.hex()}")
-    rst_type = rx[0] | (rx[1] << 8)
-    if rst_type != GBA_TYPE_ID:
-        print(f"[mb] FAIL: expected type 0x0400, got 0x{rst_type:04X}")
+    for attempt in range(50):
+        rx = xfer(out_ep, in_ep, bytes([CMD_RESET]), 3)
+        rst_type = rx[0] | (rx[1] << 8)
+        if rst_type == GBA_TYPE_ID:
+            print(f"[mb]   rx {rx.hex()} (got it on attempt {attempt})")
+            break
+        time.sleep(0.1)
+    else:
+        print(f"[mb] FAIL: expected type 0x0400 after 50 RESETs, "
+              f"last rx={rx.hex()}")
         return False
     time.sleep(0.010)
 
     # Step 2: STATUS poll for PSF0
     print("[mb] step 2: STATUS (poll for PSF0)")
     status_jstat = 0
+    sample = []
     for i in range(50):
         rx = xfer(out_ep, in_ep, bytes([CMD_STATUS]), 3)
         t = rx[0] | (rx[1] << 8)
         status_jstat = rx[2]
+        if i < 5 or i % 10 == 0:
+            sample.append(f"#{i}={rx.hex()}")
         if t == GBA_TYPE_ID and (status_jstat & JSTAT_PSF0):
             print(f"[mb]   PSF0 set on poll {i}: rx={rx.hex()}")
             break
         time.sleep(0.020)
     if not (status_jstat & JSTAT_PSF0):
-        print("[mb] FAIL: PSF0 never set")
+        print(f"[mb] FAIL: PSF0 never set. Sample: {' '.join(sample)}")
         return False
     time.sleep(0.001)
 
