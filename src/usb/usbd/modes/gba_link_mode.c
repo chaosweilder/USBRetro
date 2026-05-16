@@ -148,6 +148,23 @@ static bool process_one_frame(void) {
     uint8_t rx[5] = {0};
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, /*to_us=*/5000);
+
+    // RESET (0xFF) and STATUS (0x00) are idempotent — a timeout on the
+    // first try is almost always a transient PIO/wire glitch (~30-50%
+    // failure rate on the very first command after a cold start). For
+    // these we retry up to 3 more times with 200 µs settle in between.
+    // Without retries the first RESET fails ~50% of the time, which
+    // breaks every Dolphin multiboot attempt before the cipher math
+    // even starts. READ / WRITE are NOT retried — they advance the
+    // Kawasedo cipher state and replaying could desync.
+    if (n < 0 && (cmd_byte == 0xFF || cmd_byte == 0x00)) {
+        for (int retry = 0; retry < 3 && n < 0; retry++) {
+            busy_wait_us(200);
+            n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
+                                   rx, (uint16_t)rx_len, /*to_us=*/5000);
+        }
+    }
+
     // Brief idle gap between xfers — gives the joybus PIO state
     // machine and the GBA's link IC time to fully settle before the
     // next command. Without it, Madden's back-to-back command bursts

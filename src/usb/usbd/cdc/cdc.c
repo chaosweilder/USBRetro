@@ -9,6 +9,7 @@
 #include "core/services/storage/flash.h"
 #include "tusb.h"
 #include "pico/bootrom.h"
+#include "hardware/gpio.h"  // gpio_get for JOYPIN? diagnostic
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -178,6 +179,34 @@ static void cdc_process_command(const char* cmd)
                  gba_link_mode_get_last_cmd(),
                  gba_link_mode_get_last_n(),
                  lr[0], lr[1], lr[2], lr[3], lr[4]);
+        cdc_data_write_str(response);
+    }
+#endif
+#if CFG_TUD_VENDOR && defined(CONFIG_JOYBUS_BRIDGE)
+    // JOYTEST — drive a single joybus RESET (0xFF) over the bridge and
+    // report the raw 3-byte rx. Bypasses the USB vendor pipe entirely so
+    // we can confirm whether joybus itself is reaching the GBA.
+    else if (strcmp(cmd, "JOYTEST") == 0) {
+        extern int joybus_bridge_xfer(const uint8_t*, uint16_t,
+                                      uint8_t*, uint16_t, uint32_t);
+        uint8_t tx[1] = {0xFF};
+        uint8_t rx[3] = {0xAA, 0xAA, 0xAA};
+        int n = joybus_bridge_xfer(tx, 1, rx, 3, /*to_us=*/5000);
+        snprintf(response, sizeof(response),
+                 "n=%d rx=%02x%02x%02x (0xAA = untouched)\r\n",
+                 n, rx[0], rx[1], rx[2]);
+        cdc_data_write_str(response);
+    }
+    // JOYPIN? — sample the joybus data pin (open-drain, idle should be
+    // high with internal pull-up). Confirms wiring + GBA presence.
+    else if (strcmp(cmd, "JOYPIN?") == 0) {
+#ifndef GC_PIN_DATA
+#define GC_PIN_DATA 4
+#endif
+        int level = gpio_get(GC_PIN_DATA);
+        snprintf(response, sizeof(response),
+                 "gpio%d level=%d (1=idle/pulled-up, 0=line held low)\r\n",
+                 GC_PIN_DATA, level);
         cdc_data_write_str(response);
     }
 #endif
