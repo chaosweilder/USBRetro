@@ -186,8 +186,13 @@
   // Vendor class enabled to support USB_OUTPUT_MODE_GBA_LINK (the
   // direct-to-Dolphin GBA-link bridge). Other modes ignore it.
   #define CFG_TUD_VENDOR            1
-  #define CFG_TUD_VENDOR_RX_BUFSIZE 64
-  #define CFG_TUD_VENDOR_TX_BUFSIZE 64
+  // Bigger RX/TX FIFOs so we don't stall on Dolphin's multiboot bursts
+  // (~13K WRITEs streamed at near-real-time pace) — joybus xfer is
+  // synchronous and 1-5 ms each, so Dolphin's bulk-out can queue up
+  // multiple frames before our task can drain. 1 KB = 16 commands worth
+  // at full WRITE size, plenty of headroom.
+  #define CFG_TUD_VENDOR_RX_BUFSIZE 1024
+  #define CFG_TUD_VENDOR_TX_BUFSIZE 1024
   #define CFG_TUD_VENDOR_EPSIZE     64
 
   // HID buffer sizes

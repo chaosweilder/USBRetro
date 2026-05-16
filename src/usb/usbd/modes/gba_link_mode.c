@@ -28,6 +28,7 @@
 #include "../usbd.h"
 #include "../descriptors/gba_link_descriptors.h"
 #include "native/host/gc/joybus_bridge.h"
+#include "native/host/gc/gc_host.h"
 #include "pico/time.h"
 #include <string.h>
 #include <stdio.h>
@@ -49,9 +50,17 @@ static const uint8_t* gba_link_get_config_descriptor(void) {
 // ============================================================================
 
 static void gba_link_init(void) {
-    // Take exclusive ownership of the joybus port from gc_host so its
-    // autoboot path doesn't fight Dolphin for the bus. Same pattern
-    // gc2eth_feather uses.
+    // CRITICAL: usbd_init (our caller) runs in main.c BEFORE the input
+    // interfaces' init loop, which is where gc_host_init normally fires.
+    // joybus_bridge_start would silently fail (gc_host_gba_acquire_for_bridge
+    // checks `initialized` and returns false) and every later
+    // joybus_bridge_xfer would return -1 ("not active"), making it look
+    // like every joybus transfer is timing out.
+    //
+    // Force gc_host_init now. It's idempotent — `if (initialized) return`
+    // at the top — so the later inputs[i]->init() loop is a no-op.
+    gc_host_init();
+
     if (!joybus_bridge_start()) {
         printf("[gba_link] joybus_bridge_start() failed — bus owned elsewhere\n");
     } else {
@@ -127,13 +136,21 @@ static bool process_one_frame(void) {
         }
     }
 
-    // Forward to the GBA via joybus. READ (0x14) carries the Kawasedo
-    // session_key from the BIOS which has computation latency; give it
-    // 5 ms. Other commands respond inside ~250 µs.
+    // Forward to the GBA via joybus. Generous 5 ms timeout for ALL
+    // commands — the GBA's BIOS has Kawasedo cipher latency on READs,
+    // and under sustained burst load even STATUS / WRITE replies can
+    // creep close to 1 ms. Tighter timeouts here cause spurious
+    // failures during Madden multiboot. Joybus itself is still
+    // ~250 µs/cmd in steady state; the extra budget only kicks in
+    // when something is actually slow.
     uint8_t rx[5] = {0};
-    const uint32_t to_us = (cmd_byte == 0x14) ? 5000 : 1000;
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, to_us);
+                               rx, (uint16_t)rx_len, /*to_us=*/5000);
+    // Brief idle gap between xfers — gives the joybus PIO state
+    // machine and the GBA's link IC time to fully settle before the
+    // next command. Without it, Madden's back-to-back command bursts
+    // had ~3% success rate; pyusb's naturally-paced testing was 100%.
+    busy_wait_us(150);
     if (n < 0) {
         // Joybus timeout or GBA disconnected — reply with zero-fill so
         // Dolphin's read doesn't block forever.
