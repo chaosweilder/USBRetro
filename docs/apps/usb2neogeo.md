@@ -193,11 +193,11 @@ Already-assigned buttons are ignored — each input button can only map to one o
 
 ### Alternative Remap Mode (Press Mode)
 
-1. Hold **START + any 2 mappable buttons** for **2 seconds** — LED flashes twice, buttons stop registering
+1. Hold **SELECT + any 2 mappable buttons** for **2 seconds** — LED flashes twice, buttons stop registering
 2. Press a button N times to assign it to Neo Geo slot N (1 press → B1/A, 2 press → B2/B, …, 6 press → B6/K3)
 3. 800ms silence commits the press sequence (LED blinks once per commit)
-4. Press **START** alone to save (LED flashes twice)
-5. Press **SELECT** alone to cancel and clear
+4. Press **SELECT** alone to save (LED flashes twice)
+5. Press **START** alone to cancel and clear
 
 Multiple input buttons can be assigned to the same Neo Geo outpu by pressing each the same number of times. Useful for shmups — e.g. press two buttons once each so both map to B1/A, then assign auto-fire only to one of them via Auto Fire Mode.
 
@@ -205,7 +205,7 @@ Multiple input buttons can be assigned to the same Neo Geo outpu by pressing eac
 
 ### Auto Fire Mode
 
-1. Hold **START + exactly 1 mappable button** for **2 seconds** — LED flashes twice, buttons stop registering
+1. Hold **SELECT + exactly 1 mappable button** for **2 seconds** — LED flashes twice, buttons stop registering
 2. Press the target button N times to assign a turbo frequency:
 
 | Press | Frequency |
@@ -219,8 +219,8 @@ Multiple input buttons can be assigned to the same Neo Geo outpu by pressing eac
 | 7+ | Disabled |
 
 3. 800ms silence commits the frequency (LED blinks once)
-4. Press **START** alone to save (LED flashes twice)
-5. Press **SELECT** alone to discard and exit
+4. Press **SELECT** alone to save (LED flashes twice)
+5. Press **START** alone to discard and exit
 
 Auto fire overlays the current button mapping without erasing it.
 

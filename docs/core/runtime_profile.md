@@ -38,15 +38,15 @@ Maps each input button to a fixed output, one at a time.
 
 Maps input buttons to output by pressing: press a button N times to assign it to output N.
 
-**To enter:** Hold **START** + any 2 mask buttons simultaneously for `hold_ms`. After `hold_ms` the LED blinks twice and buttons stop registering — the device is in mapping mode. Release all buttons.
+**To enter:** Hold **SELECT** + any 2 mask buttons simultaneously for `hold_ms`. After `hold_ms` the LED blinks twice and buttons stop registering — the device is in mapping mode. Release all buttons.
 
 **While in mapping mode:**
 - Press a mask button N times → assigns it to output N (1-indexed)
 - 800ms silence after the last press commits the sequence (LED blinks once as confirmation)
 - Pressing a different button commits the previous sequence and starts a new one
 - Not pressing a button leaves it unmapped (it will not produce output)
-- Press **START** alone → save and exit (LED blinks twice)
-- Press **SELECT** alone → cancel and clear
+- Press **SELECT** alone → save and exit (LED blinks twice)
+- Press **START** alone → cancel and clear
 
 > **Note:** Every time this mode is entered, the previous layout is fully erased and must be set a new.
 
@@ -61,7 +61,7 @@ Maps input buttons to output by pressing: press a button N times to assign it to
 
 Assigns a repeating auto-fire frequency to an existing mapped button.
 
-**To enter:** Hold **START** + exactly 1 mask button for `hold_ms`. After `hold_ms` the LED blinks twice and buttons stop registering — the device is in auto-fire mode. Release all buttons.
+**To enter:** Hold **SELECT** + exactly 1 mask button for `hold_ms`. After `hold_ms` the LED blinks twice and buttons stop registering — the device is in auto-fire mode. Release all buttons.
 
 **While in auto-fire mode:**
 - Press the target button N times → assigns auto-fire at the corresponding frequency:
@@ -78,8 +78,8 @@ Assigns a repeating auto-fire frequency to an existing mapped button.
 
 - 800ms silence after the last press commits the frequency (LED blinks once as confirmation)
 - Not pressing a button leaves its auto-fire setting unchanged
-- Press **START** alone → save and exit (LED blinks twice)
-- Press **SELECT** alone → discard all changes and exit
+- Press **SELECT** alone → save and exit (LED blinks twice)
+- Press **START** alone → discard all changes and exit
 
 Auto-fire overlays the current mapping without replacing it. If no runtime mapping exists yet, it seeds from the active profile so frequencies are applied on top of the existing remapping.
 

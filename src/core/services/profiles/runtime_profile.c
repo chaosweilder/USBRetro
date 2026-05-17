@@ -20,8 +20,8 @@ static const runtime_profile_output_config_t* cfg      = NULL;
 typedef enum {
     RUNTIME_IDLE = 0,
     RUNTIME_MAPPING,      // entry-by-entry mapping (SELECT alone 3s trigger)
-    RUNTIME_MAPPING_ALT,  // tap-count mapping      (START + 2 buttons 3s trigger)
-    RUNTIME_AUTOFIRE,     // auto-fire assignment   (START + 1 button  3s trigger)
+    RUNTIME_MAPPING_ALT,  // tap-count mapping      (SELECT + 2 buttons 3s trigger)
+    RUNTIME_AUTOFIRE,     // auto-fire assignment   (SELECT + 1 button  3s trigger)
 } runtime_state_t;
 
 // Tap timeout: silence after last tap before committing the period (ms)
@@ -355,9 +355,9 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
                 break;
             }
 
-            // --- Trigger B: START + 2 mask buttons for hold_ms → tap mode
-            //     Trigger C: START + 1 mask button  for hold_ms → auto-fire mode ---
-            if (start_held && !select_held && curr_eligible != 0) {
+            // --- Trigger B: SELECT + 2 mask buttons for hold_ms → tap mode
+            //     Trigger C: SELECT + 1 mask button  for hold_ms → auto-fire mode ---
+            if (select_held && !start_held && curr_eligible != 0) {
                 if (runtime_combo_hold == 0) runtime_combo_hold = platform_time_ms();
             } else {
                 runtime_combo_hold = 0;
@@ -373,13 +373,13 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
                 runtime_profile_indicator(1);
                 if (one_button) {
                     runtime_state = RUNTIME_AUTOFIRE;
-                    printf("[runtime_profile] AutoFire mode: tap button Nx for Hz, START to save, SELECT to clear\n");
+                    printf("[runtime_profile] AutoFire mode: tap button Nx for Hz, SELECT to save, START to clear\n");
                     printf("[runtime_profile]   1x=30Hz 2x=20Hz 3x=15Hz 4x=12Hz 5x=10Hz 6x=7.5Hz\n");
                 } else {
                     cfg->profile->button_map_count = 0;
                     runtime_entry = 0;
                     runtime_state = RUNTIME_MAPPING_ALT;
-                    printf("[runtime_profile] Tap mode: tap buttons, START to save, SELECT to clear\n");
+                    printf("[runtime_profile] Tap mode: tap buttons, SELECT to save, START to clear\n");
                 }
             }
             break;
@@ -420,10 +420,10 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
             uint32_t curr_eligible = input_buttons & cfg->input_mask;
             uint32_t prev_eligible = runtime_prev_buttons & cfg->input_mask;
 
-            // START alone (rising edge, no mask buttons) → commit + save
-            bool s2_rising = (input_buttons & JP_BUTTON_S2) &&
-                             !(runtime_prev_buttons & JP_BUTTON_S2);
-            if (s2_rising && !(input_buttons & JP_BUTTON_S1) && curr_eligible == 0) {
+            // SELECT alone (rising edge, no mask buttons) → commit + save
+            bool s1_rising = (input_buttons & JP_BUTTON_S1) &&
+                             !(runtime_prev_buttons & JP_BUTTON_S1);
+            if (s1_rising && !(input_buttons & JP_BUTTON_S2) && curr_eligible == 0) {
                 tap_commit();
                 tap_button  = 0;
                 tap_count   = 0;
@@ -432,10 +432,10 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
                 break;
             }
 
-            // SELECT alone (rising edge, no mask buttons) → clear + exit
-            bool s1_rising = (input_buttons & JP_BUTTON_S1) &&
-                             !(runtime_prev_buttons & JP_BUTTON_S1);
-            if (s1_rising && !(input_buttons & JP_BUTTON_S2) && curr_eligible == 0) {
+            // START alone (rising edge, no mask buttons) → clear + exit
+            bool s2_rising = (input_buttons & JP_BUTTON_S2) &&
+                             !(runtime_prev_buttons & JP_BUTTON_S2);
+            if (s2_rising && !(input_buttons & JP_BUTTON_S1) && curr_eligible == 0) {
                 runtime_profile_indicator(1);
                 runtime_profile_clear();
                 break;
@@ -481,10 +481,10 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
             uint32_t curr_eligible = input_buttons & cfg->input_mask;
             uint32_t prev_eligible = runtime_prev_buttons & cfg->input_mask;
 
-            // START alone (rising edge, no mask buttons) → commit + back to IDLE
-            bool s2_rising = (input_buttons & JP_BUTTON_S2) &&
-                             !(runtime_prev_buttons & JP_BUTTON_S2);
-            if (s2_rising && !(input_buttons & JP_BUTTON_S1) && curr_eligible == 0) {
+            // SELECT alone (rising edge, no mask buttons) → commit + back to IDLE
+            bool s1_rising = (input_buttons & JP_BUTTON_S1) &&
+                             !(runtime_prev_buttons & JP_BUTTON_S1);
+            if (s1_rising && !(input_buttons & JP_BUTTON_S2) && curr_eligible == 0) {
                 runtime_profile_indicator(1);
                 autofire_commit();
                 tap_button    = 0;
@@ -495,10 +495,10 @@ void runtime_profile_check_combo(uint32_t input_buttons, uint8_t l2, uint8_t r2)
                 break;
             }
 
-            // SELECT alone (rising edge, no mask buttons) → discard + back to IDLE
-            bool s1_rising = (input_buttons & JP_BUTTON_S1) &&
-                             !(runtime_prev_buttons & JP_BUTTON_S1);
-            if (s1_rising && !(input_buttons & JP_BUTTON_S2) && curr_eligible == 0) {
+            // START alone (rising edge, no mask buttons) → discard + back to IDLE
+            bool s2_rising = (input_buttons & JP_BUTTON_S2) &&
+                             !(runtime_prev_buttons & JP_BUTTON_S2);
+            if (s2_rising && !(input_buttons & JP_BUTTON_S1) && curr_eligible == 0) {
                 runtime_profile_indicator(1);
                 runtime_autofire_clear();
                 break;
