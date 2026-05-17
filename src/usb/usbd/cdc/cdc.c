@@ -197,6 +197,36 @@ static void cdc_process_command(const char* cmd)
                  n, rx[0], rx[1], rx[2]);
         cdc_data_write_str(response);
     }
+    // GBALINK! — per-command-type timing dump. Shows min/max/avg joybus
+    // xfer wall-clock time and retry/timeout counts, broken out by cmd
+    // type. Use to figure out whether timeouts cluster on RESET (cold
+    // start), STATUS (handshake polls), or WRITE (body burst).
+    else if (strcmp(cmd, "GBALINK!") == 0) {
+        extern void gba_link_mode_get_timing(int idx, uint32_t* min_us,
+                                             uint32_t* max_us, uint32_t* avg_us,
+                                             uint32_t* count, uint32_t* timeouts,
+                                             uint32_t* retries);
+        static const char* names[4] = {"RESET", "STATUS", "READ ", "WRITE"};
+        uint32_t mn, mx, av, ct, to, rt;
+        for (int i = 0; i < 4; i++) {
+            gba_link_mode_get_timing(i, &mn, &mx, &av, &ct, &to, &rt);
+            snprintf(response, sizeof(response),
+                     "%s n=%-6lu avg=%-5luus min=%-5luus max=%-6luus "
+                     "retries=%-5lu to=%-4lu\r\n",
+                     names[i],
+                     (unsigned long)ct, (unsigned long)av,
+                     (unsigned long)mn, (unsigned long)mx,
+                     (unsigned long)rt, (unsigned long)to);
+            cdc_data_write_str(response);
+        }
+    }
+    // GBALINK0 — reset timing + frame counters so a fresh session can
+    // be measured without prior session noise.
+    else if (strcmp(cmd, "GBALINK0") == 0) {
+        extern void gba_link_mode_reset_timing(void);
+        gba_link_mode_reset_timing();
+        cdc_data_write_str("GBALINK telemetry reset\r\n");
+    }
     // JOYPIN? — sample the joybus data pin (open-drain, idle should be
     // high with internal pull-up). Confirms wiring + GBA presence.
     else if (strcmp(cmd, "JOYPIN?") == 0) {

@@ -86,14 +86,39 @@ static void gba_link_cmd_lengths(uint8_t cmd, int* tx_total, int* rx_len) {
     }
 }
 
-// Statistics — exposed via CDC (`GBALINK?`) for sanity / latency
-// debugging. Atomic 32-bit reads on Cortex-M0+ are fine without locks.
+// Statistics — exposed via CDC (`GBALINK?` / `GBALINK!`) for sanity /
+// latency debugging. Atomic 32-bit reads on Cortex-M0+ are fine without
+// locks.
 static volatile uint32_t s_frames_seen   = 0;
 static volatile uint32_t s_short_tx      = 0;
 static volatile uint32_t s_joybus_to     = 0;
 static volatile uint8_t  s_last_cmd      = 0;
 static volatile int8_t   s_last_n        = 0;
 static volatile uint8_t  s_last_rx[5]    = {0};
+
+// Per-command-type latency telemetry. Tracks min/max/sum/count of
+// successful joybus xfer wall-clock time (start of joybus_bridge_xfer
+// to return) plus retry-exhaustion counts, broken out by command byte
+// so we can see whether timeouts cluster around RESET/STATUS (cold-
+// start glitches) or in the WRITE burst (sustained-load glitches).
+//
+// Index: 0=RESET 0xFF, 1=STATUS 0x00, 2=READ 0x14, 3=WRITE 0x15.
+static volatile uint32_t s_t_min[4]   = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+static volatile uint32_t s_t_max[4]   = {0, 0, 0, 0};
+static volatile uint64_t s_t_sum[4]   = {0, 0, 0, 0};
+static volatile uint32_t s_t_count[4] = {0, 0, 0, 0};
+static volatile uint32_t s_t_to[4]    = {0, 0, 0, 0};  // retry-exhausted timeouts
+static volatile uint32_t s_t_retries[4] = {0, 0, 0, 0}; // total retries triggered
+
+static int cmd_to_idx(uint8_t cmd) {
+    switch (cmd) {
+        case 0xFF: return 0;
+        case 0x00: return 1;
+        case 0x14: return 2;
+        case 0x15: return 3;
+        default:   return -1;
+    }
+}
 
 uint32_t gba_link_mode_get_frames(void)    { return s_frames_seen; }
 uint32_t gba_link_mode_get_short_tx(void)  { return s_short_tx; }
@@ -102,6 +127,36 @@ uint8_t  gba_link_mode_get_last_cmd(void)  { return s_last_cmd; }
 int      gba_link_mode_get_last_n(void)    { return (int)s_last_n; }
 void     gba_link_mode_get_last_rx(uint8_t out[5]) {
     for (int i = 0; i < 5; i++) out[i] = s_last_rx[i];
+}
+
+// Per-cmd telemetry accessors for GBALINK! diagnostic.
+void gba_link_mode_get_timing(int idx, uint32_t* min_us, uint32_t* max_us,
+                              uint32_t* avg_us, uint32_t* count,
+                              uint32_t* timeouts, uint32_t* retries) {
+    if (idx < 0 || idx >= 4) {
+        *min_us = *max_us = *avg_us = *count = *timeouts = *retries = 0;
+        return;
+    }
+    *count    = s_t_count[idx];
+    *timeouts = s_t_to[idx];
+    *retries  = s_t_retries[idx];
+    *min_us   = (s_t_count[idx] == 0) ? 0 : s_t_min[idx];
+    *max_us   = s_t_max[idx];
+    *avg_us   = (s_t_count[idx] == 0) ? 0 : (uint32_t)(s_t_sum[idx] / s_t_count[idx]);
+}
+
+void gba_link_mode_reset_timing(void) {
+    for (int i = 0; i < 4; i++) {
+        s_t_min[i] = UINT32_MAX;
+        s_t_max[i] = 0;
+        s_t_sum[i] = 0;
+        s_t_count[i] = 0;
+        s_t_to[i] = 0;
+        s_t_retries[i] = 0;
+    }
+    s_frames_seen = 0;
+    s_short_tx = 0;
+    s_joybus_to = 0;
 }
 
 // Process one command from the vendor bulk-out endpoint. Returns true
@@ -151,6 +206,8 @@ static bool process_one_frame(void) {
     // a black screen (cipher state mismatch from a single late-reply
     // WRITE that we wrongly counted as a timeout).
     uint8_t rx[5] = {0};
+    const int t_idx = cmd_to_idx(cmd_byte);
+    absolute_time_t t_start = get_absolute_time();
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, /*to_us=*/5000);
 
@@ -180,8 +237,27 @@ static bool process_one_frame(void) {
     int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 5 : 2;
     for (int retry = 0; retry < max_retries && n < 0; retry++) {
         busy_wait_us(300);
+        if (t_idx >= 0) s_t_retries[t_idx]++;
         n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, /*to_us=*/5000);
+    }
+
+    // Record timing — total wall-clock from start of first xfer through
+    // whichever attempt finally succeeded (or all retries exhausted).
+    if (t_idx >= 0) {
+        uint64_t dt_us = absolute_time_diff_us(t_start, get_absolute_time());
+        if (dt_us > UINT32_MAX) dt_us = UINT32_MAX;
+        uint32_t dt = (uint32_t)dt_us;
+        if (n >= 0) {
+            // Success: feed into min/max/sum/count.
+            s_t_count[t_idx]++;
+            s_t_sum[t_idx] += dt;
+            if (dt < s_t_min[t_idx]) s_t_min[t_idx] = dt;
+            if (dt > s_t_max[t_idx]) s_t_max[t_idx] = dt;
+        } else {
+            // All retries exhausted.
+            s_t_to[t_idx]++;
+        }
     }
 
     // Brief idle gap between xfers — gives the joybus PIO state
