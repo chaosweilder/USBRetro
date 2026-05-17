@@ -297,10 +297,21 @@ static bool process_one_frame(void) {
     // had ~3% success rate; pyusb's naturally-paced testing was 100%.
     busy_wait_us(150);
     if (n < 0) {
-        // Joybus timeout or GBA disconnected — reply with zero-fill so
-        // Dolphin's read doesn't block forever.
+        // Joybus retry-exhausted timeout.
         s_joybus_to++;
-        memset(rx, 0, rx_len);
+        if (cmd_byte == 0x00 && rx_len >= 3) {
+            // STATUS: avoid zero-fill (Madden reads type=0x0000 as
+            // "GBA disconnected" and aborts the connection). Return a
+            // plausible "GBA present, multiboot-ready" placeholder so
+            // Madden keeps polling instead of giving up. We don't fake
+            // WRITE state — real STATUS replies that arrive in time
+            // still pass through unchanged.
+            rx[0] = 0x00; rx[1] = 0x04;  // type = 0x0400
+            rx[2] = 0x18;                // jstat = PSF0 | RECV
+            for (int i = 3; i < rx_len; i++) rx[i] = 0;
+        } else {
+            memset(rx, 0, rx_len);
+        }
         n = rx_len;
     } else {
         for (int i = n; i < rx_len; i++) rx[i] = 0;
