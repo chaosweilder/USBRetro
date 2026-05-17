@@ -145,9 +145,13 @@ static bool process_one_frame(void) {
     // failures during Madden multiboot. Joybus itself is still
     // ~250 µs/cmd in steady state; the extra budget only kicks in
     // when something is actually slow.
+    // 1 ms joybus timeout — normal reply is ~250 µs, so 1 ms is 4x the
+    // expected window. 5 ms was too long: each retry-exhaustion blocked
+    // the USB pipe for 25-50 ms (5 retries × 5 ms each), making Madden's
+    // connecting phase visibly slow whenever joybus genuinely glitched.
     uint8_t rx[5] = {0};
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/5000);
+                               rx, (uint16_t)rx_len, /*to_us=*/1000);
 
     // Retry on timeout for ALL commands, not just RESET/STATUS. A joybus
     // timeout means the GBA never sent a jstat reply, which in turn means
@@ -163,18 +167,20 @@ static bool process_one_frame(void) {
     // WRITEs internally collapses those retries from "minutes of full
     // multiboot replays" to "a few extra ms of inline retry."
     //
-    // RESET (0xFF) and STATUS (0x00) get extra retries because the very
+    // RESET (0xFF) and STATUS (0x00) get a modest 5-retry budget; very
     // first command after a GBA cold-start fails ~50% of the time even
-    // here; once joybus is "warm" the rate drops dramatically.
-    // STATUS/RESET get aggressive retries (up to ~50 ms total): a
-    // zero-filled STATUS reply signals "GBA disconnected" to Madden,
-    // which then retries the entire multiboot — that's the dominant
-    // source of the long "connecting" stall.
-    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 50 : 2;
+    // here. Once joybus is "warm" the rate drops dramatically.
+    //
+    // Tried 50 retries → made things WORSE: when joybus genuinely
+    // glitches (not just a one-off miss), the long retry chain stalled
+    // the USB pipe for 50+ ms per failure and Madden saw the whole
+    // command stream pause. Better to fail fast and let Madden's own
+    // higher-level retry handle the rare exhausted case.
+    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 5 : 2;
     for (int retry = 0; retry < max_retries && n < 0; retry++) {
         busy_wait_us(300);
         n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/5000);
+                               rx, (uint16_t)rx_len, /*to_us=*/1000);
     }
 
     // Brief idle gap between xfers — gives the joybus PIO state
