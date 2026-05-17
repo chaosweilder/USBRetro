@@ -145,13 +145,14 @@ static bool process_one_frame(void) {
     // failures during Madden multiboot. Joybus itself is still
     // ~250 µs/cmd in steady state; the extra budget only kicks in
     // when something is actually slow.
-    // 1 ms joybus timeout — normal reply is ~250 µs, so 1 ms is 4x the
-    // expected window. 5 ms was too long: each retry-exhaustion blocked
-    // the USB pipe for 25-50 ms (5 retries × 5 ms each), making Madden's
-    // connecting phase visibly slow whenever joybus genuinely glitched.
+    // 5 ms joybus timeout — normal reply is ~250 µs, but under sustained
+    // back-to-back Dolphin load the GBA's link IC sometimes lags well
+    // past 1 ms. Tried 1 ms — multiboot finished but the GBA ended up on
+    // a black screen (cipher state mismatch from a single late-reply
+    // WRITE that we wrongly counted as a timeout).
     uint8_t rx[5] = {0};
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/1000);
+                               rx, (uint16_t)rx_len, /*to_us=*/5000);
 
     // Retry on timeout for ALL commands, not just RESET/STATUS. A joybus
     // timeout means the GBA never sent a jstat reply, which in turn means
@@ -180,7 +181,7 @@ static bool process_one_frame(void) {
     for (int retry = 0; retry < max_retries && n < 0; retry++) {
         busy_wait_us(300);
         n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/1000);
+                               rx, (uint16_t)rx_len, /*to_us=*/5000);
     }
 
     // Brief idle gap between xfers — gives the joybus PIO state
