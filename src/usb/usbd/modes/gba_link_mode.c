@@ -217,16 +217,15 @@ static bool process_one_frame(void) {
     // Joybus timeout, per-command-type:
     //   * WRITE / READ / RESET: 5 ms — generous; telemetry shows max
     //     observed wall-clock <250 µs on a healthy session.
-    //   * STATUS: 30 ms — Madden's "connecting" phase sends STATUS
+    //   * STATUS: 150 ms — Madden's "connecting" phase sends STATUS
     //     polls back-to-back with WRITEs, and the GBA's BIOS will not
     //     ack a STATUS until it's finished processing the previous
-    //     WRITE — sometimes 25+ ms during heavy multiboot bursts.
-    //     Telemetry on a 70 K-frame session showed STATUS max latency
-    //     of 26.7 ms with a 5 ms timeout giving ~30% retry-exhaustion
-    //     rate, which then forces Madden to retry the whole multiboot.
+    //     WRITE. Telemetry showed isolated STATUS replies as slow as
+    //     121 ms, so 30 ms (previous tuning) wasn't enough to catch
+    //     the tail. 150 ms covers observed worst-case with margin.
     uint8_t rx[5] = {0};
     const int t_idx = cmd_to_idx(cmd_byte);
-    const uint32_t xfer_to_us = (cmd_byte == 0x00) ? 30000 : 5000;
+    const uint32_t xfer_to_us = (cmd_byte == 0x00) ? 150000 : 5000;
     absolute_time_t t_start = get_absolute_time();
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, xfer_to_us);
@@ -254,7 +253,13 @@ static bool process_one_frame(void) {
     // the USB pipe for 50+ ms per failure and Madden saw the whole
     // command stream pause. Better to fail fast and let Madden's own
     // higher-level retry handle the rare exhausted case.
-    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 5 : 2;
+    // RESET keeps 5 retries (cold-start glitch). STATUS uses 1 retry —
+    // its 150 ms timeout already covers the observed tail; a second
+    // 150 ms wait per genuine miss is wasted blocked time. WRITE/READ
+    // keep 2.
+    int max_retries = (cmd_byte == 0xFF) ? 5
+                    : (cmd_byte == 0x00) ? 1
+                                         : 2;
     for (int retry = 0; retry < max_retries && n < 0; retry++) {
         busy_wait_us(300);
         if (t_idx >= 0) s_t_retries[t_idx]++;
