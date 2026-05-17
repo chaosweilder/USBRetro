@@ -149,20 +149,28 @@ static bool process_one_frame(void) {
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
                                rx, (uint16_t)rx_len, /*to_us=*/5000);
 
-    // RESET (0xFF) and STATUS (0x00) are idempotent — a timeout on the
-    // first try is almost always a transient PIO/wire glitch (~30-50%
-    // failure rate on the very first command after a cold start). For
-    // these we retry up to 3 more times with 200 µs settle in between.
-    // Without retries the first RESET fails ~50% of the time, which
-    // breaks every Dolphin multiboot attempt before the cipher math
-    // even starts. READ / WRITE are NOT retried — they advance the
-    // Kawasedo cipher state and replaying could desync.
-    if (n < 0 && (cmd_byte == 0xFF || cmd_byte == 0x00)) {
-        for (int retry = 0; retry < 3 && n < 0; retry++) {
-            busy_wait_us(200);
-            n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                                   rx, (uint16_t)rx_len, /*to_us=*/5000);
-        }
+    // Retry on timeout for ALL commands, not just RESET/STATUS. A joybus
+    // timeout means the GBA never sent a jstat reply, which in turn means
+    // the GBA's BIOS / multiboot state never finished processing the
+    // command — so it's safe to re-transmit. Cipher state only advances
+    // when GBA actually acks the byte (returns a valid jstat).
+    //
+    // Why this matters: Madden 2003 multiboot sends ~4000 WRITEs. With
+    // a 0.3% per-cmd timeout rate (observed) and no WRITE retries, the
+    // probability of all 4000 WRITEs succeeding is ~0%; Madden has to
+    // retry the entire multiboot sequence many times before getting
+    // lucky enough to land an attempt with zero timeouts. Retrying
+    // WRITEs internally collapses those retries from "minutes of full
+    // multiboot replays" to "a few extra ms of inline retry."
+    //
+    // RESET (0xFF) and STATUS (0x00) get extra retries because the very
+    // first command after a GBA cold-start fails ~50% of the time even
+    // here; once joybus is "warm" the rate drops dramatically.
+    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 5 : 2;
+    for (int retry = 0; retry < max_retries && n < 0; retry++) {
+        busy_wait_us(300);
+        n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
+                               rx, (uint16_t)rx_len, /*to_us=*/5000);
     }
 
     // Brief idle gap between xfers — gives the joybus PIO state

@@ -42,8 +42,8 @@
 // USB FS bulk max-packet so every cmd/reply is single-packet.
 #define GBA_LINK_EP_SIZE        64
 
-#define GBA_LINK_MANUFACTURER   "Joypad"
-#define GBA_LINK_PRODUCT        "Joypad GBA Link Bridge"
+#define GBA_LINK_MANUFACTURER   "Nintendo"
+#define GBA_LINK_PRODUCT        "Nintendo GBA Link"
 
 // Interface numbers (composite layout: CDC takes 2, Vendor takes 1)
 #define GBA_LINK_ITF_CDC_CTRL   0
