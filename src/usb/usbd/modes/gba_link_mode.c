@@ -200,16 +200,22 @@ static bool process_one_frame(void) {
     // failures during Madden multiboot. Joybus itself is still
     // ~250 µs/cmd in steady state; the extra budget only kicks in
     // when something is actually slow.
-    // 5 ms joybus timeout — normal reply is ~250 µs, but under sustained
-    // back-to-back Dolphin load the GBA's link IC sometimes lags well
-    // past 1 ms. Tried 1 ms — multiboot finished but the GBA ended up on
-    // a black screen (cipher state mismatch from a single late-reply
-    // WRITE that we wrongly counted as a timeout).
+    // Joybus timeout, per-command-type:
+    //   * WRITE / READ / RESET: 5 ms — generous; telemetry shows max
+    //     observed wall-clock <250 µs on a healthy session.
+    //   * STATUS: 30 ms — Madden's "connecting" phase sends STATUS
+    //     polls back-to-back with WRITEs, and the GBA's BIOS will not
+    //     ack a STATUS until it's finished processing the previous
+    //     WRITE — sometimes 25+ ms during heavy multiboot bursts.
+    //     Telemetry on a 70 K-frame session showed STATUS max latency
+    //     of 26.7 ms with a 5 ms timeout giving ~30% retry-exhaustion
+    //     rate, which then forces Madden to retry the whole multiboot.
     uint8_t rx[5] = {0};
     const int t_idx = cmd_to_idx(cmd_byte);
+    const uint32_t xfer_to_us = (cmd_byte == 0x00) ? 30000 : 5000;
     absolute_time_t t_start = get_absolute_time();
     int n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/5000);
+                               rx, (uint16_t)rx_len, xfer_to_us);
 
     // Retry on timeout for ALL commands, not just RESET/STATUS. A joybus
     // timeout means the GBA never sent a jstat reply, which in turn means
@@ -239,7 +245,7 @@ static bool process_one_frame(void) {
         busy_wait_us(300);
         if (t_idx >= 0) s_t_retries[t_idx]++;
         n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
-                               rx, (uint16_t)rx_len, /*to_us=*/5000);
+                               rx, (uint16_t)rx_len, xfer_to_us);
     }
 
     // Record timing — total wall-clock from start of first xfer through
