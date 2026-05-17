@@ -110,6 +110,13 @@ static volatile uint32_t s_t_count[4] = {0, 0, 0, 0};
 static volatile uint32_t s_t_to[4]    = {0, 0, 0, 0};  // retry-exhausted timeouts
 static volatile uint32_t s_t_retries[4] = {0, 0, 0, 0}; // total retries triggered
 
+// Additional integrity tracking: count WRITEs where GBA returned a
+// jstat with any of the JSTAT_VALID_MASK error bits set (0xC5). Madden
+// retries the whole multiboot on any single bad-jstat WRITE, so a
+// non-zero count here explains the "16-attempts-to-connect" loop.
+static volatile uint32_t s_write_bad_jstat = 0;
+static volatile uint8_t  s_write_last_bad_jstat = 0;
+
 static int cmd_to_idx(uint8_t cmd) {
     switch (cmd) {
         case 0xFF: return 0;
@@ -157,6 +164,13 @@ void gba_link_mode_reset_timing(void) {
     s_frames_seen = 0;
     s_short_tx = 0;
     s_joybus_to = 0;
+    s_write_bad_jstat = 0;
+    s_write_last_bad_jstat = 0;
+}
+
+uint32_t gba_link_mode_get_write_bad_jstat(uint8_t* last_jstat) {
+    if (last_jstat) *last_jstat = s_write_last_bad_jstat;
+    return s_write_bad_jstat;
 }
 
 // Process one command from the vendor bulk-out endpoint. Returns true
@@ -264,6 +278,17 @@ static bool process_one_frame(void) {
             // All retries exhausted.
             s_t_to[t_idx]++;
         }
+    }
+
+    // WRITE jstat-validity check. The GBA returns a single jstat byte
+    // after each WRITE; any of the JSTAT_VALID_MASK bits (0xC5) being
+    // set indicates the GBA flagged the byte as invalid (parity error,
+    // overrun, etc). eth-multiboot.js bails on a single bad-jstat
+    // WRITE; Madden likewise restarts the whole multiboot. Count these
+    // so we can see if WRITE corruption is the real bottleneck.
+    if (cmd_byte == 0x15 && n >= 1 && (rx[0] & 0xC5)) {
+        s_write_bad_jstat++;
+        s_write_last_bad_jstat = rx[0];
     }
 
     // Brief idle gap between xfers — gives the joybus PIO state

@@ -206,6 +206,7 @@ static void cdc_process_command(const char* cmd)
                                              uint32_t* max_us, uint32_t* avg_us,
                                              uint32_t* count, uint32_t* timeouts,
                                              uint32_t* retries);
+        extern uint32_t gba_link_mode_get_write_bad_jstat(uint8_t* last);
         static const char* names[4] = {"RESET", "STATUS", "READ ", "WRITE"};
         uint32_t mn, mx, av, ct, to, rt;
         for (int i = 0; i < 4; i++) {
@@ -219,6 +220,13 @@ static void cdc_process_command(const char* cmd)
                      (unsigned long)rt, (unsigned long)to);
             cdc_data_write_str(response);
         }
+        uint8_t last_bad = 0;
+        uint32_t bad = gba_link_mode_get_write_bad_jstat(&last_bad);
+        snprintf(response, sizeof(response),
+                 "WRITE bad_jstat count=%lu last=0x%02x "
+                 "(any of 0xC5 bits set = GBA flagged WRITE invalid)\r\n",
+                 (unsigned long)bad, last_bad);
+        cdc_data_write_str(response);
     }
     // GBALINK0 — reset timing + frame counters so a fresh session can
     // be measured without prior session noise.
