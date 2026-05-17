@@ -166,7 +166,11 @@ static bool process_one_frame(void) {
     // RESET (0xFF) and STATUS (0x00) get extra retries because the very
     // first command after a GBA cold-start fails ~50% of the time even
     // here; once joybus is "warm" the rate drops dramatically.
-    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 5 : 2;
+    // STATUS/RESET get aggressive retries (up to ~50 ms total): a
+    // zero-filled STATUS reply signals "GBA disconnected" to Madden,
+    // which then retries the entire multiboot — that's the dominant
+    // source of the long "connecting" stall.
+    int max_retries = (cmd_byte == 0xFF || cmd_byte == 0x00) ? 50 : 2;
     for (int retry = 0; retry < max_retries && n < 0; retry++) {
         busy_wait_us(300);
         n = joybus_bridge_xfer(tx, (uint16_t)tx_total,
