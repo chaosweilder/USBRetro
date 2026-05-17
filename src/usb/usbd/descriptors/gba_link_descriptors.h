@@ -43,7 +43,7 @@
 #define GBA_LINK_EP_SIZE        64
 
 #define GBA_LINK_MANUFACTURER   "Nintendo"
-#define GBA_LINK_PRODUCT        "Nintendo GBA Link"
+#define GBA_LINK_PRODUCT        "GameCube GBA Link Cable"
 
 // Interface numbers (composite layout: CDC takes 2, Vendor takes 1)
 #define GBA_LINK_ITF_CDC_CTRL   0
