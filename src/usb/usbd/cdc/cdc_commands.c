@@ -342,6 +342,14 @@ static void cmd_mode_list(const char* json)
         // Skip DInput (HID) mode - replaced by SInput
         if (i == USB_OUTPUT_MODE_HID) continue;
 
+#ifndef CONFIG_JOYBUS_BRIDGE
+        // GBA Link Cable (USB vendor bridge to a forked Dolphin) is an
+        // experimental build-time opt-in — hide from the mode list on
+        // default builds so users don't pick a mode that has no working
+        // host on their machine. See docs/GBA_LINK_CABLE.md.
+        if (i == USB_OUTPUT_MODE_GBA_LINK) continue;
+#endif
+
 #ifdef CONFIG_NGC
         // GameCube config mode: only expose CDC mode
         if (i != USB_OUTPUT_MODE_CDC) continue;

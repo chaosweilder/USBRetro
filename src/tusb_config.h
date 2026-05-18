@@ -183,17 +183,21 @@
 
   #define CFG_TUD_MSC               0   // No mass storage
   #define CFG_TUD_MIDI              0   // No MIDI
-  // Vendor class enabled to support USB_OUTPUT_MODE_GBA_LINK (the
-  // direct-to-Dolphin GBA-link bridge). Other modes ignore it.
-  #define CFG_TUD_VENDOR            1
-  // Bigger RX/TX FIFOs so we don't stall on Dolphin's multiboot bursts
-  // (~13K WRITEs streamed at near-real-time pace) — joybus xfer is
-  // synchronous and 1-5 ms each, so Dolphin's bulk-out can queue up
-  // multiple frames before our task can drain. 1 KB = 16 commands worth
-  // at full WRITE size, plenty of headroom.
-  #define CFG_TUD_VENDOR_RX_BUFSIZE 1024
-  #define CFG_TUD_VENDOR_TX_BUFSIZE 1024
-  #define CFG_TUD_VENDOR_EPSIZE     64
+  // Vendor class is opt-in: only built into the device descriptor when
+  // CONFIG_JOYBUS_BRIDGE is defined (the experimental USB-vendor
+  // GBA-link transport to a forked Dolphin — see docs/GBA_LINK_CABLE.md
+  // for status). Default builds don't pay the descriptor + endpoint
+  // overhead.
+  #ifdef CONFIG_JOYBUS_BRIDGE
+    #define CFG_TUD_VENDOR            1
+    // Larger FIFOs so we don't stall on Dolphin's multiboot bursts
+    // (~13K WRITEs streamed at near-real-time pace).
+    #define CFG_TUD_VENDOR_RX_BUFSIZE 1024
+    #define CFG_TUD_VENDOR_TX_BUFSIZE 1024
+    #define CFG_TUD_VENDOR_EPSIZE     64
+  #else
+    #define CFG_TUD_VENDOR            0
+  #endif
 
   // HID buffer sizes
   #define CFG_TUD_HID_EP_BUFSIZE    64

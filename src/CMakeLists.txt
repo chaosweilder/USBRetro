@@ -19,6 +19,24 @@ if(DEFINED ENV{JOYPAD_DEBUG})
     add_compile_definitions(CFG_TUSB_DEBUG=$ENV{JOYPAD_DEBUG})
 endif()
 
+# Experimental GBA-link USB bridge mode (forward raw joybus to a forked
+# Dolphin via a USB vendor endpoint). OFF by default — see
+# docs/GBA_LINK_CABLE.md for the status of this experiment. Builders who
+# want to try it (with a matching Dolphin fork) can enable with:
+#   cmake -DJOYPAD_ENABLE_GBA_LINK_BRIDGE=ON ..
+# When ON, gc2usb / gc2eth targets pick up CONFIG_JOYBUS_BRIDGE, the
+# vendor class gets added to the USB descriptor, and USB_OUTPUT_MODE_
+# GBA_LINK (mode 14) becomes selectable in the CDC mode menu.
+option(JOYPAD_ENABLE_GBA_LINK_BRIDGE
+       "Build experimental GBA Link Cable USB bridge mode (see docs/GBA_LINK_CABLE.md)"
+       OFF)
+if(JOYPAD_ENABLE_GBA_LINK_BRIDGE)
+    set(JOYPAD_GBA_LINK_BRIDGE_DEFS CONFIG_JOYBUS_BRIDGE=1)
+    message(STATUS "joypad: GBA Link Cable USB bridge mode ENABLED (experimental)")
+else()
+    set(JOYPAD_GBA_LINK_BRIDGE_DEFS "")
+endif()
+
 # ============================================================================
 # VERSION AND BUILD INFO
 # ============================================================================
@@ -2004,10 +2022,12 @@ pico_generate_pio_header(joypad_nuon2usb ${CMAKE_CURRENT_LIST_DIR}/apps/nuon2usb
 
 # --- GC2USB (GameCube -> USB HID) ---
 add_executable(joypad_gc2usb)
-target_compile_definitions(joypad_gc2usb PRIVATE CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1 GC_PIN_DATA=29
+target_compile_definitions(joypad_gc2usb PRIVATE
+    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1 GC_PIN_DATA=29
     PICO_DEFAULT_UART=0
     PICO_DEFAULT_UART_TX_PIN=12
     PICO_DEFAULT_UART_RX_PIN=13
+    ${JOYPAD_GBA_LINK_BRIDGE_DEFS}
 )
 target_sources(joypad_gc2usb PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
     ${GC_HOST_SOURCES}
@@ -2032,10 +2052,11 @@ pico_generate_pio_header(joypad_gc2usb ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/
 # customers since v2.0.0.
 add_executable(joypad_gc2usb_rp2040zero)
 target_compile_definitions(joypad_gc2usb_rp2040zero PRIVATE
-    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
+    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
     GC_PIN_DATA=29
     WS2812_PIN=16
     USE_BOOTSEL_BUTTON=1
+    ${JOYPAD_GBA_LINK_BRIDGE_DEFS}
 )
 target_sources(joypad_gc2usb_rp2040zero PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
     ${GC_HOST_SOURCES}
@@ -2056,10 +2077,11 @@ pico_generate_pio_header(joypad_gc2usb_rp2040zero ${CMAKE_CURRENT_LIST_DIR}/lib/
 # for the joybus data line.
 add_executable(joypad_gc2usb_pico)
 target_compile_definitions(joypad_gc2usb_pico PRIVATE
-    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
+    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
     GC_PIN_DATA=28
     BOARD_LED_PIN=25
     USE_BOOTSEL_BUTTON=1
+    ${JOYPAD_GBA_LINK_BRIDGE_DEFS}
     BOARD_NAME="pico"
 )
 target_sources(joypad_gc2usb_pico PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
@@ -2151,10 +2173,11 @@ pico_enable_stdio_usb(joypad_gc2eth_feather 1)   # CDC over USB-C for debug + re
 # a HID device on the Mac.
 add_executable(joypad_gc2usb_feather_usbhost)
 target_compile_definitions(joypad_gc2usb_feather_usbhost PRIVATE
-    CONFIG_GC2USB=1 CONFIG_USB=1 CONFIG_JOYBUS_BRIDGE=1 DISABLE_USB_HOST=1
+    CONFIG_GC2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
     CONFIG_NO_NEOPIXEL=1
     USE_BOOTSEL_BUTTON=1
     GC_PIN_DATA=4
+    ${JOYPAD_GBA_LINK_BRIDGE_DEFS}
 )
 target_sources(joypad_gc2usb_feather_usbhost PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
     ${GC_HOST_SOURCES}
