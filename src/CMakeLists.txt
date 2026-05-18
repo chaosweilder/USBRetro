@@ -2027,6 +2027,7 @@ target_compile_definitions(joypad_gc2usb PRIVATE
     PICO_DEFAULT_UART=0
     PICO_DEFAULT_UART_TX_PIN=12
     PICO_DEFAULT_UART_RX_PIN=13
+    USE_BOOTSEL_BUTTON=1   # KB2040 has no GP-wired user button; read BOOTSEL
     ${JOYPAD_GBA_LINK_BRIDGE_DEFS}
 )
 target_sources(joypad_gc2usb PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
