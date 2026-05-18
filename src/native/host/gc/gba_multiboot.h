@@ -37,6 +37,13 @@ bool gba_mb_detect(joybus_port_t* port);
 // running payload by trying to upload over the top of it.
 bool gba_mb_in_multiboot_wait(joybus_port_t* port);
 
+// Returns true if a multiboot payload is already running and ready to
+// be polled via JOY-bus reads (STATUS shows GBA type AND PSF0 is
+// cleared AND a READ comes back with valid jstat). Used after firmware
+// restart to skip re-uploading the embedded payload when the GBA was
+// never power-cycled — saves ~3 s of multiboot time on every reboot.
+bool gba_mb_payload_already_running(joybus_port_t* port);
+
 // Upload a .gba ROM and trigger GBA boot.
 //   rom/len  : .gba file contents (1..256KB-1, padded internally to mult. of 8)
 //   palette  : boot-logo color, 0..6

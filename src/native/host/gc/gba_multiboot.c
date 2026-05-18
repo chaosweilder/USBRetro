@@ -236,6 +236,40 @@ bool gba_mb_in_multiboot_wait(joybus_port_t* port)
     return (r[2] & JSTAT_PSF0) != 0;
 }
 
+bool gba_mb_payload_already_running(joybus_port_t* port)
+{
+    // The cable's level-shifter MCU caches state across firmware
+    // restarts and the FIRST joybus xfer after our PIO init often
+    // returns stale data (same cause as the autoboot's "first PROBE
+    // usually fails" note). Retry a few times before declaring
+    // "no payload running" so we don't spuriously fire the heavy
+    // multiboot upload after a firmware-only reboot.
+    //
+    // Polarity check: GBA type + PSF0 cleared means it's PAST the
+    // BIOS multiboot stage. A successful JOY-bus READ confirms it
+    // responds in JOY mode — narrows "any post-multiboot ROM" to
+    // "a ROM talking joybus" (our payload, or something compatible).
+    for (int attempt = 0; attempt < 4; attempt++) {
+        uint8_t cmd = 0x00;
+        uint8_t r[3];
+        if (jb_xfer(port, &cmd, 1, r, 3) >= 0) {
+            uint16_t id = (uint16_t)r[0] | ((uint16_t)r[1] << 8);
+            if (id == GBA_TYPE_ID && !(r[2] & JSTAT_PSF0)) {
+                // Confirm via READ — needs its own small retry loop
+                // because READ also tends to glitch immediately after
+                // a fresh PIO setup.
+                for (int rd = 0; rd < 3; rd++) {
+                    uint8_t buf[4];
+                    if (gba_input_read(port, buf) >= 0) return true;
+                    sleep_ms(2);
+                }
+            }
+        }
+        sleep_ms(5);
+    }
+    return false;
+}
+
 gba_mb_result_t gba_mb_upload(joybus_port_t* port,
                               const uint8_t* rom, uint32_t len,
                               int palette, int speed, int channel)

@@ -342,6 +342,21 @@ void gc_host_task(void)
             uint32_t now_ms = to_ms_since_boot(get_absolute_time());
             if (now_ms >= gba_probe_next_ms[port]) {
                 gba_probe_next_ms[port] = now_ms + 2000;
+
+                // Firmware-restart shortcut: if a payload is already
+                // running on the GBA (e.g. we just rebooted the kb2040
+                // but the GBA stayed powered), skip the ~3 s multiboot
+                // upload and resume polling immediately. This is what
+                // distinguishes "GBA in BIOS multiboot wait, PSF0 set"
+                // from "GBA running a payload in JOY mode, PSF0 clear,
+                // READ responds with valid jstat".
+                if (gba_mb_payload_already_running(&controller->_port)) {
+                    printf("[gc_host] Port %d: GBA payload already running "
+                           "→ skipping multiboot, resuming poll\n", port);
+                    gba_boot_attempted[port] = true;
+                    continue;
+                }
+
                 printf("[gc_host] Port %d: attempting GBA multiboot "
                        "(payload %lu bytes)\n",
                        port, (unsigned long)gba_payload_len);
