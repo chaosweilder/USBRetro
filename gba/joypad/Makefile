@@ -24,14 +24,14 @@ export LD := $(CC)
 
 TARGET   := joypad
 BUILD    := build
-SOURCES  := source
+SOURCES  := source source/splash_images
 INCLUDES :=
 
 ARCH     := -mthumb-interwork -mthumb
 CFLAGS   := -g -Wall -O3 \
             -mcpu=arm7tdmi -mtune=arm7tdmi \
             -fomit-frame-pointer -ffast-math \
-            $(ARCH) $(INCLUDE)
+            $(ARCH) $(INCLUDE) $(CFLAGS_SPLASH)
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS  := $(ARCH)
 LDFLAGS  := -g $(ARCH) -Wl,-Map,$(TARGET).map
@@ -47,6 +47,15 @@ export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+
+# Auto-discover splash image .c files and define HAVE_SPLASH_<MODE>=1
+# for each so splash_image.c only references images that are actually
+# linked in. Format: source/splash_images/img_<name>.c → HAVE_SPLASH_<NAME>.
+# Lives inside the outer (ifneq) branch so the wildcard runs in the dir
+# where source/splash_images actually exists; exported for the submake.
+SPLASH_IMG_FILES := $(notdir $(wildcard source/splash_images/img_*.c))
+export CFLAGS_SPLASH := $(foreach f,$(SPLASH_IMG_FILES), \
+                          -DHAVE_SPLASH_$(shell echo $(f:.c=) | sed 's/^img_//' | tr a-z A-Z))
 
 export OFILES   := $(addsuffix .o,$(BINFILES)) $(CFILES:.c=.o) $(SFILES:.s=.o)
 export INCLUDE  := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \

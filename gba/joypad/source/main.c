@@ -22,6 +22,9 @@
 
 #include "display.h"
 #include "eyes_anim.h"
+#include "mode_marker.h"
+#include "splash.h"
+#include "splash_image.h"
 #include "platform/platform.h"
 
 // RGB5 packing — same as libgba's macro but local so display.c stays
@@ -268,6 +271,77 @@ int main(void) {
     // sees fresh KEYINPUT bits at 60 Hz even when a long render extends
     // the main loop iteration past one VBlank.
     irqSet(IRQ_VBLANK, on_vblank);
+
+    // ────────────────────────────────────────────────────────────────
+    // Boot splash — show a mode badge for ~SPLASH_FRAMES frames so the
+    // user sees which USB output mode the host is currently in. Two
+    // paths:
+    //
+    //   1) Image splash (splash_image.c) — if a PNG asset exists for
+    //      the current mode (see gba/joypad/assets/, png_to_splash.py),
+    //      switch the GBA to Mode-3 direct-color and blit the bitmap.
+    //      Crisp pixel-art logos.
+    //
+    //   2) Vector splash (splash.c) — fallback for modes without an
+    //      image asset. Stays in Mode-4 and draws shape primitives.
+    //
+    // After SPLASH_FRAMES VBlanks we restore Mode-4 (if we left it)
+    // and yield to the eye animation main loop.
+    // ────────────────────────────────────────────────────────────────
+    {
+        joypad_mode_id_t splash_mode =
+            (joypad_mode_id_t)g_joypad_mode_marker.mode;
+
+        const splash_image_t* img = splash_image_for(splash_mode);
+        bool used_image_mode = false;
+
+        if (img) {
+            // Image splash — swap to Mode-3 and blit. display.c's
+            // Mode-4 shadow buffer is untouched; we'll restore Mode-4
+            // after the hold.
+            splash_image_render(img);
+            used_image_mode = true;
+        } else {
+            // Vector splash — stays in Mode-4 the eyes already use.
+            uint16_t splash_fg = 0, splash_pupil = 0;
+            splash_palette(splash_mode, &splash_fg, &splash_pupil);
+            display_set_pupil_color(splash_pupil);
+            display_set_fg_color(splash_fg);
+            display_clear();
+            splash_render(splash_mode);
+            display_present();
+        }
+
+        // Hold for SPLASH_FRAMES VBlanks, refreshing JOYTR each frame
+        // so the host doesn't think we've gone silent.
+        uint32_t hold_until = vblank_count + SPLASH_FRAMES;
+        while (vblank_count < hold_until) {
+            ResetHalt();
+            REG_JOYTR = REG_KEYINPUT;
+        }
+
+        if (used_image_mode) {
+            // Restore display state for the eyes. The image splash
+            // either ran in Mode-3 (palette untouched) or Mode-4 with
+            // its own palette. Either way display_init() resets
+            // DISPCNT to Mode-4 + the eyes-color palette indexes
+            // (0=BG, 2=FG, 3=PUPIL). Eyes loop will redo set_fg/pupil
+            // for the current state on its first frame.
+            display_init();
+            display_clear();
+            display_present();
+            display_flip_page();
+            display_clear();
+            display_present();
+        } else {
+            // Vector splash drew into shadow + back page only. Flip
+            // the front page too so the first eye frame doesn't tear.
+            display_flip_page();
+            display_clear();
+            splash_render(splash_mode);
+            display_present();
+        }
+    }
 
     // Input loop — Doridian's structure verbatim. ResetHalt halts CPU
     // until VBlank, our handler renders the eyes (added on top of the

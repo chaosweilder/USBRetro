@@ -244,6 +244,28 @@ gba_mb_result_t gba_mb_upload(joybus_port_t* port,
     if (!rom || len == 0 || len >= 0x40000) return GBA_MB_ERR_PARAMS;
     if (rom[0xac] == 0)                     return GBA_MB_ERR_PARAMS;
 
+    // Scan the rom for the GBA-side mode marker "JPMD\xff\0\0\0". If
+    // found, we'll substitute the current USB output mode into the
+    // mode byte (offset +4) during body streaming so the splash on the
+    // GBA can render the matching badge. Not found = older payload
+    // without splash support; skip silently.
+    int32_t marker_off = -1;
+    {
+        for (uint32_t k = 0; k + 8 <= len; k++) {
+            if (rom[k] == 'J' && rom[k + 1] == 'P' &&
+                rom[k + 2] == 'M' && rom[k + 3] == 'D') {
+                marker_off = (int32_t)k;
+                break;
+            }
+        }
+    }
+    const uint8_t mode_byte = (marker_off >= 0)
+                              ? (uint8_t)usbd_get_mode() : 0xFF;
+    if (marker_off >= 0) {
+        printf("[gba_mb] mode marker at offset 0x%x → patching mode=%d\n",
+               (unsigned)marker_off, (int)mode_byte);
+    }
+
     uint16_t type;
     uint8_t  js;
 
@@ -365,6 +387,19 @@ gba_mb_result_t gba_mb_upload(joybus_port_t* port,
                                | ((uint32_t)rom[i + 3] << 24);
             // Channel ID at offset 0xC4
             if (i == 0xC4) plaintext = ((uint32_t)(channel & 0xff)) << 8;
+
+            // Mode-marker substitution. The marker byte is at
+            // (marker_off + 4); replace its position in the plaintext
+            // word before CRC + encryption so both host CRC and GBA
+            // RAM see the patched value.
+            if (marker_off >= 0) {
+                uint32_t mb_pos = (uint32_t)marker_off + 4;
+                if (mb_pos >= i && mb_pos < i + 4) {
+                    uint32_t shift = (mb_pos - i) * 8;
+                    plaintext = (plaintext & ~(0xFFu << shift))
+                              | ((uint32_t)mode_byte << shift);
+                }
+            }
 
             fcrc = gba_crc_step(fcrc, plaintext);
             session_key = (session_key * MAGIC_KAWA) + 1;
