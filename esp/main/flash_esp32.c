@@ -255,3 +255,16 @@ void flash_factory_reset(void)
     runtime_settings_loaded = true;
     printf("[flash_esp32] Factory reset complete\n");
 }
+
+// D-pad mode persistence — referenced by core/router and CDC commands
+// that are compiled into the ESP build too. NVS-backed so the choice
+// survives a reboot, mirroring the RP2040 flash_set_dpad_mode contract.
+void flash_set_dpad_mode(uint8_t mode)
+{
+    if (mode > 2) return;
+    if (!runtime_settings_loaded) return;
+    if (runtime_settings.dpad_mode == mode && runtime_settings.router_saved) return;
+    runtime_settings.dpad_mode  = mode;
+    runtime_settings.router_saved = 1;
+    flash_save(&runtime_settings);
+}

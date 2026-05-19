@@ -260,3 +260,15 @@ void flash_cycle_profile_prev(void)
     uint8_t prev = (current == 0) ? (total - 1) : (current - 1);
     flash_set_active_profile_index(prev);
 }
+
+// D-pad mode persistence — referenced by core/router and CDC commands
+// compiled into the nRF build too.
+void flash_set_dpad_mode(uint8_t mode)
+{
+    if (mode > 2) return;
+    if (!runtime_settings_loaded) return;
+    if (runtime_settings.dpad_mode == mode && runtime_settings.router_saved) return;
+    runtime_settings.dpad_mode  = mode;
+    runtime_settings.router_saved = 1;
+    flash_save(&runtime_settings);
+}

@@ -7,9 +7,11 @@
 #include "cdc_commands.h"
 #include "../usbd.h"
 #include "core/services/storage/flash.h"
+#include "platform/platform.h"
 #include "tusb.h"
-#include "pico/bootrom.h"
-#include "hardware/gpio.h"  // gpio_get for JOYPIN? diagnostic
+#ifdef CONFIG_GC2USB
+#include "hardware/gpio.h"  // gpio_get for JOYPIN? diagnostic (RP2040 only)
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -294,12 +296,12 @@ static void cdc_process_command(const char* cmd)
                            "will fire on next gc_host_task tick\r\n");
     }
 #endif
-    // BOOTSEL — drop into UF2 bootloader. Works from any app since
-    // reset_usb_boot is part of the bootrom.
+    // BOOTSEL — drop into UF2 bootloader via the platform HAL so this
+    // works on both RP2040 (reset_usb_boot) and ESP32-S3 (TinyUF2).
     else if (strcmp(cmd, "BOOTSEL") == 0) {
         cdc_data_write_str("Rebooting to bootloader...\r\n");
         cdc_data_flush();
-        reset_usb_boot(0, 0);
+        platform_reboot_bootloader();
     }
 #ifdef CONFIG_GC2ETH
     // IP? — read CH9120's assigned IP. Drops the chip back into config
