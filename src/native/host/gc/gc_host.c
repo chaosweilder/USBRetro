@@ -8,6 +8,7 @@
 #include "gamecube_definitions.h"
 #include "joybus.h"
 #include "gba_multiboot.h"
+#include "usb/usbd/usbd.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
 #include "core/buttons.h"
@@ -28,6 +29,12 @@ static bool rumble_state[GC_MAX_PORTS] = {false};
 static uint8_t disconnect_debounce[GC_MAX_PORTS] = {0};  // Debounce brief disconnects
 static bool was_connected[GC_MAX_PORTS] = {false};  // Track connection state
 static bool gba_boot_attempted[GC_MAX_PORTS] = {false};  // One multiboot attempt per disconnect cycle
+// Consecutive gba_input_read failures since the last successful read.
+// Used to detect a GBA power-cycle or unplug after multiboot succeeded:
+// once this exceeds GBA_READ_FAIL_RESET_THRESHOLD we clear
+// gba_boot_attempted and let the probe re-run from scratch.
+#define GBA_READ_FAIL_RESET_THRESHOLD 50
+static uint16_t gba_read_fail_streak[GC_MAX_PORTS] = {0};
 static bool gba_bridge_owned[GC_MAX_PORTS] = {false};    // True when gba_bridge.c owns the joybus port
 static uint32_t gba_probe_next_ms[GC_MAX_PORTS] = {0};  // Rate-limit GBA probes (500ms)
 
@@ -265,8 +272,27 @@ void gc_host_task(void)
             }
             uint8_t gba_keys[4];
             if (gba_input_read(&controller->_port, gba_keys) < 0) {
+                // GBA may have been power-cycled (back into BIOS) or
+                // physically disconnected. Tolerate brief transients,
+                // but after a streak of failures clear boot_attempted
+                // so the next probe cycle re-runs detection and re-
+                // multiboots if needed.
+                if (++gba_read_fail_streak[port] >= GBA_READ_FAIL_RESET_THRESHOLD) {
+                    printf("[gc_host] Port %d: GBA gone silent for %d reads "
+                           "→ resetting boot_attempted, will re-probe in 2s\n",
+                           port, gba_read_fail_streak[port]);
+                    gba_boot_attempted[port]  = false;
+                    gba_read_fail_streak[port] = 0;
+                    // Give the GBA's BIOS time to finish its power-on
+                    // init before bombing the bus again. If it's mid-
+                    // boot when we probe, our STATUS commands fight
+                    // with the BIOS's own SIO init and the GBA never
+                    // reaches multiboot-wait state.
+                    gba_probe_next_ms[port] = to_ms_since_boot(get_absolute_time()) + 2000;
+                }
                 continue;  // transient bus failure
             }
+            gba_read_fail_streak[port] = 0;
             // Stale-read filter: cable's level-shifter MCU returns 0 when
             // JSTAT.SEND is clear (= GBA hasn't refilled JOY_TRANS since
             // our last read). Real GBA writes lower 16 bits of JOYTR with
@@ -354,9 +380,17 @@ void gc_host_task(void)
                     printf("[gc_host] Port %d: GBA payload already running "
                            "→ skipping multiboot, resuming poll\n", port);
                     gba_boot_attempted[port] = true;
+                    // Tell the running payload to flash its splash for the
+                    // current USB output mode — without this the user sees
+                    // no visual indication after a firmware reboot.
+                    uint8_t mode_id = (uint8_t)usbd_get_mode();
+                    gba_send_splash_cmd(&controller->_port, mode_id);
                     continue;
                 }
 
+                extern void gba_mb_detect_log_printf(const char* fmt, ...);
+                gba_mb_detect_log_printf("→ calling multiboot (len=%lu)\n",
+                                         (unsigned long)gba_payload_len);
                 printf("[gc_host] Port %d: attempting GBA multiboot "
                        "(payload %lu bytes)\n",
                        port, (unsigned long)gba_payload_len);
@@ -364,6 +398,7 @@ void gc_host_task(void)
                                                   gba_payload, gba_payload_len,
                                                   /*palette*/3, /*speed*/0,
                                                   /*channel*/port);
+                gba_mb_detect_log_printf("→ multiboot returned %d\n", (int)r);
                 if (r == GBA_MB_OK) {
                     printf("[gc_host] Port %d: GBA boot OK, payload running\n", port);
                     gba_boot_attempted[port] = true;
@@ -556,6 +591,25 @@ joybus_port_t* gc_host_get_gba_port(void)
 {
     if (!initialized) return NULL;
     return &gc_controllers[0]._port;
+}
+
+bool gc_host_gba_boot_attempted(uint8_t port)
+{
+    if (port >= GC_MAX_PORTS) return false;
+    return gba_boot_attempted[port];
+}
+
+uint16_t gc_host_gba_read_fail_streak(uint8_t port)
+{
+    if (port >= GC_MAX_PORTS) return 0;
+    return gba_read_fail_streak[port];
+}
+
+void gc_host_gba_reset_boot_attempted(uint8_t port)
+{
+    if (port >= GC_MAX_PORTS) return;
+    gba_boot_attempted[port] = false;
+    gba_probe_next_ms[port]  = 0;  // probe immediately on next task
 }
 
 bool gc_host_gba_acquire_for_bridge(void)

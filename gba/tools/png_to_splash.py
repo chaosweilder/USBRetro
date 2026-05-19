@@ -118,22 +118,29 @@ def main():
     bg_color = parse_color(args.bg) if args.bg else sample_bg_color(img)
 
     # 8bpp indexed quantize → 256-color palette (median-cut).
-    # Reserve index 0 for the bg color so the renderer's bg fill works.
-    rgb = img.convert("RGB").quantize(colors=255, method=Image.MEDIANCUT)
+    # Palette layout:
+    #   index 0    : bg color (so renderer's framebuffer fill works)
+    #   index 1..254: quantized image colors (median-cut)
+    #   index 255  : pure white — reserved for the mode-name text overlay
+    #                that splash_image_render draws on top of the fallback
+    #                generic image. Keeping it out of the quantizer's
+    #                range means any image can be overlaid with white
+    #                text without worrying about palette collisions.
+    rgb = img.convert("RGB").quantize(colors=254, method=Image.MEDIANCUT)
     raw_pal = rgb.getpalette() or []
     # PIL pads with zeros to 768 bytes (256*3) for some Pillow versions but
-    # not all. Make sure we have at least 255 entries' worth.
-    raw_pal = list(raw_pal) + [0] * (255 * 3 - len(raw_pal))
-    # Build the GBA palette: index 0 = bg, indexes 1..255 = quantized colors.
+    # not all. Make sure we have at least 254 entries' worth.
+    raw_pal = list(raw_pal) + [0] * (254 * 3 - len(raw_pal))
     palette_bgr555 = [bg_color] + [
         to_bgr555((raw_pal[i * 3], raw_pal[i * 3 + 1],
                    raw_pal[i * 3 + 2], 255))
-        for i in range(255)
-    ]
-    # Quantized image pixel values are 0..254 (range of `colors=255`).
-    # Shift them up by 1 to leave index 0 reserved for bg.
+        for i in range(254)
+    ] + [0x7FFF]  # index 255 = white text
+    # Quantized image pixel values are 0..253 (range of `colors=254`).
+    # Shift them up by 1 so they sit at 1..254, leaving 0 for bg and 255
+    # for the text overlay.
     indexed = rgb.tobytes()
-    pixels8 = bytes((b + 1) if b < 255 else 255 for b in indexed)
+    pixels8 = bytes((b + 1) if b < 254 else 254 for b in indexed)
 
     name = args.name
     os.makedirs(os.path.dirname(args.out), exist_ok=True)

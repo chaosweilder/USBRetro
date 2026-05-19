@@ -32,13 +32,31 @@ typedef struct {
 } splash_image_t;
 
 // Returns the image for `mode`, or NULL if no image is configured.
-// NULL = caller falls back to splash.c's vector splash for that mode.
+// NULL = caller should use splash_image_fallback() to get a generic
+// image and overlay the mode-name text on it.
 const splash_image_t* splash_image_for(joypad_mode_id_t mode);
+
+// Returns a generic Joypad-branded image used as the fallback for any
+// mode without a dedicated splash. NULL if no fallback is linked into
+// this build (legacy path — caller would then use splash.c vector).
+const splash_image_t* splash_image_fallback(void);
 
 // Switch the GBA to Mode-3 and blit `img` centered with bg_color fill.
 // VRAM at 0x06000000 is written directly. Caller is responsible for
 // returning to Mode-4 (set DISPCNT to 0x0004 | 0x0400) before resuming
 // the eye animation.
 void splash_image_render(const splash_image_t* img);
+
+// Overlay a NUL-terminated string onto the currently-rendered Mode-4
+// 8bpp framebuffer using palette index 255 (reserved white text — see
+// png_to_splash.py). Centered horizontally on cx; top of glyphs at y.
+// Supports ' ', '0'-'9', 'A'-'Z', '+', '-', '/'. Other chars render as
+// blank space.
+void splash_image_overlay_text(int cx, int y, const char* text);
+
+// Returns the human-readable mode name for the overlay (e.g. "SINPUT",
+// "KEYBOARD MOUSE", "MODE 7" for unknown). Always returns a non-NULL
+// pointer suitable for splash_image_overlay_text().
+const char* splash_image_mode_name(joypad_mode_id_t mode);
 
 #endif

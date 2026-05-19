@@ -248,6 +248,52 @@ static void cdc_process_command(const char* cmd)
         cdc_data_write_str(response);
     }
 #endif
+    // GBADETECT — run the "is the GBA payload already running?" probe
+    // on demand and dump the result. Useful for debugging the
+    // firmware-restart-without-multiboot path.
+#ifdef CONFIG_GC2USB
+    else if (strcmp(cmd, "GBADETECT") == 0) {
+        // Dump the most recent gc_host_task autoboot probe log + current
+        // state. The CDC handler runs interleaved with gc_host_task on
+        // the same core, so a CDC-initiated probe races joybus PIO with
+        // the host loop's own xfers — every read times out. Reading the
+        // log gc_host_task wrote (when it had the bus to itself) is the
+        // only honest way to see what the detect actually saw.
+        extern const char* gba_mb_detect_log_get(void);
+        extern bool gc_host_gba_boot_attempted(uint8_t port);
+        extern uint16_t gc_host_gba_read_fail_streak(uint8_t port);
+#ifndef GC_PIN_DATA
+#define GC_PIN_DATA 4
+#endif
+        int pin_level = gpio_get(GC_PIN_DATA);
+        const char* log = gba_mb_detect_log_get();
+        snprintf(response, sizeof(response),
+                 "GBADETECT: boot_attempted[0]=%d  read_fail_streak=%u  "
+                 "data_pin(gpio%d)=%d (1=idle, 0=held-low)\r\n",
+                 gc_host_gba_boot_attempted(0) ? 1 : 0,
+                 (unsigned)gc_host_gba_read_fail_streak(0),
+                 GC_PIN_DATA, pin_level);
+        cdc_data_write_str(response);
+        if (log && log[0]) {
+            cdc_data_write_str("--- last gc_host_task probe ---\r\n");
+            cdc_data_write_str(log);
+            cdc_data_write_str("--- end ---\r\n");
+        } else {
+            cdc_data_write_str("(no probe log: gc_host_task hasn't run "
+                               "gba_mb_payload_already_running yet)\r\n");
+        }
+    }
+    // GBARESET — force gc_host_task to redo its GBA autoboot decision on
+    // the next iteration. Clears gba_boot_attempted[0] and zeroes the
+    // probe throttle so the probe fires immediately. Use this to capture
+    // a fresh probe trace via GBADETECT without rebooting the firmware.
+    else if (strcmp(cmd, "GBARESET") == 0) {
+        extern void gc_host_gba_reset_boot_attempted(uint8_t port);
+        gc_host_gba_reset_boot_attempted(0);
+        cdc_data_write_str("GBARESET: cleared boot_attempted[0], probe "
+                           "will fire on next gc_host_task tick\r\n");
+    }
+#endif
     // BOOTSEL — drop into UF2 bootloader. Works from any app since
     // reset_usb_boot is part of the bootrom.
     else if (strcmp(cmd, "BOOTSEL") == 0) {

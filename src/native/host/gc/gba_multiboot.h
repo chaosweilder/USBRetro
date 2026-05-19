@@ -44,6 +44,14 @@ bool gba_mb_in_multiboot_wait(joybus_port_t* port);
 // never power-cycled — saves ~3 s of multiboot time on every reboot.
 bool gba_mb_payload_already_running(joybus_port_t* port);
 
+// Tell the running payload to render its splash for the given USB
+// output mode. Encodes mode in the low byte of a magic 0xCAFE55XX
+// word and sends it via joybus WRITE; the GBA payload edge-triggers
+// on REG_JOYRE changes matching that magic. No-op on payloads
+// without splash support (their REG_JOYRE just updates silently).
+// Returns 0 on success, negative on joybus error.
+int  gba_send_splash_cmd(joybus_port_t* port, uint8_t mode_id);
+
 // Upload a .gba ROM and trigger GBA boot.
 //   rom/len  : .gba file contents (1..256KB-1, padded internally to mult. of 8)
 //   palette  : boot-logo color, 0..6
