@@ -88,6 +88,8 @@ Sent as an input report in response to a feature request command (output report 
 
 ### Gamepad Type Enum (byte 4)
 
+Matches Handheld Legend's canonical `sinput_sdl_gamepad_type_t`.
+
 | Value | Type |
 |-------|------|
 | 0 | Unknown |
@@ -97,13 +99,14 @@ Sent as an input report in response to a feature request command (output report 
 | 4 | PS3 |
 | 5 | PS4 |
 | 6 | PS5 |
-| 7 | Switch Pro |
+| 7 | Switch Pro (Nintendo Pro) |
 | 8 | Joy-Con L |
 | 9 | Joy-Con R |
 | 10 | Joy-Con Pair |
 | 11 | GameCube |
-| 12 | N64 |
-| 13 | SNES |
+| 12 | Steam |
+
+N64/SNES are not canonical SInput types — those inputs are reported as `Standard` with Nintendo face style (BAYX).
 
 ### Face Style Enum (byte 5, upper 3 bits)
 
@@ -111,9 +114,9 @@ Sent as an input report in response to a feature request command (output report 
 |-------|-------|--------|
 | 0 | Unknown | -- |
 | 1 | Xbox | ABXY |
-| 2 | Nintendo | BAYX |
-| 3 | Sony | Cross/Circle/Square/Triangle |
-| 4 | GameCube | AXBY |
+| 2 | GameCube | AXBY |
+| 3 | Nintendo | BAYX |
+| 4 | Sony | Cross/Circle/Square/Triangle |
 
 ## Output Report (ID 0x03, 48 bytes)
 
