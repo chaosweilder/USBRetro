@@ -222,11 +222,13 @@ static router_config_t router_config;
 
 // Global d-pad mode (0=dpad, 1=left stick, 2=right stick)
 static uint8_t global_dpad_mode = 0;
+static bool global_shoulder_swap = false;  // swap L1<->L2, R1<->R2
 
 // Global button combo hotkeys
 static struct {
     uint32_t input_mask;
     uint32_t output_mask;
+    uint8_t required_layout;   // controller_layout_t, 0 = any layout
     bool fired;
 } router_combos[ROUTER_COMBO_MAX];
 
@@ -921,6 +923,14 @@ void router_submit_input(const input_event_t* event) {
         uint32_t in = router_combos[c].input_mask;
         if (!in) continue;
 
+        // Layout filter: a combo can be restricted to one controller type
+        // (e.g. GameCube S2+dpad vs GBA S1+dpad on the same gc2usb app).
+        if (router_combos[c].required_layout &&
+            event->layout != router_combos[c].required_layout) {
+            router_combos[c].fired = false;
+            continue;
+        }
+
         bool held = (event->buttons & in) == in;
         if (!held) {
             router_combos[c].fired = false;
@@ -972,6 +982,14 @@ void router_submit_input(const input_event_t* event) {
                 }
                 remapped.buttons &= ~in;
                 break;
+            case 7:  // Toggle shoulder swap (L1<->L2, R1<->R2)
+                if (!router_combos[c].fired) {
+                    global_shoulder_swap = !global_shoulder_swap;
+                    flash_set_shoulder_swap(global_shoulder_swap);  // persist
+                    router_combos[c].fired = true;
+                }
+                remapped.buttons &= ~in;
+                break;
         }
     }
     if (did_remap) event = &remapped;
@@ -1005,6 +1023,21 @@ void router_submit_input(const input_event_t* event) {
                 remapped.analog[3] = ay;
             }
         }
+        event = &remapped;
+    }
+
+    // Apply global shoulder swap (L1<->L2, R1<->R2). Swaps the digital button
+    // bits; the analog trigger values aren't touched (GBA shoulders are
+    // digital-only, which is the use case this serves).
+    if (global_shoulder_swap) {
+        if (!did_remap) { remapped = *event; did_remap = true; }
+        uint32_t b = remapped.buttons;
+        uint32_t swapped = b & ~(JP_BUTTON_L1 | JP_BUTTON_R1 | JP_BUTTON_L2 | JP_BUTTON_R2);
+        if (b & JP_BUTTON_L1) swapped |= JP_BUTTON_L2;
+        if (b & JP_BUTTON_R1) swapped |= JP_BUTTON_R2;
+        if (b & JP_BUTTON_L2) swapped |= JP_BUTTON_L1;
+        if (b & JP_BUTTON_R2) swapped |= JP_BUTTON_R1;
+        remapped.buttons = swapped;
         event = &remapped;
     }
 
@@ -1347,5 +1380,15 @@ void router_set_combo(uint8_t index, uint32_t input_mask, uint32_t output_mask) 
     if (index >= ROUTER_COMBO_MAX) return;
     router_combos[index].input_mask = input_mask;
     router_combos[index].output_mask = output_mask;
+    router_combos[index].required_layout = 0;  // any layout by default
     router_combos[index].fired = false;
+}
+
+void router_set_combo_layout(uint8_t index, uint8_t required_layout) {
+    if (index >= ROUTER_COMBO_MAX) return;
+    router_combos[index].required_layout = required_layout;
+}
+
+void router_set_shoulder_swap(bool on) {
+    global_shoulder_swap = on;
 }

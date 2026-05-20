@@ -96,8 +96,12 @@ typedef struct {
     // upgrade from v1.9.0 / v2.0.0, triggering a one-time wipe.
     uint8_t schema_version;
 
-    // Reserved for future global settings (9 bytes)
-    uint8_t reserved[9];
+    // Swap shoulder buttons: L1<->L2 and R1<->R2 (0=off, 1=on). Carved from
+    // reserved[] so the 256-byte layout is unchanged; old flashes read 0=off.
+    uint8_t shoulder_swap;
+
+    // Reserved for future global settings (8 bytes)
+    uint8_t reserved[8];
 
     // Custom profiles (4 x 56 = 224 bytes)
     custom_profile_t profiles[CUSTOM_PROFILE_MAX_COUNT];
@@ -179,5 +183,8 @@ void flash_cycle_profile_prev(void);
 // Marks router_saved=1 so apps that restore on boot know the value was
 // explicitly chosen (vs the default-zero from a freshly-erased flash).
 void flash_set_dpad_mode(uint8_t mode);
+
+// Persist the shoulder-swap toggle (L1<->L2, R1<->R2). Marks router_saved=1.
+void flash_set_shoulder_swap(uint8_t on);
 
 #endif // FLASH_H
