@@ -321,6 +321,11 @@ set(I2C_PEER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/i2c_peer/i2c_peer.c
 )
 
+# UART peer input sharing sources (inter-MCU link, dual-RP2040 boards)
+set(UART_PEER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/uart_peer/uart_peer.c
+)
+
 # Controller app common sources
 set(CONTROLLER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pad/pad_input.c
@@ -882,6 +887,102 @@ target_link_libraries(joypad_uart PRIVATE ${COMMON_LIBRARIES} hardware_uart)
 joypad_target_common(joypad_uart)
 joypad_add_btstack(joypad_uart)
 
+# --- usb2usb dual: HOST/PRODUCER side (B) ---
+# Native USB host + hub reads controllers; uart_peer ships events over the
+# inter-MCU UART link to the device side (A). No USB device output here.
+add_executable(joypad_usb2usb_dual_b)
+target_compile_definitions(joypad_usb2usb_dual_b PRIVATE
+    CONFIG_USB_HOST=1
+    UART_PEER_ENABLED=1
+)
+target_sources(joypad_usb2usb_dual_b PUBLIC ${COMMON_SOURCES}
+    ${UART_PEER_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_b/app.c
+)
+target_include_directories(joypad_usb2usb_dual_b PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_b
+    ${CMAKE_CURRENT_SOURCE_DIR}/uart_peer
+)
+target_link_libraries(joypad_usb2usb_dual_b PRIVATE ${COMMON_LIBRARIES} hardware_uart)
+joypad_target_common(joypad_usb2usb_dual_b)
+
+# --- usb2usb dual: DEVICE/CONSUMER side (A) ---
+# USB device output only (no USB host on this MCU); input arrives over the
+# inter-MCU UART link and is routed to the USB device.
+add_executable(joypad_usb2usb_dual_a)
+target_compile_definitions(joypad_usb2usb_dual_a PRIVATE
+    CONFIG_USB=1
+    DISABLE_USB_HOST=1
+    UART_PEER_ENABLED=1
+)
+target_sources(joypad_usb2usb_dual_a PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+    ${UART_PEER_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_a/app.c
+)
+target_include_directories(joypad_usb2usb_dual_a PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_a
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+    ${CMAKE_CURRENT_SOURCE_DIR}/uart_peer
+)
+target_link_libraries(joypad_usb2usb_dual_a PRIVATE
+    pico_stdlib pico_multicore hardware_pio pico_rand hardware_uart
+    tinyusb_device tinyusb_board)
+joypad_target_common(joypad_usb2usb_dual_a)
+pico_enable_stdio_uart(joypad_usb2usb_dual_a 1)
+
+# --- usb2usb dual: SWD relay stage (flashes B from an embedded image) ---
+# The board's single USB-C only reaches the device side (A); the host side (B)
+# is flashed over SWD (SWCLK=GP2, SWDIO=GP3) by this RAM-resident stage. The
+# combined UF2 (A flash image + this RAM stage) is one drag-drop that flashes
+# both chips. See .dev/docs/USB2USB_HIDREMAPPER_V7_PLAN.md.
+
+# Embed B's binary as a C array (joypad_usb2usb_dual_b builds first).
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.c ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.h
+    DEPENDS joypad_usb2usb_dual_b
+    COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/../tools/bin2carray.py
+            $<TARGET_FILE_DIR:joypad_usb2usb_dual_b>/joypad_usb2usb_dual_b.bin
+            ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.c
+            ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.h
+            dual_b_binary
+    VERBATIM
+)
+
+add_executable(joypad_flash_b_side
+    ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash/flash_b_side.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash/swd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash/flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash/adi.c
+    ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.c
+)
+target_include_directories(joypad_flash_b_side PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+# SWD pins to the host-side (B) RP2040. remapper_v7 board: SWCLK=GP28, SWDIO=GP27
+# (upstream swd.h defaults are GP2/GP3, which are wrong for this board).
+target_compile_definitions(joypad_flash_b_side PRIVATE
+    PIN_SWDCLK=28 PIN_SWDIO=27)
+target_link_libraries(joypad_flash_b_side PRIVATE
+    pico_stdlib hardware_pio hardware_watchdog)
+pico_generate_pio_header(joypad_flash_b_side ${CMAKE_CURRENT_SOURCE_DIR}/swd_flash/swd.pio)
+pico_add_extra_outputs(joypad_flash_b_side)
+pico_set_binary_type(joypad_flash_b_side no_flash)
+
+# Combine A (flash) + flash_b_side (RAM) into one drag-drop UF2.
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
+    DEPENDS joypad_usb2usb_dual_a joypad_flash_b_side
+    COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/../tools/combine_uf2.py
+            $<TARGET_FILE_DIR:joypad_usb2usb_dual_a>/joypad_usb2usb_dual_a.uf2
+            $<TARGET_FILE_DIR:joypad_flash_b_side>/joypad_flash_b_side.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
+    VERBATIM
+)
+add_custom_target(joypad_usb2usb_dual_combined
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
+)
+
 # ============================================================================
 # USB HOST TO USB DEVICE APPS (USB input -> USB output)
 # ============================================================================
@@ -945,11 +1046,13 @@ target_compile_definitions(joypad_usb_feather_rp2040_usb_host PRIVATE
     OLED_BUTTON_B_PIN=8
     OLED_BUTTON_C_PIN=7
     I2C_PEER_ENABLED=1
+    UART_PEER_ENABLED=1
 )
 target_sources(joypad_usb_feather_rp2040_usb_host PUBLIC
     ${COMMON_SOURCES}
     ${USB_DEVICE_SOURCES}
     ${I2C_PEER_SOURCES}
+    ${UART_PEER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/joy_anim.c

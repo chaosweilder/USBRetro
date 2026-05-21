@@ -86,6 +86,9 @@ CONSOLE_n642nuon_pico := joypad_n642nuon
 CONSOLE_n642nuon_aries64 := joypad_n642nuon_aries64
 CONSOLE_snes3do := joypad_snes3do
 CONSOLE_uart := joypad_uart
+CONSOLE_usb2usb_dual_b := joypad_usb2usb_dual_b
+CONSOLE_usb2usb_dual_a := joypad_usb2usb_dual_a
+CONSOLE_usb2usb_dual_combined := joypad_usb2usb_dual_combined
 CONSOLE_usb_feather_rp2040 := joypad_usb_feather_rp2040
 CONSOLE_usb_feather_rp2040_usb_host := joypad_usb_feather_rp2040_usb_host
 CONSOLE_usb_feather_rp2040_max3421 := joypad_usb_feather_rp2040_max3421
@@ -166,6 +169,11 @@ APP_usb2usb_feather_rp2040_usb_host := feather_usbhost usb_feather_rp2040_usb_ho
 APP_usb2usb_feather_rp2040_max3421 := feather usb_feather_rp2040_max3421 usb2usb_feather_rp2040_max3421 USB/BT USB
 APP_usb2usb_feather_rp2040_usb_host_max3421 := feather_usbhost usb_feather_rp2040_usb_host_max3421 usb2usb_feather_rp2040_usb_host_max3421 USB/BT USB
 APP_usb2usb_rp2040zero := rp2040zero usb_rp2040zero usb2usb_rp2040zero USB/BT USB
+# Dual-RP2040 (HID-Remapper v7 / IcemanFGC) — loose-Pico dev rig uses board=pico
+APP_usb2usb_dual_b_pico := pico usb2usb_dual_b usb2usb_dual_b_pico USB UART-link
+APP_usb2usb_dual_a_pico := pico usb2usb_dual_a usb2usb_dual_a_pico UART-link USB
+# Combined single-UF2 (A flash + flash_b_side RAM stage that SWD-flashes B) — flash to the board's USB-C
+APP_usb2usb_dual_combined := pico usb2usb_dual_combined usb2usb_dual_combined USB USB
 APP_usb2usb_rp2350usba := rp2350usba usb_rp2350usba usb2usb_rp2350usba USB/BT USB
 APP_bt2usb_pico_w := pico_w bt2usb bt2usb_pico_w Bluetooth USB
 APP_bt2usb_pico2_w := pico2_w bt2usb bt2usb_pico2_w Bluetooth USB
@@ -528,6 +536,20 @@ usb2usb_feather_rp2040:
 .PHONY: usb2usb_feather_rp2040_usb_host
 usb2usb_feather_rp2040_usb_host:
 	$(call build_app,usb2usb_feather_rp2040_usb_host)
+
+.PHONY: usb2usb_dual_b_pico
+usb2usb_dual_b_pico:
+	$(call build_app,usb2usb_dual_b_pico)
+
+.PHONY: usb2usb_dual_a_pico
+usb2usb_dual_a_pico:
+	$(call build_app,usb2usb_dual_a_pico)
+
+.PHONY: usb2usb_dual_combined
+usb2usb_dual_combined:
+	$(call build_app,usb2usb_dual_combined)
+	@echo "$(YELLOW)  NOTE: dual-RP2040 board — after flashing, disconnect and$(NC)"
+	@echo "$(YELLOW)        reconnect the board once so the host (B) MCU boots.$(NC)"
 
 .PHONY: usb2usb_feather_rp2040_max3421
 usb2usb_feather_rp2040_max3421:

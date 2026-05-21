@@ -49,6 +49,7 @@ const char* app_registry_input_source_name(input_source_t source)
         case INPUT_SOURCE_GPIO:            return "gpio";
         case INPUT_SOURCE_SENSORS:         return "sensors";
         case INPUT_SOURCE_I2C_PEER:        return "i2c_peer";
+        case INPUT_SOURCE_UART_PEER:       return "uart_peer";
     }
     return "unknown";
 }

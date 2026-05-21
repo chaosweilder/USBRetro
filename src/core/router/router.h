@@ -49,6 +49,7 @@ typedef enum {
     INPUT_SOURCE_GPIO,
     INPUT_SOURCE_SENSORS,
     INPUT_SOURCE_I2C_PEER,
+    INPUT_SOURCE_UART_PEER,         // Inter-MCU UART link (dual-RP2040 boards)
 } input_source_t;
 
 typedef enum {
