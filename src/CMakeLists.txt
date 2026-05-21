@@ -890,45 +890,45 @@ joypad_add_btstack(joypad_uart)
 # --- usb2usb dual: HOST/PRODUCER side (B) ---
 # Native USB host + hub reads controllers; uart_peer ships events over the
 # inter-MCU UART link to the device side (A). No USB device output here.
-add_executable(joypad_usb2usb_dual_b)
-target_compile_definitions(joypad_usb2usb_dual_b PRIVATE
+add_executable(joypad_usb2usb_remapper_v7_b)
+target_compile_definitions(joypad_usb2usb_remapper_v7_b PRIVATE
     CONFIG_USB_HOST=1
     UART_PEER_ENABLED=1
 )
-target_sources(joypad_usb2usb_dual_b PUBLIC ${COMMON_SOURCES}
+target_sources(joypad_usb2usb_remapper_v7_b PUBLIC ${COMMON_SOURCES}
     ${UART_PEER_SOURCES}
-    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_b/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_remapper_v7_b/app.c
 )
-target_include_directories(joypad_usb2usb_dual_b PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_b
+target_include_directories(joypad_usb2usb_remapper_v7_b PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_remapper_v7_b
     ${CMAKE_CURRENT_SOURCE_DIR}/uart_peer
 )
-target_link_libraries(joypad_usb2usb_dual_b PRIVATE ${COMMON_LIBRARIES} hardware_uart)
-joypad_target_common(joypad_usb2usb_dual_b)
+target_link_libraries(joypad_usb2usb_remapper_v7_b PRIVATE ${COMMON_LIBRARIES} hardware_uart)
+joypad_target_common(joypad_usb2usb_remapper_v7_b)
 
 # --- usb2usb dual: DEVICE/CONSUMER side (A) ---
 # USB device output only (no USB host on this MCU); input arrives over the
 # inter-MCU UART link and is routed to the USB device.
-add_executable(joypad_usb2usb_dual_a)
-target_compile_definitions(joypad_usb2usb_dual_a PRIVATE
+add_executable(joypad_usb2usb_remapper_v7_a)
+target_compile_definitions(joypad_usb2usb_remapper_v7_a PRIVATE
     CONFIG_USB=1
     DISABLE_USB_HOST=1
     UART_PEER_ENABLED=1
 )
-target_sources(joypad_usb2usb_dual_a PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+target_sources(joypad_usb2usb_remapper_v7_a PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
     ${UART_PEER_SOURCES}
-    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_a/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_remapper_v7_a/app.c
 )
-target_include_directories(joypad_usb2usb_dual_a PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_dual_a
+target_include_directories(joypad_usb2usb_remapper_v7_a PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb_remapper_v7_a
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
     ${CMAKE_CURRENT_SOURCE_DIR}/uart_peer
 )
-target_link_libraries(joypad_usb2usb_dual_a PRIVATE
+target_link_libraries(joypad_usb2usb_remapper_v7_a PRIVATE
     pico_stdlib pico_multicore hardware_pio pico_rand hardware_uart
     tinyusb_device tinyusb_board)
-joypad_target_common(joypad_usb2usb_dual_a)
-pico_enable_stdio_uart(joypad_usb2usb_dual_a 1)
+joypad_target_common(joypad_usb2usb_remapper_v7_a)
+pico_enable_stdio_uart(joypad_usb2usb_remapper_v7_a 1)
 
 # --- usb2usb dual: SWD relay stage (flashes B from an embedded image) ---
 # The board's single USB-C only reaches the device side (A); the host side (B)
@@ -936,12 +936,12 @@ pico_enable_stdio_uart(joypad_usb2usb_dual_a 1)
 # combined UF2 (A flash image + this RAM stage) is one drag-drop that flashes
 # both chips. See .dev/docs/USB2USB_HIDREMAPPER_V7_PLAN.md.
 
-# Embed B's binary as a C array (joypad_usb2usb_dual_b builds first).
+# Embed B's binary as a C array (joypad_usb2usb_remapper_v7_b builds first).
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.c ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.h
-    DEPENDS joypad_usb2usb_dual_b
+    DEPENDS joypad_usb2usb_remapper_v7_b
     COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/../tools/bin2carray.py
-            $<TARGET_FILE_DIR:joypad_usb2usb_dual_b>/joypad_usb2usb_dual_b.bin
+            $<TARGET_FILE_DIR:joypad_usb2usb_remapper_v7_b>/joypad_usb2usb_remapper_v7_b.bin
             ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.c
             ${CMAKE_CURRENT_BINARY_DIR}/dual_b_binary.h
             dual_b_binary
@@ -971,16 +971,16 @@ pico_set_binary_type(joypad_flash_b_side no_flash)
 
 # Combine A (flash) + flash_b_side (RAM) into one drag-drop UF2.
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
-    DEPENDS joypad_usb2usb_dual_a joypad_flash_b_side
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_remapper_v7.uf2
+    DEPENDS joypad_usb2usb_remapper_v7_a joypad_flash_b_side
     COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/../tools/combine_uf2.py
-            $<TARGET_FILE_DIR:joypad_usb2usb_dual_a>/joypad_usb2usb_dual_a.uf2
+            $<TARGET_FILE_DIR:joypad_usb2usb_remapper_v7_a>/joypad_usb2usb_remapper_v7_a.uf2
             $<TARGET_FILE_DIR:joypad_flash_b_side>/joypad_flash_b_side.uf2
-            ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_remapper_v7.uf2
     VERBATIM
 )
-add_custom_target(joypad_usb2usb_dual_combined
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_dual_combined.uf2
+add_custom_target(joypad_usb2usb_remapper_v7
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/joypad_usb2usb_remapper_v7.uf2
 )
 
 # ============================================================================

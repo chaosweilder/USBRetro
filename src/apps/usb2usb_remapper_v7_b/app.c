@@ -47,7 +47,7 @@ static void link_output_init(void)
         .flow_control = LINK_FLOW_CTRL,
     };
     uart_peer_init(&cfg);
-    printf("[usb2usb_dual_b] UART peer link up (host/producer)\n");
+    printf("[usb2usb_remapper_v7_b] UART peer link up (host/producer)\n");
 }
 
 static void link_output_task(void)
@@ -107,7 +107,7 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 
 void app_init(void)
 {
-    printf("[app:usb2usb_dual_b] Initializing %s v%s\n", APP_NAME, APP_VERSION);
+    printf("[app:usb2usb_remapper_v7_b] Initializing %s v%s\n", APP_NAME, APP_VERSION);
 
     feedback_init();
 
@@ -133,7 +133,7 @@ void app_init(void)
     };
     players_init_with_config(&player_cfg);
 
-    printf("[app:usb2usb_dual_b] Routing: USB host -> UART peer link\n");
+    printf("[app:usb2usb_remapper_v7_b] Routing: USB host -> UART peer link\n");
 }
 
 void app_task(void)

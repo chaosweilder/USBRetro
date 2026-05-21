@@ -6,7 +6,7 @@
 #ifndef APP_USB2USB_DUAL_B_H
 #define APP_USB2USB_DUAL_B_H
 
-#define APP_NAME "USB2USB-DUAL-B"
+#define APP_NAME "USB2USB-REMAPPER-V7-B"
 #define APP_VERSION "0.1.0"
 #define APP_DESCRIPTION "Dual-RP2040 host side: USB host + hub -> UART peer link"
 #define APP_AUTHOR "RobertDaleSmith"
