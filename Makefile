@@ -104,6 +104,7 @@ CONSOLE_usb2ble := joypad_usb2ble
 CONSOLE_n64 := joypad_n64
 CONSOLE_wifi2usb := joypad_wifi2usb
 CONSOLE_snes2usb := joypad_snes2usb
+CONSOLE_psx2usb := joypad_psx2usb
 CONSOLE_nes2usb := joypad_nes2usb
 CONSOLE_n642usb := joypad_n642usb
 CONSOLE_nuon2usb := joypad_nuon2usb
@@ -193,6 +194,7 @@ APP_usb2n64_kb2040 := kb2040 n64 usb2n64_kb2040 USB/BT N64
 APP_wifi2usb_pico_w := pico_w wifi2usb wifi2usb_pico_w WiFi USB
 APP_wifi2usb_pico2_w := pico2_w wifi2usb wifi2usb_pico2_w WiFi USB
 APP_snes2usb_kb2040 := kb2040 snes2usb snes2usb_kb2040 SNES USB
+APP_psx2usb_qtpy := qtpy psx2usb psx2usb_qtpy PS1/PS2 USB
 APP_n642usb_kb2040 := kb2040 n642usb n642usb_kb2040 N64 USB
 APP_nuon2usb_kb2040 := kb2040 nuon2usb nuon2usb_kb2040 Nuon USB
 APP_nuon2usb_pico_w := pico_w nuon2usb nuon2usb_pico_w Nuon USB
@@ -899,6 +901,10 @@ wifi2usb_pico2_w:
 snes2usb_kb2040:
 	$(call build_app,snes2usb_kb2040)
 
+.PHONY: psx2usb_qtpy
+psx2usb_qtpy:
+	$(call build_app,psx2usb_qtpy)
+
 .PHONY: n642usb_kb2040
 n642usb_kb2040:
 	$(call build_app,n642usb_kb2040)
@@ -1324,6 +1330,10 @@ flash-wifi2usb_pico2_w:
 .PHONY: flash-snes2usb_kb2040
 flash-snes2usb_kb2040:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=snes2usb_kb2040
+
+.PHONY: flash-psx2usb_qtpy
+flash-psx2usb_qtpy:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=psx2usb_qtpy
 
 .PHONY: flash-n642usb_kb2040
 flash-n642usb_kb2040:

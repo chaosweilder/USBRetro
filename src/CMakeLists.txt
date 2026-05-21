@@ -273,6 +273,10 @@ set(SNES_HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/SNESpad/src/snespad.c
 )
 
+set(PSX_HOST_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/psx/psx_host.c
+)
+
 # N64 host sources
 set(N64_HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/native/host/n64/n64_host.c
@@ -2000,6 +2004,26 @@ target_include_directories(joypad_snes2usb PUBLIC
 )
 target_link_libraries(joypad_snes2usb PRIVATE pico_stdlib pico_multicore hardware_pio pico_rand tinyusb_device tinyusb_board)
 joypad_target_common(joypad_snes2usb)
+
+# --- PSX2USB (PS1/PS2 controller -> USB HID) ---
+add_executable(joypad_psx2usb)
+target_compile_definitions(joypad_psx2usb PRIVATE CONFIG_PSX2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1)
+# QT Py RP2040 wiring (Adafruit learn guide): A0/A1/A2/A3 = GP26/27/28/29.
+if(PICO_BOARD STREQUAL "adafruit_qtpy_rp2040")
+    target_compile_definitions(joypad_psx2usb PRIVATE
+        PSX_PIN_DAT=26 PSX_PIN_CMD=27 PSX_PIN_ATT=28 PSX_PIN_CLK=29)
+endif()
+target_sources(joypad_psx2usb PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
+    ${PSX_HOST_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/psx2usb/app.c
+)
+target_include_directories(joypad_psx2usb PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/psx2usb
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/psx
+)
+target_link_libraries(joypad_psx2usb PRIVATE pico_stdlib pico_multicore hardware_pio pico_rand tinyusb_device tinyusb_board)
+joypad_target_common(joypad_psx2usb)
 
 # --- WII2N64 (Wii extension -> N64) — Pi Pico target ---
 # Pico has no NeoPixel or STEMMA QT. I2C0 on GP4/GP5, N64 data on GP2.
