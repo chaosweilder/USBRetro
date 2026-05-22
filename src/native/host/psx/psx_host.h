@@ -42,8 +42,9 @@ void psx_host_init(void);
 // Initialise with explicit pins.
 void psx_host_init_pins(uint8_t cmd, uint8_t clk, uint8_t att, uint8_t dat);
 
-// Poll the controller once (sends 0x01 0x42 ...) and submit a router event if
-// the state changed. Call from the app task loop; ~1 kHz is plenty.
+// Poll the controller (paced) and submit a router event when the state changes.
+// Re-enables analog mode automatically if the pad is in digital mode. Call from
+// the app task loop.
 void psx_host_task(void);
 
 // True if the most recent poll saw a valid controller response.

@@ -2008,10 +2008,17 @@ joypad_target_common(joypad_snes2usb)
 # --- PSX2USB (PS1/PS2 controller -> USB HID) ---
 add_executable(joypad_psx2usb)
 target_compile_definitions(joypad_psx2usb PRIVATE CONFIG_PSX2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1)
-# QT Py RP2040 wiring (Adafruit learn guide): A0/A1/A2/A3 = GP26/27/28/29.
+# QT Py RP2040 wiring (Adafruit learn guide): A0/A1/A2/A3 map to GPIO29/28/27/26
+# (the board numbers the analog pads in DESCENDING GPIO order). Wires:
+# A0=DAT=GP29, A1=CMD=GP28, A2=ATT=GP27, A3=CLK=GP26.
 if(PICO_BOARD STREQUAL "adafruit_qtpy_rp2040")
     target_compile_definitions(joypad_psx2usb PRIVATE
-        PSX_PIN_DAT=26 PSX_PIN_CMD=27 PSX_PIN_ATT=28 PSX_PIN_CLK=29)
+        PSX_PIN_DAT=29 PSX_PIN_CMD=28 PSX_PIN_ATT=27 PSX_PIN_CLK=26)
+# Raspberry Pi Pico wiring: DAT=GP22, CMD=GP19, ATT(LATCH)=GP21, CLK=GP20,
+# VCC=3V3, GND, 10k pull-up on DAT.
+elseif(PICO_BOARD STREQUAL "pico")
+    target_compile_definitions(joypad_psx2usb PRIVATE
+        PSX_PIN_DAT=22 PSX_PIN_CMD=19 PSX_PIN_ATT=21 PSX_PIN_CLK=20)
 endif()
 target_sources(joypad_psx2usb PUBLIC ${CORE_SOURCES} ${USB_DEVICE_SOURCES}
     ${PSX_HOST_SOURCES}
@@ -2022,7 +2029,8 @@ target_include_directories(joypad_psx2usb PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
     ${CMAKE_CURRENT_SOURCE_DIR}/native/host/psx
 )
-target_link_libraries(joypad_psx2usb PRIVATE pico_stdlib pico_multicore hardware_pio pico_rand tinyusb_device tinyusb_board)
+target_link_libraries(joypad_psx2usb PRIVATE pico_stdlib pico_multicore hardware_pio hardware_dma pico_rand tinyusb_device tinyusb_board)
+pico_generate_pio_header(joypad_psx2usb ${CMAKE_CURRENT_SOURCE_DIR}/native/host/psx/psx.pio)
 joypad_target_common(joypad_psx2usb)
 
 # --- WII2N64 (Wii extension -> N64) — Pi Pico target ---

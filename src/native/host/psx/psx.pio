@@ -1,0 +1,49 @@
+; psx.pio - PS1 / PS2 controller host SIO clock engine (clean-room)
+;
+; Drives a full poll transaction in hardware so the CPU never bit-bangs / blocks:
+;   - idles with CLK, ATT, CMD high
+;   - blocks on `pull` until the CPU pushes a 32-bit command word (trigger)
+;   - drops ATT, then clocks PSX_HW_BYTES bytes LSB-first:
+;       * first 3 bytes also shift CMD out (0x01, 0x42, 0x00 from the word)
+;       * remaining bytes just clock to read DAT
+;   - autopushes each received byte to the RX FIFO (a DMA channel drains it)
+;   - returns to idle (ATT high) and waits for the next trigger
+;
+; Pin map (configured in psx_host.c, not hardcoded here):
+;   set  pins (2): bit0 = CLK, bit1 = ATT   (set-base = CLK gpio)
+;   out  pins (1): CMD
+;   side-set (1) : CMD (used only to preset CMD high while idle)
+;   in   pins (1): DAT
+;
+; Timing matches a ~12.5 kHz PSX clock via the SM clock divider; the protocol
+; itself is from psx-spx. Reimplemented from scratch (not copied).
+
+.program psx
+.side_set 1 opt
+
+.wrap_target
+    set y, 2            [7]              ; 3 command bytes to shift (y = 2..0)
+    set pins, 0b11      [7]  side 1      ; CLK=1 ATT=1, CMD=1 (idle high)
+    pull                [7]              ; wait for CPU trigger word, load OSR
+    set pins, 0b01      [2]              ; ATT low (CLK stays high) -> select
+
+cmd_byte:
+    set x, 7            [7]              ; 8 bits per byte
+cmd_bit:
+    out pins, 1                         ; drive CMD bit (LSB first)
+    set pins, 0b00      [3]             ; CLK low (falling) + DAT settle delay
+    in pins, 1                          ; sample DAT (now settled)
+    set pins, 0b01                      ; CLK high (rising edge)
+    jmp x-- cmd_bit
+    jmp y-- cmd_byte
+    set y, 5                            ; 6 more data bytes to read (y = 5..0)
+
+data_byte:
+    set x, 7            [7]
+data_bit:
+    set pins, 0b00      [3]             ; CLK low + DAT settle delay
+    in pins, 1                          ; sample DAT (now settled)
+    set pins, 0b01                      ; CLK high
+    jmp x-- data_bit
+    jmp y-- data_byte
+.wrap
