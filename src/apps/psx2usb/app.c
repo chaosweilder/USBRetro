@@ -9,7 +9,28 @@
 #include "usb/usbd/usbd.h"
 #include "native/host/psx/psx_host.h"
 #include "core/services/leds/leds.h"
+#include "core/services/button/button.h"
 #include <stdio.h>
+
+// User button (BOOTSEL): double-click cycles USB output mode, triple-click
+// resets to the default (SInput).
+static void on_button_event(button_event_t event)
+{
+    switch (event) {
+        case BUTTON_EVENT_DOUBLE_CLICK: {
+            usb_output_mode_t next = usbd_get_next_mode();
+            printf("[app:psx2usb] Double-click -> USB mode %s\n", usbd_get_mode_name(next));
+            usbd_set_mode(next);
+            break;
+        }
+        case BUTTON_EVENT_TRIPLE_CLICK:
+            printf("[app:psx2usb] Triple-click -> reset to default USB mode\n");
+            usbd_reset_to_hid();
+            break;
+        default:
+            break;
+    }
+}
 
 static const InputInterface* input_interfaces[] = {
     &psx_input_interface,
@@ -58,6 +79,9 @@ void app_init(void)
     };
     players_init_with_config(&player_cfg);
 
+    button_init();
+    button_set_callback(on_button_event);
+
     printf("[app:psx2usb] Routing: PS1/PS2 -> USB HID Gamepad\n");
     printf("[app:psx2usb] Pins: CMD=GP%d CLK=GP%d ATT=GP%d DAT=GP%d\n",
            PSX_PIN_CMD, PSX_PIN_CLK, PSX_PIN_ATT, PSX_PIN_DAT);
@@ -73,4 +97,6 @@ void app_task(void)
         leds_set_color(r, g, b);
         last_led_mode = mode;
     }
+
+    button_task();
 }

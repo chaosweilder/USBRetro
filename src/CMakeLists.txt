@@ -2007,7 +2007,8 @@ joypad_target_common(joypad_snes2usb)
 
 # --- PSX2USB (PS1/PS2 controller -> USB HID) ---
 add_executable(joypad_psx2usb)
-target_compile_definitions(joypad_psx2usb PRIVATE CONFIG_PSX2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1)
+target_compile_definitions(joypad_psx2usb PRIVATE CONFIG_PSX2USB=1 CONFIG_USB=1 DISABLE_USB_HOST=1
+    USE_BOOTSEL_BUTTON=1)
 # QT Py RP2040 wiring (Adafruit learn guide): A0/A1/A2/A3 map to GPIO29/28/27/26
 # (the board numbers the analog pads in DESCENDING GPIO order). Wires:
 # A0=DAT=GP29, A1=CMD=GP28, A2=ATT=GP27, A3=CLK=GP26.

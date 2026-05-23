@@ -35,6 +35,8 @@
 #define PSX_ID_DIGITAL   0x41
 #define PSX_ID_ANALOG    0x73
 #define PSX_ID_PRESSURE  0x79
+#define PSX_ID_NEGCON    0x23   // Namco neGcon: twist + analog I/II/L
+#define NEGCON_BTN_THRESH 0x40  // I/II/L analog press level that latches a button
 
 // ============================================================================
 // STATE
@@ -287,12 +289,41 @@ static void psx_process(const uint8_t* buf) {
 
         uint32_t buttons = decode_buttons(buf[3], buf[4]);
         uint8_t rx = 128, ry = 128, lx = 128, ly = 128;
-        if (last_id == PSX_ID_ANALOG || last_id == PSX_ID_PRESSURE) {
+        uint8_t pressure[12] = {0};   // up,right,down,left,l2,r2,l1,r1,tri,cir,cross,sq
+        bool has_pressure = false;
+        if (last_id == PSX_ID_NEGCON) {
+            // neGcon: only the twist is a real axis -> left stick X (steering).
+            // I, II, L are analog/pressure buttons: latch them past a threshold
+            // for digital output (SInput) AND pass the analog level as DS3-style
+            // pressure (PS3 output transmits it; SInput ignores it).
+            // A/B/R/Start/d-pad already decode from buf[3]/buf[4].
+            lx = buf[5];                                        // twist
+            if (buf[6] > NEGCON_BTN_THRESH) buttons |= JP_BUTTON_B1;  // I  -> Cross
+            if (buf[7] > NEGCON_BTN_THRESH) buttons |= JP_BUTTON_B3;  // II -> Square
+            if (buf[8] > NEGCON_BTN_THRESH) buttons |= JP_BUTTON_L1;  // L  -> L1
+            // DS3 has a pressure byte per face/d-pad button. I/II/L are analog;
+            // the rest are digital, so report full-on-press for them.
+            has_pressure = true;
+            if (buttons & JP_BUTTON_DU) pressure[0] = 0xFF;
+            if (buttons & JP_BUTTON_DR) pressure[1] = 0xFF;
+            if (buttons & JP_BUTTON_DD) pressure[2] = 0xFF;
+            if (buttons & JP_BUTTON_DL) pressure[3] = 0xFF;
+            if (buttons & JP_BUTTON_R1) pressure[7] = 0xFF;   // R
+            if (buttons & JP_BUTTON_B4) pressure[8] = 0xFF;   // B -> Triangle
+            if (buttons & JP_BUTTON_B2) pressure[9] = 0xFF;   // A -> Circle
+            pressure[10] = buf[6];   // I  -> Cross  (analog)
+            pressure[11] = buf[7];   // II -> Square (analog)
+            pressure[6]  = buf[8];   // L  -> L1     (analog)
+        } else if (last_id == PSX_ID_ANALOG || last_id == PSX_ID_PRESSURE) {
             rx = buf[5]; ry = buf[6]; lx = buf[7]; ly = buf[8];
         }
 
-        if (!(last_submitted && buttons == last_buttons &&
-              lx == last_lx && ly == last_ly && rx == last_rx && ry == last_ry)) {
+        // Pressure controllers (neGcon) stream every poll so analog pressure
+        // updates continuously, not just when a button bit toggles.
+        bool changed = !last_submitted || has_pressure ||
+            buttons != last_buttons ||
+            lx != last_lx || ly != last_ly || rx != last_rx || ry != last_ry;
+        if (changed) {
             last_buttons = buttons;
             last_lx = lx; last_ly = ly; last_rx = rx; last_ry = ry;
             last_submitted = true;
@@ -307,6 +338,10 @@ static void psx_process(const uint8_t* buf) {
             e.buttons   = buttons;
             e.analog[ANALOG_LX] = lx; e.analog[ANALOG_LY] = ly;
             e.analog[ANALOG_RX] = rx; e.analog[ANALOG_RY] = ry;
+            if (has_pressure) {
+                e.has_pressure = true;
+                for (int i = 0; i < 12; i++) e.pressure[i] = pressure[i];
+            }
             router_submit_input(&e);
         }
     } else if (connected) {
