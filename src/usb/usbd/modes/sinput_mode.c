@@ -575,9 +575,10 @@ static void sinput_mode_task(void)
     // Face style (from connected device) | sub product (0)
     f[5] = (cached_face_style << 5);
 
-    // Polling rate: 8000 microseconds (125Hz)
-    f[6] = 0x40;  // 8000 & 0xFF
-    f[7] = 0x1F;  // 8000 >> 8
+    // Polling rate: 1000 microseconds (1000Hz) — matches the 1ms HID endpoint
+    // bInterval. SDL also derives its gyro/accel sensor rate from this value.
+    f[6] = 0xE8;  // 1000 & 0xFF
+    f[7] = 0x03;  // 1000 >> 8
 
     // Accel/Gyro ranges (uint16 LE): 0 = not supported
     if (cached_has_motion) {
