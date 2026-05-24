@@ -38,6 +38,7 @@
 #define PSX_ID_ANALOG    0x73
 #define PSX_ID_PRESSURE  0x79
 #define PSX_ID_NEGCON    0x23   // Namco neGcon: twist + analog I/II/L
+#define PSX_ID_MOUSE     0x12   // PlayStation Mouse (SCPH-1090): 2 buttons + dx/dy
 #define PSX_ID_CONFIG    0xF3   // pad is in config/escape mode (not a real report)
 #define NEGCON_BTN_THRESH 0x40  // I/II/L analog press level that latches a button
 
@@ -371,7 +372,8 @@ static void psx_process(const uint8_t* buf) {
     // 0x79 and stops; a DS1 left stuck in config mode would otherwise read as gone.
     bool decodable = (id == PSX_ID_DIGITAL || id == PSX_ID_ANALOG ||
                       id == PSX_ID_PRESSURE || id == PSX_ID_NEGCON);
-    bool present = decodable || id == PSX_ID_CONFIG;
+    bool is_mouse = (id == PSX_ID_MOUSE);   // PlayStation Mouse: relative pointer
+    bool present = decodable || is_mouse || id == PSX_ID_CONFIG;
 
     if (present) {
         connected = true;
@@ -472,6 +474,31 @@ static void psx_process(const uint8_t* buf) {
                 e.has_pressure = true;
                 for (int i = 0; i < 12; i++) e.pressure[i] = pressure[i];
             }
+            router_submit_input(&e);
+        }
+    } else if (is_mouse) {
+        // PlayStation Mouse (0x12): buf[4] buttons (bit3=Left, bit2=Right, active
+        // low), buf[5]=dx, buf[6]=dy (signed). Emit a relative-mouse event; only
+        // submit on movement or a button change (relative pointer).
+        uint32_t mb = 0;
+        if (!(buf[4] & 0x08)) mb |= JP_BUTTON_B1;   // Left  -> mouse button 1
+        if (!(buf[4] & 0x04)) mb |= JP_BUTTON_B2;   // Right -> mouse button 2
+        int8_t mdx = (int8_t)buf[5];
+        int8_t mdy = (int8_t)buf[6];
+        if (mb != last_buttons || mdx != 0 || mdy != 0) {
+            last_buttons = mb;
+            last_submitted = true;
+
+            input_event_t e;
+            init_input_event(&e);
+            e.dev_addr  = PSX_DEV_ADDR;
+            e.instance  = 0;
+            e.type      = INPUT_TYPE_MOUSE;
+            e.transport = INPUT_TRANSPORT_NATIVE;
+            e.layout    = LAYOUT_PSX_MOUSE;
+            e.buttons   = mb;
+            e.delta_x   = mdx;
+            e.delta_y   = mdy;
             router_submit_input(&e);
         }
     } else if ((id == 0xFF || id == 0x00) && connected) {

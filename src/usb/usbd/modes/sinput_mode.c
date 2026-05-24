@@ -294,6 +294,23 @@ static bool sinput_mode_send_report(uint8_t player_index,
 {
     (void)player_index;
 
+    // Relative pointers (e.g. PlayStation Mouse) go out the SInput composite's
+    // mouse interface, not the gamepad report.
+    if (event->type == INPUT_TYPE_MOUSE) {
+#ifdef PLATFORM_ESP32
+        return false;  // ESP32 SInput has no mouse interface (FIFO limit)
+#else
+        if (!tud_hid_n_ready(ITF_NUM_HID_MOUSE)) return false;
+        uint8_t mb = 0;
+        if (event->buttons & JP_BUTTON_B1) mb |= MOUSE_BUTTON_LEFT;
+        if (event->buttons & JP_BUTTON_B2) mb |= MOUSE_BUTTON_RIGHT;
+        if (event->buttons & JP_BUTTON_B3) mb |= MOUSE_BUTTON_MIDDLE;
+        return tud_hid_n_mouse_report(ITF_NUM_HID_MOUSE, 0, mb,
+                                      event->delta_x, event->delta_y,
+                                      event->delta_wheel, 0);
+#endif
+    }
+
     // Update device face style from connected controller
     uint8_t prev_type = cached_gamepad_type;
     cached_layout = event->layout;   // remember for the feature-response refresh
@@ -376,18 +393,19 @@ static bool sinput_mode_send_report(uint8_t player_index,
 
     // Battery status — SInput plug_status enum (verified against SDL3
     // SDL_hidapi_sinput.c switch at data[1]):
-    //   1 = NO_BATTERY (wired controller / unknown)
-    //   2 = CHARGING
-    //   3 = CHARGED (plugged in, battery full)
-    //   4 = ON_BATTERY (running off battery)
-    // SDL3 ignores 0 entirely. event->battery_level is already 0-100 percent.
+    //   0 = UNKNOWN — SDL skips SDL_SendJoystickPowerInfo entirely (no indicator)
+    //   1 = NO_BATTERY — SDL reports NO_BATTERY at 0%, which Steam renders as a
+    //       depleted/"low 0%" battery (bad for a wired adapter with no battery)
+    //   2 = CHARGING, 3 = CHARGED (100%), 4 = ON_BATTERY
+    // event->battery_level is already 0-100 percent. Wired/no-battery devices use
+    // 0 so Steam shows no battery indicator at all (was 1 -> showed "low 0%").
     sinput_report.charge_level = event->battery_level;
     if (event->battery_charging) {
         sinput_report.plug_status = (event->battery_level >= 100) ? 3 : 2;
     } else if (event->battery_level > 0) {
         sinput_report.plug_status = 4;
     } else {
-        sinput_report.plug_status = 1;
+        sinput_report.plug_status = 0;   // unknown -> SDL/Steam shows no battery
     }
 
     // Send report on gamepad interface (skip report_id byte since TinyUSB handles it)
