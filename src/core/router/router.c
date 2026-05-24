@@ -187,6 +187,10 @@ static const char* get_device_name(const input_event_t* event) {
                 case LAYOUT_WII_UDRAW:        return "uDraw Tablet";
                 case LAYOUT_WII_MOTIONPLUS:   return "MotionPlus";
                 case LAYOUT_WII_DUAL_NUNCHUCK: return "Dual Nunchuck";
+                case LAYOUT_PSX_DIGITAL:      return "PS1 Controller";
+                case LAYOUT_PSX_DUALSHOCK:    return "DualShock";
+                case LAYOUT_PSX_DUALSHOCK2:   return "DualShock 2";
+                case LAYOUT_PSX_NEGCON:       return "neGcon";
                 default:                      return "Native";
             }
 #ifdef I2C_PEER_ENABLED

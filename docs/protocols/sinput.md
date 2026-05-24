@@ -71,6 +71,8 @@ Single HID collection (Game Pad) with three reports:
 
 Sent as an input report in response to a feature request command (output report with command 0x02), or automatically when the connected device changes.
 
+**Framing:** the on-wire input report is `[report ID 0x02][command echo 0x02][24-byte struct][zero pad]` (64 bytes total). SDL's hidapi path reads the report ID at `data[0]`, the echo at `data[1]`, and the struct from `data[2]`. A WebHID host (which strips the report ID) sees the echo at byte 0 and must read the struct from byte 1. The offsets below are relative to the start of the 24-byte struct.
+
 | Offset | Size | Field | Notes |
 |--------|------|-------|-------|
 | 0-1 | 2 | Protocol version | uint16 LE (currently 0x0100 = v1.0) |

@@ -76,6 +76,10 @@ typedef enum {
     LAYOUT_WII_UDRAW,           // THQ uDraw tablet
     LAYOUT_WII_MOTIONPLUS,      // MotionPlus standalone (gyro only)
     LAYOUT_WII_DUAL_NUNCHUCK,   // Two nunchucks: left C/Z+stick, right C/Z+stick
+    LAYOUT_PSX_DIGITAL,         // PS1 digital pad (ID 0x41): Sony faces, no sticks
+    LAYOUT_PSX_DUALSHOCK,       // PS1/PS2 analog DualShock (ID 0x73)
+    LAYOUT_PSX_DUALSHOCK2,      // PS2 DualShock 2 (ID 0x79): pressure-sensitive
+    LAYOUT_PSX_NEGCON,          // Namco neGcon (ID 0x23): twist + analog I/II/L
 } controller_layout_t;
 
 // ============================================================================

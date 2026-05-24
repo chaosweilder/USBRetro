@@ -30,12 +30,15 @@
 // ============================================================================
 
 #define PSX_DEV_ADDR     0xE1
-#define PSX_HW_BYTES     9          // full transaction the PIO clocks each poll
+#define PSX_HW_BYTES     21         // full transaction: 3 cmd + 18 data (covers
+                                    // DS2 0x79 pressure block: id,5A,btn1,btn2,
+                                    // RX,RY,LX,LY + 12 pressure bytes)
 
 #define PSX_ID_DIGITAL   0x41
 #define PSX_ID_ANALOG    0x73
 #define PSX_ID_PRESSURE  0x79
 #define PSX_ID_NEGCON    0x23   // Namco neGcon: twist + analog I/II/L
+#define PSX_ID_CONFIG    0xF3   // pad is in config/escape mode (not a real report)
 #define NEGCON_BTN_THRESH 0x40  // I/II/L analog press level that latches a button
 
 // ============================================================================
@@ -58,33 +61,56 @@ static volatile bool     psx_new;
 static volatile bool     psx_busy;          // a transaction is in flight
 static absolute_time_t   psx_next_poll;     // when the next poll may start
 static absolute_time_t   psx_next_config;   // throttle analog-enable retries
+static absolute_time_t   psx_settle_until;  // hold off config until power stabilizes
+static uint8_t           config_attempts;   // capped so non-DS2 pads stop retrying
+
+// The bit-bang config (esp. set_bytes_large) is flaky and often needs many
+// tries before the DS2 latches into 0x79 pressure mode, so retry persistently
+// (~5s) before giving up on a non-pressure pad.
+#define PSX_MAX_CONFIG_ATTEMPTS   50
+#define PSX_CONFIG_INTERVAL_US    100000
+// A freshly hot-swapped pad browns out while its capacitors charge; configuring
+// during that window leaves it in a state that rejects set_bytes_large and won't
+// recover. Wait for power to settle after a pad first appears before configuring.
+#define PSX_CONFIG_SETTLE_US      300000
 
 // Real consoles poll the pad once per frame and leave ATT high (deselected) for
 // milliseconds between polls. Hammering back-to-back (only ~32 us recovery) makes
 // the controller return stale/garbage analog -> choppy. Pace polls like the
 // reference (PS2X read_delay): ~3 ms gives ~1.7 ms of recovery per poll.
-#define PSX_POLL_INTERVAL_US  3000
+// The 21-byte transaction takes ~2.8ms at our clock; 4.5ms pacing leaves ~1.7ms
+// of ATT-high recovery between polls (~222 Hz), the gap that keeps reads clean.
+#define PSX_POLL_INTERVAL_US  4500
 
 static bool      initialized = false;
 static bool      connected   = false;
-static uint8_t   last_id     = 0xFF;
+static uint8_t   last_id     = 0xFF;   // last raw id (incl. 0xF3 config mode)
+static uint8_t   last_real_id = 0xFF;  // last decodable id (ignores 0xF3 flicker)
 
 // state-change suppression
 static uint32_t  last_buttons = 0;
 static uint8_t   last_lx = 128, last_ly = 128, last_rx = 128, last_ry = 128;
 static bool      last_submitted = false;
 
+
 // ============================================================================
 // TRANSACTION
 // ============================================================================
 
 // Arm the DMA for one transaction and trigger the PIO. Non-blocking.
+// Read length is adaptive: only a detected DS2 (0x79) needs the 18-byte pressure
+// block; every other pad has 6 data bytes, so reading 9 total (vs 21) ~doubles
+// the poll rate for analog/NegCon pads at the same (slow) clock.
 static void psx_start_xfer(void) {
+    uint8_t data_bytes = (last_real_id == PSX_ID_PRESSURE) ? 18 : 6;
+    uint8_t total = (uint8_t)(3 + data_bytes);
     psx_busy = true;
     dma_channel_set_write_addr(psx_dma, psx_rx, false);
-    dma_channel_set_trans_count(psx_dma, PSX_HW_BYTES, true);   // arm + start
-    // Command word, shifted LSB-first by the PIO: byte0=0x01, byte1=0x42, rest 0.
-    pio_sm_put(psx_pio, psx_sm, 0x01u | (0x42u << 8));
+    dma_channel_set_trans_count(psx_dma, total, true);          // arm + start
+    // Command word, shifted LSB-first by the PIO: byte0=0x01, byte1=0x42,
+    // byte2=0x00, byte3=data_bytes-1 (the PIO `out y,8` reads it as the count).
+    pio_sm_put(psx_pio, psx_sm,
+               0x01u | (0x42u << 8) | (0x00u << 16) | ((uint32_t)(data_bytes - 1) << 24));
 }
 
 // ---------------------------------------------------------------------------
@@ -98,18 +124,24 @@ static void psx_start_xfer(void) {
 // is fine. It runs only when the poll PIO is parked (psx_busy == false), so we
 // just borrow the pins (PIO -> SIO -> PIO) without tearing the SM down.
 
+// Config is bit-banged slowly: there is no ACK wire, so the inter-byte gap must
+// be long enough for the controller to keep up across a whole command. A fast
+// gap let early commands (set_mode, whose analog bit is byte 3) through but
+// dropped mid-command bytes of set_bytes_large (its pressure bitmask is bytes
+// 3-5), so DS2 pressure mode never engaged. ~10us/phase + ~120us inter-byte.
 static uint8_t psx_bb_byte(uint8_t out) {
     uint8_t in = 0;
     for (int i = 0; i < 8; i++) {
         gpio_put(pin_cmd, (out >> i) & 1);          // CMD bit, LSB first
-        gpio_put(pin_clk, 0);                        // CLK falling edge
-        busy_wait_us(6);                             // let DAT settle
+        busy_wait_us(8);                             // CMD setup BEFORE falling edge
+        gpio_put(pin_clk, 0);                        // CLK falling edge (pad latches CMD)
+        busy_wait_us(14);                            // let DAT settle
         if (gpio_get(pin_dat)) in |= (1u << i);      // sample DAT
         gpio_put(pin_clk, 1);                         // CLK rising edge
-        busy_wait_us(6);
+        busy_wait_us(14);
     }
     gpio_put(pin_cmd, 1);
-    busy_wait_us(14);                                // inter-byte recovery
+    busy_wait_us(250);                               // inter-byte ACK recovery
     return in;
 }
 
@@ -118,31 +150,49 @@ static void psx_bb_cmd(const uint8_t* cmd, int len) {
     busy_wait_us(14);
     for (int i = 0; i < len; i++) psx_bb_byte(cmd[i]);
     gpio_put(pin_att, 1);                            // deselect
-    busy_wait_us(200);                               // inter-command recovery
+    busy_wait_us(600);                               // inter-command recovery (DS2 needs time)
 }
 
 static void psx_send_config(void) {
-    static const uint8_t enter_config[] = {0x01, 0x43, 0x00, 0x01, 0x00};
-    static const uint8_t set_mode[]     = {0x01, 0x44, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00};
-    static const uint8_t exit_config[]  = {0x01, 0x43, 0x00, 0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A};
+    static const uint8_t enter_config[]    = {0x01, 0x43, 0x00, 0x01, 0x00};
+    static const uint8_t type_read[]       = {0x01, 0x45, 0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A};
+    // byte4 = lock: 0x00 (unlocked) not 0x03. Locking lets a failed first config
+    // (e.g. mid-boot on hot-swap) latch the pad in 0x73 and reject re-config, so
+    // it gets stuck without pressure. Unlocked, a later retry can still upgrade it.
+    static const uint8_t set_mode[]        = {0x01, 0x44, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t set_bytes_large[] = {0x01, 0x4F, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x00, 0x00};
+    static const uint8_t exit_config[]     = {0x01, 0x43, 0x00, 0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A};
 
-    // Borrow the pins from the (parked) PIO and drive them by hand.
-    gpio_set_function(pin_clk, GPIO_FUNC_SIO);
-    gpio_set_function(pin_cmd, GPIO_FUNC_SIO);
-    gpio_set_function(pin_att, GPIO_FUNC_SIO);
-    gpio_set_function(pin_dat, GPIO_FUNC_SIO);
+    // Borrow the pins from the (parked) PIO. CRITICAL: pre-load the SIO output
+    // registers to the idle state (CLK/CMD/ATT high, DAT input) BEFORE switching
+    // the pin mux to SIO. If we switch the mux first, the pins momentarily drive
+    // stale/low SIO values -> a spurious CLK/ATT edge that desyncs the controller
+    // and corrupts the config (the cause of the flaky DS2 pressure-enable).
+    gpio_put(pin_clk, 1);
+    gpio_put(pin_cmd, 1);
+    gpio_put(pin_att, 1);
     gpio_set_dir(pin_clk, true);
     gpio_set_dir(pin_cmd, true);
     gpio_set_dir(pin_att, true);
     gpio_set_dir(pin_dat, false);
-    gpio_put(pin_clk, 1);
-    gpio_put(pin_cmd, 1);
-    gpio_put(pin_att, 1);
+    gpio_set_function(pin_clk, GPIO_FUNC_SIO);
+    gpio_set_function(pin_cmd, GPIO_FUNC_SIO);
+    gpio_set_function(pin_att, GPIO_FUNC_SIO);
+    gpio_set_function(pin_dat, GPIO_FUNC_SIO);
     busy_wait_us(100);
 
-    psx_bb_cmd(enter_config, sizeof(enter_config));
-    psx_bb_cmd(set_mode,     sizeof(set_mode));
-    psx_bb_cmd(exit_config,  sizeof(exit_config));
+    psx_bb_cmd(enter_config,    sizeof(enter_config));
+    psx_bb_cmd(type_read,       sizeof(type_read));       // read type (primes the pad)
+    psx_bb_cmd(set_mode,        sizeof(set_mode));        // analog + lock
+    // Send the DS2 full-pressure command several times — the mask bytes are the
+    // flaky part, so repeating raises the odds all bytes land in one config pass.
+    psx_bb_cmd(set_bytes_large, sizeof(set_bytes_large));
+    psx_bb_cmd(set_bytes_large, sizeof(set_bytes_large));
+    psx_bb_cmd(set_bytes_large, sizeof(set_bytes_large));
+    // Exit twice: a flaky single exit can leave the pad in config mode (0xF3),
+    // which a DS1 would otherwise stay stuck in once the retry cap is reached.
+    psx_bb_cmd(exit_config,     sizeof(exit_config));
+    psx_bb_cmd(exit_config,     sizeof(exit_config));
 
     // Hand the pins back to the PIO (still parked at `pull`).
     pio_gpio_init(psx_pio, pin_clk);
@@ -164,6 +214,18 @@ static void __isr psx_dma_isr(void) {
     for (int i = 0; i < PSX_HW_BYTES; i++) psx_snap[i] = (uint8_t)(psx_rx[i] >> 24);
     psx_new = true;
     psx_busy = false;   // transaction complete; task schedules the next one
+}
+
+// Map the controller ID byte to a layout (drives the web-config name + SInput
+// face style). Unknown IDs fall back to a generic Sony-style 4-face pad.
+static controller_layout_t psx_layout_for_id(uint8_t id) {
+    switch (id) {
+        case PSX_ID_DIGITAL:  return LAYOUT_PSX_DIGITAL;
+        case PSX_ID_ANALOG:   return LAYOUT_PSX_DUALSHOCK;
+        case PSX_ID_PRESSURE: return LAYOUT_PSX_DUALSHOCK2;
+        case PSX_ID_NEGCON:   return LAYOUT_PSX_NEGCON;
+        default:              return LAYOUT_PSX_DUALSHOCK;
+    }
 }
 
 // Decode PS1/PS2 button bytes (active-low: 0 = pressed) into JP_BUTTON_* bitmap.
@@ -200,13 +262,16 @@ void psx_host_init_pins(uint8_t cmd, uint8_t clk, uint8_t att, uint8_t dat) {
     if (initialized) return;
     pin_cmd = cmd; pin_clk = clk; pin_att = att; pin_dat = dat;
 
-    // PIO pin groups: set = {CLK (base), ATT (base+1)}; out/sideset = CMD; in = DAT.
+    // PIO pin groups: side-set = {CLK, ATT} (consecutive, base=CLK); set = DAT
+    // alone (the PIO drives it high then releases each bit for the active pull-up);
+    // out = CMD; in = DAT. CLK/ATT on side-set so DAT can own the set group even
+    // when CMD sits between ATT and DAT in the GPIO map (e.g. QT Py 26/27/28/29).
     uint offset = pio_add_program(psx_pio, &psx_program);
     psx_sm = pio_claim_unused_sm(psx_pio, true);
     pio_sm_config c = psx_program_get_default_config(offset);
-    sm_config_set_set_pins(&c, pin_clk, 2);
+    sm_config_set_sideset_pins(&c, pin_clk);        // side-set = CLK, ATT (2 bits)
+    sm_config_set_set_pins(&c, pin_dat, 1);         // set = DAT (driven each bit)
     sm_config_set_out_pins(&c, pin_cmd, 1);
-    sm_config_set_sideset_pins(&c, pin_cmd);
     sm_config_set_in_pins(&c, pin_dat);
     sm_config_set_out_shift(&c, true, false, 32);   // shift right (LSB first), manual pull
     sm_config_set_in_shift(&c, true, true, 8);      // shift right, autopush every byte
@@ -216,15 +281,21 @@ void psx_host_init_pins(uint8_t cmd, uint8_t clk, uint8_t att, uint8_t dat) {
     pio_gpio_init(psx_pio, pin_cmd);
     pio_gpio_init(psx_pio, pin_dat);
     gpio_pull_up(pin_dat);
+    // Weak (2mA) drive on DAT: enough to charge the line on a released '1' bit, but
+    // too weak to override the controller's pull-down on a '0' bit -> safe active
+    // pull-up with only ~2mA of brief contention. See psx.pio.
+    gpio_set_drive_strength(pin_dat, GPIO_DRIVE_STRENGTH_2MA);
 
     pio_sm_set_consecutive_pindirs(psx_pio, psx_sm, pin_clk, 2, true);   // CLK, ATT out
     pio_sm_set_consecutive_pindirs(psx_pio, psx_sm, pin_cmd, 1, true);   // CMD out
-    pio_sm_set_consecutive_pindirs(psx_pio, psx_sm, pin_dat, 1, false);  // DAT in
+    pio_sm_set_consecutive_pindirs(psx_pio, psx_sm, pin_dat, 1, false);  // DAT in (PIO drives per-bit)
 
-    // 500 kHz instruction rate (2 us/cycle). With the [3] settle delay the DAT
-    // line gets ~8 us to settle after each falling edge (the rig was clean at
-    // ~10 us, corrupt at ~4 us), giving a clean ~60 kHz PSX clock and ~1.4 ms
-    // per poll (~700 Hz). Non-blocking, so it stays snappy.
+    // 500 kHz instruction rate. A fast clock alone corrupts old analog pads (their
+    // DAT can't rise in time at the 0x00/0xFF extremes on the weak internal
+    // pull-up), but the PIO's active pull-up (driving DAT high each bit) fixes the
+    // rise, so we keep the fast clock for responsive DS2 pressure / NegCon AND read
+    // the SCPH-110 cleanly. ~2.8 ms per 21-byte poll; 4.5 ms pacing leaves ~1.7 ms
+    // of ATT-high recovery. Non-blocking.
     sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / 500000.0f);
 
     pio_sm_init(psx_pio, psx_sm, offset, &c);
@@ -263,11 +334,16 @@ void psx_host_task(void) {
         psx_process(buf);
     }
 
-    // 2) If the pad is in digital mode, re-enable analog. Safe to bit-bang here:
-    //    !psx_busy means the PIO is parked (no transaction clocking the pins).
-    if (connected && last_id == PSX_ID_DIGITAL &&
-        !psx_busy && time_reached(psx_next_config)) {
-        psx_next_config = make_timeout_time_us(300000);   // retry at most ~3 Hz
+    // 2) Configure DualShock-family pads: enable analog + lock + DS2 pressure.
+    //    Runs while the pad is digital (0x41) or plain-analog (0x73) and not yet
+    //    in pressure mode (0x79). Capped so a DS1 / analog-only pad (which can't
+    //    reach 0x79) doesn't reconfigure forever. NegCon (0x23) is left alone.
+    //    Safe to bit-bang here: !psx_busy means the PIO is parked.
+    if (connected && config_attempts < PSX_MAX_CONFIG_ATTEMPTS &&
+        (last_id == PSX_ID_DIGITAL || last_id == PSX_ID_ANALOG || last_id == PSX_ID_CONFIG) &&
+        !psx_busy && time_reached(psx_settle_until) && time_reached(psx_next_config)) {
+        psx_next_config = make_timeout_time_us(PSX_CONFIG_INTERVAL_US);
+        config_attempts++;
         psx_send_config();
     }
 
@@ -282,11 +358,37 @@ void psx_host_task(void) {
 
 // Decode one completed transaction and submit a router event on state change.
 static void psx_process(const uint8_t* buf) {
-    bool ok = (buf[1] != 0xFF && buf[1] != 0x00);
+    uint8_t id = buf[1];
+    // True only if the PREVIOUS poll was a 0x79, i.e. this poll requested the full
+    // 21-byte read — so buf[9..20] hold fresh pressure. On the first 0x79 frame
+    // (still a 9-byte read) this is false, so we skip the stale pressure block.
+    bool was_pressure = (last_real_id == PSX_ID_PRESSURE);
+    // Decode only genuine controller IDs. A config-mode response (0xF3, seen when a
+    // flaky exit_config briefly leaves the pad in config mode) is "present" but must
+    // NOT reach decode_buttons — it produces phantom multi-button presses. Instead
+    // keep it connected so config keeps firing and exits it. This bit a DS1, which
+    // never reaches 0x79 so it re-configs continuously, unlike a DS2 that latches
+    // 0x79 and stops; a DS1 left stuck in config mode would otherwise read as gone.
+    bool decodable = (id == PSX_ID_DIGITAL || id == PSX_ID_ANALOG ||
+                      id == PSX_ID_PRESSURE || id == PSX_ID_NEGCON);
+    bool present = decodable || id == PSX_ID_CONFIG;
 
-    if (ok) {
-        if (!connected || buf[1] != last_id) { connected = true; last_id = buf[1]; }
+    if (present) {
+        connected = true;
+        last_id = id;   // includes 0xF3 so the config trigger can exit config mode
+        // Reset the retry cap/settle only for a genuinely new pad or a real id
+        // change — NOT the transient 0x73<->0xF3 flicker our own config churn
+        // causes. Resetting on that flicker keeps config_attempts from ever
+        // reaching the cap, so an analog-only pad (DS1 / SCPH-110, which can't
+        // reach 0x79) configures forever and starves the stick polls.
+        if (decodable && id != last_real_id) {
+            last_real_id = id;
+            config_attempts = 0;
+            psx_settle_until = make_timeout_time_us(PSX_CONFIG_SETTLE_US);
+        }
+    }
 
+    if (decodable) {
         uint32_t buttons = decode_buttons(buf[3], buf[4]);
         uint8_t rx = 128, ry = 128, lx = 128, ly = 128;
         uint8_t pressure[12] = {0};   // up,right,down,left,l2,r2,l1,r1,tri,cir,cross,sq
@@ -316,6 +418,34 @@ static void psx_process(const uint8_t* buf) {
             pressure[6]  = buf[8];   // L  -> L1     (analog)
         } else if (last_id == PSX_ID_ANALOG || last_id == PSX_ID_PRESSURE) {
             rx = buf[5]; ry = buf[6]; lx = buf[7]; ly = buf[8];
+            if (last_id == PSX_ID_PRESSURE && was_pressure) {
+                // DualShock 2 full mode: 12 pressure bytes follow the sticks.
+                // DS2 wire order (buf[9..20]):
+                //   Right,Left,Up,Down, Tri,Cir,Cross,Sq, L1,R1,L2,R2
+                // event->pressure order:
+                //   up,right,down,left, l2,r2,l1,r1, tri,cir,cross,sq
+                has_pressure = true;
+                pressure[0]  = buf[11];  // up
+                pressure[1]  = buf[9];   // right
+                pressure[2]  = buf[12];  // down
+                pressure[3]  = buf[10];  // left
+                pressure[4]  = buf[19];  // l2
+                pressure[5]  = buf[20];  // r2
+                pressure[6]  = buf[17];  // l1
+                pressure[7]  = buf[18];  // r1
+                pressure[8]  = buf[13];  // triangle
+                pressure[9]  = buf[14];  // circle
+                pressure[10] = buf[15];  // cross
+                pressure[11] = buf[16];  // square
+            }
+        }
+
+        // PS1/PS2 pads have no PS/Guide (Home) button, which some consoles need to
+        // wake/init the controller. Map Select+Start (held together) to A1 (Guide),
+        // suppressing Select/Start so the host sees a clean PS-button press.
+        if ((buttons & JP_BUTTON_S1) && (buttons & JP_BUTTON_S2)) {
+            buttons |= JP_BUTTON_A1;
+            buttons &= ~(JP_BUTTON_S1 | JP_BUTTON_S2);
         }
 
         // Pressure controllers (neGcon) stream every poll so analog pressure
@@ -334,7 +464,7 @@ static void psx_process(const uint8_t* buf) {
             e.instance  = 0;
             e.type      = INPUT_TYPE_GAMEPAD;
             e.transport = INPUT_TRANSPORT_NATIVE;
-            e.layout    = LAYOUT_MODERN_4FACE;
+            e.layout    = psx_layout_for_id(last_id);
             e.buttons   = buttons;
             e.analog[ANALOG_LX] = lx; e.analog[ANALOG_LY] = ly;
             e.analog[ANALOG_RX] = rx; e.analog[ANALOG_RY] = ry;
@@ -344,15 +474,21 @@ static void psx_process(const uint8_t* buf) {
             }
             router_submit_input(&e);
         }
-    } else if (connected) {
+    } else if ((id == 0xFF || id == 0x00) && connected) {
+        // Genuine "no controller": the data line idles high (0xFF) or low (0x00).
+        // Any other non-known byte is a transient (e.g. 0xF3 config mode) — leave it
+        // and last_id alone so config keeps running and we stay connected.
         connected = false;
         last_id = 0xFF;
+        last_real_id = 0xFF;
+        config_attempts = 0;   // reconfigure on the next controller
     }
 }
 
 bool psx_host_is_connected(void) {
     return connected;
 }
+
 
 // ============================================================================
 // INPUT INTERFACE

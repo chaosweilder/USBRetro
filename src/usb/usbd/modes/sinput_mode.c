@@ -75,6 +75,7 @@ static uint8_t cached_face_style = SINPUT_FACE_XBOX;
 static uint8_t cached_gamepad_type = SINPUT_TYPE_STANDARD;
 static bool cached_has_motion = false;
 static bool cached_has_touch = false;
+static controller_layout_t cached_layout = LAYOUT_UNKNOWN;  // last native layout (for feature refresh)
 static int16_t last_dev_addr = -1;  // Track connected device for auto feature report
 
 // ============================================================================
@@ -156,6 +157,13 @@ static void update_device_info(uint8_t dev_addr, int8_t instance, input_transpor
         } else if (layout == LAYOUT_NINTENDO_4FACE) {
             // SNES isn't a canonical SInput type — STANDARD + Nintendo face.
             cached_face_style = SINPUT_FACE_NINTENDO;
+            cached_gamepad_type = SINPUT_TYPE_STANDARD;
+        } else if (layout == LAYOUT_PSX_DIGITAL ||
+                   layout == LAYOUT_PSX_DUALSHOCK ||
+                   layout == LAYOUT_PSX_DUALSHOCK2 ||
+                   layout == LAYOUT_PSX_NEGCON) {
+            // PlayStation controllers: Sony face style (Cross/Circle/Square/Triangle)
+            cached_face_style = SINPUT_FACE_SONY;
             cached_gamepad_type = SINPUT_TYPE_STANDARD;
         } else {
             cached_face_style = SINPUT_FACE_XBOX;
@@ -288,6 +296,7 @@ static bool sinput_mode_send_report(uint8_t player_index,
 
     // Update device face style from connected controller
     uint8_t prev_type = cached_gamepad_type;
+    cached_layout = event->layout;   // remember for the feature-response refresh
     update_device_info(event->dev_addr, event->instance, event->transport, event->layout);
 
     // Track capabilities from input device
@@ -513,7 +522,7 @@ static void sinput_mode_task(void)
         update_device_info((uint8_t)players[0].dev_addr,
                            (int8_t)players[0].instance,
                            players[0].transport,
-                           LAYOUT_UNKNOWN);
+                           cached_layout);   // native pads need the real layout, not UNKNOWN
     }
 
     // Build the feature response framed exactly as SDL's SInput HIDAPI driver

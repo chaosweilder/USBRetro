@@ -796,7 +796,7 @@ void usbd_task(void)
         }
 
         case USB_OUTPUT_MODE_PS3: {
-            // PS3 mode: delegate to mode interface
+            // PS3 mode: delegate to mode interface (no CDC — authentic DS3)
             const usbd_mode_t* mode = usbd_modes[USB_OUTPUT_MODE_PS3];
             if (mode && mode->is_ready && mode->is_ready()) {
                 usbd_send_report(0);

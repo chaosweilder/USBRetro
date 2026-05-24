@@ -1,49 +1,55 @@
 ; psx.pio - PS1 / PS2 controller host SIO clock engine (clean-room)
 ;
 ; Drives a full poll transaction in hardware so the CPU never bit-bangs / blocks:
-;   - idles with CLK, ATT, CMD high
+;   - idles with CLK, ATT high (DAT released/input)
 ;   - blocks on `pull` until the CPU pushes a 32-bit command word (trigger)
-;   - drops ATT, then clocks PSX_HW_BYTES bytes LSB-first:
+;   - drops ATT, then clocks bytes LSB-first:
 ;       * first 3 bytes also shift CMD out (0x01, 0x42, 0x00 from the word)
-;       * remaining bytes just clock to read DAT
+;       * cmd-word hi byte = data-byte count-1 (6 analog / 18 DS2), loaded via out y
+;   - ACTIVE PULL-UP: each bit, DAT is briefly DRIVEN high (weak 2mA) then released
+;     to input before sampling. The 2mA charge wins on a released '1' bit (fast rise
+;     despite the weak internal pull-up + cable capacitance) but loses to the
+;     controller's strong pull-down on a '0' bit, so the read stays correct with
+;     only ~2mA of brief contention. This lets old analog pads (e.g. Sony SCPH-110)
+;     read clean analog at the fast clock instead of corrupting at the 0x00/0xFF
+;     extremes where DAT can't rise in time.
 ;   - autopushes each received byte to the RX FIFO (a DMA channel drains it)
 ;   - returns to idle (ATT high) and waits for the next trigger
 ;
-; Pin map (configured in psx_host.c, not hardcoded here):
-;   set  pins (2): bit0 = CLK, bit1 = ATT   (set-base = CLK gpio)
+; Pin map (configured in psx_host.c). CLK/ATT must be consecutive (CLK, CLK+1):
+;   side-set (2): bit0 = CLK, bit1 = ATT   (side-base = CLK gpio)
+;   set  pins (1): DAT                      (driven high then released each bit)
 ;   out  pins (1): CMD
-;   side-set (1) : CMD (used only to preset CMD high while idle)
 ;   in   pins (1): DAT
-;
-; Timing matches a ~12.5 kHz PSX clock via the SM clock divider; the protocol
-; itself is from psx-spx. Reimplemented from scratch (not copied).
+; Side-set values used: 0b11 = CLK1/ATT1 (idle), 0b01 = CLK1/ATT0, 0b00 = CLK0/ATT0.
 
 .program psx
-.side_set 1 opt
+.side_set 2
 
 .wrap_target
-    set y, 2            [7]              ; 3 command bytes to shift (y = 2..0)
-    set pins, 0b11      [7]  side 1      ; CLK=1 ATT=1, CMD=1 (idle high)
-    pull                [7]              ; wait for CPU trigger word, load OSR
-    set pins, 0b01      [2]              ; ATT low (CLK stays high) -> select
+    set y, 2         side 0b11 [7]      ; 3 command bytes (y=2..0); idle CLK=1 ATT=1
+    pull             side 0b11 [7]      ; wait for CPU trigger word (idle high)
+    nop              side 0b01 [7]      ; ATT low -> select (CLK stays high)
 
 cmd_byte:
-    set x, 7            [7]              ; 8 bits per byte
+    set x, 7         side 0b01 [7]      ; 8 bits per byte (CLK high)
 cmd_bit:
-    out pins, 1                         ; drive CMD bit (LSB first)
-    set pins, 0b00      [3]             ; CLK low (falling) + DAT settle delay
-    in pins, 1                          ; sample DAT (now settled)
-    set pins, 0b01                      ; CLK high (rising edge)
-    jmp x-- cmd_bit
-    jmp y-- cmd_byte
-    set y, 5                            ; 6 more data bytes to read (y = 5..0)
+    out pins, 1      side 0b01          ; drive CMD bit (LSB first), CLK high
+    set pindirs, 1   side 0b00          ; DAT -> output, CLK=0 (falling)
+    set pins, 1      side 0b00          ; DAT=1 (active pull-up charge)
+    set pindirs, 0   side 0b00 [2]      ; DAT -> input (release) + settle
+    in pins, 1       side 0b00          ; sample DAT (CLK still low)
+    jmp x-- cmd_bit  side 0b01          ; CLK=1 (rising edge)
+    jmp y-- cmd_byte side 0b01
+    out y, 8         side 0b01          ; data-byte count-1 from cmd word hi byte
 
 data_byte:
-    set x, 7            [7]
+    set x, 7         side 0b01 [7]
 data_bit:
-    set pins, 0b00      [3]             ; CLK low + DAT settle delay
-    in pins, 1                          ; sample DAT (now settled)
-    set pins, 0b01                      ; CLK high
-    jmp x-- data_bit
-    jmp y-- data_byte
+    set pindirs, 1   side 0b00          ; DAT -> output, CLK=0 (falling)
+    set pins, 1      side 0b00          ; DAT=1 (active pull-up charge)
+    set pindirs, 0   side 0b00 [2]      ; DAT -> input (release) + settle
+    in pins, 1       side 0b00          ; sample DAT
+    jmp x-- data_bit side 0b01          ; CLK=1 (rising edge)
+    jmp y-- data_byte side 0b01
 .wrap
