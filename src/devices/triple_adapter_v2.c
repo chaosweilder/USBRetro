@@ -72,18 +72,19 @@ void process_triple_adapter_v2(uint8_t dev_addr, uint8_t instance, uint8_t const
                ((dpad_right)           ? 0x00 : USBR_BUTTON_DR) |
                ((update_report.b)      ? 0x00 : USBR_BUTTON_B1) |
                ((update_report.a)      ? 0x00 : USBR_BUTTON_B2) |
-               ((update_report.y)      ? 0x00 : USBR_BUTTON_L1) |
-               ((update_report.x)      ? 0x00 : USBR_BUTTON_B3) |
+               ((update_report.y)      ? 0x00 : USBR_BUTTON_B3) |
+               ((update_report.x)      ? 0x00 : USBR_BUTTON_B4) |
                ((update_report.select) ? 0x00 : USBR_BUTTON_S1) |
                ((update_report.start)  ? 0x00 : USBR_BUTTON_S2) |
                ((0)                    ? 0x00 : USBR_BUTTON_L3) |
                ((0)                    ? 0x00 : USBR_BUTTON_R3) |
-               ((update_report.l)      ? 0x00 : USBR_BUTTON_B4) |
+               ((update_report.l)      ? 0x00 : USBR_BUTTON_L1) |
                ((update_report.r)      ? 0x00 : USBR_BUTTON_R1) |
                ((0)                    ? 0x00 : USBR_BUTTON_L2) |
                ((0)                    ? 0x00 : USBR_BUTTON_R2) |
                ((0)                    ? 0x00 : USBR_BUTTON_A1) |
                ((1)/*has_6btns*/       ? 0x00 : 0x800));
+			   
 
     // add to accumulator and post to the state machine
     // if a scan from the host machine is ongoing, wait
