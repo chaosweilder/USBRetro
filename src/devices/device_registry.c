@@ -16,7 +16,7 @@
 #include "hid_gamepad.h"
 #include "hid_keyboard.h"
 #include "hid_mouse.h"
-#include "triple_adapter_v2.c"
+#include "triple_adapter_v2.h"
 // Include other devices here
 
 DeviceInterface* device_interfaces[CONTROLLER_TYPE_COUNT] = {0};
