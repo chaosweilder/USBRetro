@@ -20,7 +20,7 @@ typedef enum {
     CONTROLLER_DINPUT,
     CONTROLLER_KEYBOARD,
     CONTROLLER_MOUSE,
-    CONTROLLER_3DAPTER
+    CONTROLLER_3DAPTER,
     // Add more controller types here
     CONTROLLER_TYPE_COUNT // Automatically equals the number of controller types
 } dev_type_t;
