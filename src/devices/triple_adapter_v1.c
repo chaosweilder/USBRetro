@@ -5,7 +5,7 @@
 // check if device is TripleController (Arduino based HID)
 static inline bool is_triple_adapter_v1(uint16_t vid, uint16_t pid) {
   bool serial_match = false;
-  bool vidpid_match = (vid == 0x2341 && pid == 0x8036); // Arduino Leonardo
+  bool vidpid_match = (vid == 0x045E && pid == 0x028E); // Arduino Leonardo
 
   if (!vidpid_match) return false;
 
@@ -71,16 +71,16 @@ void process_triple_adapter_v1(uint8_t dev_addr, uint8_t instance, uint8_t const
                ((dpad_right)           ? 0x00 : USBR_BUTTON_DR) |
                ((update_report.b)      ? 0x00 : USBR_BUTTON_B1) |
                ((update_report.a)      ? 0x00 : USBR_BUTTON_B2) |
-               ((update_report.y)      ? 0x00 : USBR_BUTTON_B3) |
-               ((update_report.x)      ? 0x00 : USBR_BUTTON_B4) |
-               ((update_report.l)      ? 0x00 : USBR_BUTTON_L1) |
-               ((update_report.r)      ? 0x00 : USBR_BUTTON_R1) |
-               ((0)                    ? 0x00 : USBR_BUTTON_L2) |
-               ((0)                    ? 0x00 : USBR_BUTTON_R2) |
+               ((update_report.y)      ? 0x00 : USBR_BUTTON_L1) |
+               ((update_report.x)      ? 0x00 : USBR_BUTTON_B3) |
                ((update_report.select) ? 0x00 : USBR_BUTTON_S1) |
                ((update_report.start)  ? 0x00 : USBR_BUTTON_S2) |
                ((0)                    ? 0x00 : USBR_BUTTON_L3) |
                ((0)                    ? 0x00 : USBR_BUTTON_R3) |
+               ((update_report.l)      ? 0x00 : USBR_BUTTON_B4) |
+               ((update_report.r)      ? 0x00 : USBR_BUTTON_R1) |
+               ((0)                    ? 0x00 : USBR_BUTTON_L2) |
+               ((0)                    ? 0x00 : USBR_BUTTON_R2) |
                ((0)                    ? 0x00 : USBR_BUTTON_A1) |
                ((1)/*has_6btns*/       ? 0x00 : 0x800));
 
