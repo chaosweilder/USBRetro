@@ -89,7 +89,6 @@ set(COMMON_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/sony_psc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/switch_pro.c
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/device_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/devices/triple_adapter_v2.c
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/device_registry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/xinput_app.c
     ${CMAKE_CURRENT_SOURCE_DIR}/hid_app.c
