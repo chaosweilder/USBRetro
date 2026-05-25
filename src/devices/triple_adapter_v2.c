@@ -5,7 +5,7 @@
 // check if device is TripleController (Arduino based HID)
 static inline bool is_triple_adapter_v2(uint16_t vid, uint16_t pid) {
   bool serial_match = false;
-  bool vidpid_match = (vid == 0x2341 && pid == 0x8036); // Arduino Leonardo
+  bool vidpid_match = (vid == 0x045E && pid == 0x028E); // Arduino Leonardo
 
   if (!vidpid_match) return false;
 
