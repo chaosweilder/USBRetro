@@ -161,7 +161,10 @@ static void update_device_info(uint8_t dev_addr, int8_t instance, input_transpor
         } else if (layout == LAYOUT_PSX_DIGITAL ||
                    layout == LAYOUT_PSX_DUALSHOCK ||
                    layout == LAYOUT_PSX_DUALSHOCK2 ||
-                   layout == LAYOUT_PSX_NEGCON) {
+                   layout == LAYOUT_PSX_NEGCON ||
+                   layout == LAYOUT_PSX_FLIGHTSTICK ||
+                   layout == LAYOUT_PSX_GUNCON ||
+                   layout == LAYOUT_PSX_JOGCON) {
             // PlayStation controllers: Sony face style (Cross/Circle/Square/Triangle)
             cached_face_style = SINPUT_FACE_SONY;
             cached_gamepad_type = SINPUT_TYPE_STANDARD;

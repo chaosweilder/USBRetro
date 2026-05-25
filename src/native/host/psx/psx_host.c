@@ -15,6 +15,7 @@
 #include "core/router/router.h"
 #include "core/input_event.h"
 #include "core/buttons.h"
+#include "core/services/players/feedback.h"
 
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
@@ -38,7 +39,18 @@
 #define PSX_ID_ANALOG    0x73
 #define PSX_ID_PRESSURE  0x79
 #define PSX_ID_NEGCON    0x23   // Namco neGcon: twist + analog I/II/L
+#define PSX_ID_FLIGHT    0x53   // Analog Joystick / Dual Analog "flight" mode: analog, no Select/L3/R3
+#define PSX_ID_GUNCON    0x63   // Namco GunCon light gun: buttons + 16-bit screen X/Y
+#define PSX_ID_JOGCON    0xE3   // Namco JogCon: paddle wheel + force-feedback motor
 #define PSX_ID_MOUSE     0x12   // PlayStation Mouse (SCPH-1090): 2 buttons + dx/dy
+
+// GunCon screen coordinates -> 0-255 right-stick aim. Approximate NTSC visible
+// range (HSYNC dots / VSYNC scanlines); exact values depend on the CRT and the
+// game's video timing, so these are the calibration knobs if aim is off.
+#define GUNCON_X_MIN  0x004D
+#define GUNCON_X_MAX  0x01CD
+#define GUNCON_Y_MIN  0x0020
+#define GUNCON_Y_MAX  0x0108
 #define PSX_ID_CONFIG    0xF3   // pad is in config/escape mode (not a real report)
 #define NEGCON_BTN_THRESH 0x40  // I/II/L analog press level that latches a button
 
@@ -63,6 +75,7 @@ static volatile bool     psx_busy;          // a transaction is in flight
 static absolute_time_t   psx_next_poll;     // when the next poll may start
 static absolute_time_t   psx_next_config;   // throttle analog-enable retries
 static absolute_time_t   psx_settle_until;  // hold off config until power stabilizes
+static absolute_time_t   psx_a1_hold_until;  // hold A1 after an ANALOG-button toggle
 static uint8_t           config_attempts;   // capped so non-DS2 pads stop retrying
 
 // The bit-bang config (esp. set_bytes_large) is flaky and often needs many
@@ -98,20 +111,24 @@ static bool      last_submitted = false;
 // TRANSACTION
 // ============================================================================
 
+// DualShock rumble motor levels sent in each poll's command bytes (small = on/off,
+// large = PWM). Only take effect after enable_rumble (0x4D) maps them; set from the
+// output's feedback state in psx_host_task.
+static uint8_t psx_rumble_small = 0;   // command byte 2: small motor, 0 off / nonzero on
+static uint8_t psx_rumble_large = 0;   // command byte 3: large motor, 0-255 PWM
+
 // Arm the DMA for one transaction and trigger the PIO. Non-blocking.
-// Read length is adaptive: only a detected DS2 (0x79) needs the 18-byte pressure
-// block; every other pad has 6 data bytes, so reading 9 total (vs 21) ~doubles
-// the poll rate for analog/NegCon pads at the same (slow) clock.
+// Always reads the full 21-byte frame (4 command + 17 data). At 500 kHz the
+// inter-poll recovery gap dominates the rate, so a shorter read wouldn't help.
 static void psx_start_xfer(void) {
-    uint8_t data_bytes = (last_real_id == PSX_ID_PRESSURE) ? 18 : 6;
-    uint8_t total = (uint8_t)(3 + data_bytes);
     psx_busy = true;
     dma_channel_set_write_addr(psx_dma, psx_rx, false);
-    dma_channel_set_trans_count(psx_dma, total, true);          // arm + start
+    dma_channel_set_trans_count(psx_dma, PSX_HW_BYTES, true);   // arm + start
     // Command word, shifted LSB-first by the PIO: byte0=0x01, byte1=0x42,
-    // byte2=0x00, byte3=data_bytes-1 (the PIO `out y,8` reads it as the count).
+    // byte2=small motor, byte3=large motor (the rumble control bytes).
     pio_sm_put(psx_pio, psx_sm,
-               0x01u | (0x42u << 8) | (0x00u << 16) | ((uint32_t)(data_bytes - 1) << 24));
+               0x01u | (0x42u << 8) |
+               ((uint32_t)psx_rumble_small << 16) | ((uint32_t)psx_rumble_large << 24));
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +178,9 @@ static void psx_send_config(void) {
     // (e.g. mid-boot on hot-swap) latch the pad in 0x73 and reject re-config, so
     // it gets stuck without pressure. Unlocked, a later retry can still upgrade it.
     static const uint8_t set_mode[]        = {0x01, 0x44, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
+    // Map poll command byte 2 -> small motor (0x00), byte 3 -> large motor (0x01),
+    // so the rumble bytes in psx_start_xfer's command word actually drive the motors.
+    static const uint8_t enable_rumble[]   = {0x01, 0x4D, 0x00, 0x00, 0x01};
     static const uint8_t set_bytes_large[] = {0x01, 0x4F, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x00, 0x00};
     static const uint8_t exit_config[]     = {0x01, 0x43, 0x00, 0x00, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A};
 
@@ -185,6 +205,7 @@ static void psx_send_config(void) {
     psx_bb_cmd(enter_config,    sizeof(enter_config));
     psx_bb_cmd(type_read,       sizeof(type_read));       // read type (primes the pad)
     psx_bb_cmd(set_mode,        sizeof(set_mode));        // analog + lock
+    psx_bb_cmd(enable_rumble,   sizeof(enable_rumble));   // map the two motor bytes
     // Send the DS2 full-pressure command several times — the mask bytes are the
     // flaky part, so repeating raises the odds all bytes land in one config pass.
     psx_bb_cmd(set_bytes_large, sizeof(set_bytes_large));
@@ -223,10 +244,20 @@ static controller_layout_t psx_layout_for_id(uint8_t id) {
     switch (id) {
         case PSX_ID_DIGITAL:  return LAYOUT_PSX_DIGITAL;
         case PSX_ID_ANALOG:   return LAYOUT_PSX_DUALSHOCK;
+        case PSX_ID_FLIGHT:   return LAYOUT_PSX_FLIGHTSTICK;
+        case PSX_ID_GUNCON:   return LAYOUT_PSX_GUNCON;
+        case PSX_ID_JOGCON:   return LAYOUT_PSX_JOGCON;
         case PSX_ID_PRESSURE: return LAYOUT_PSX_DUALSHOCK2;
         case PSX_ID_NEGCON:   return LAYOUT_PSX_NEGCON;
         default:              return LAYOUT_PSX_DUALSHOCK;
     }
+}
+
+// Scale a GunCon screen coordinate (lo..hi) to a 0-255 analog-stick value.
+static uint8_t guncon_scale(uint16_t v, uint16_t lo, uint16_t hi) {
+    if (v <= lo) return 0;
+    if (v >= hi) return 255;
+    return (uint8_t)((uint32_t)(v - lo) * 255u / (hi - lo));
 }
 
 // Decode PS1/PS2 button bytes (active-low: 0 = pressed) into JP_BUTTON_* bitmap.
@@ -327,6 +358,18 @@ static void psx_process(const uint8_t* buf);
 void psx_host_task(void) {
     if (!initialized) return;
 
+    // 0) Pull the latest rumble from the output's feedback state into the motor
+    //    bytes the next poll sends. Heavy/low motor -> large (PWM), light/high
+    //    motor -> small (on/off). A JogCon is excluded: it drives its own motor
+    //    bytes for the wheel recenter (set in psx_process), not host rumble.
+    if (last_real_id != PSX_ID_JOGCON) {
+        feedback_state_t* fb = feedback_get_state(0);
+        if (fb) {
+            psx_rumble_large = fb->rumble.left;
+            psx_rumble_small = (fb->rumble.right > 0) ? 0xFF : 0x00;
+        }
+    }
+
     // 1) Consume the latest completed transaction (if any).
     if (psx_new) {
         psx_new = false;
@@ -360,10 +403,7 @@ void psx_host_task(void) {
 // Decode one completed transaction and submit a router event on state change.
 static void psx_process(const uint8_t* buf) {
     uint8_t id = buf[1];
-    // True only if the PREVIOUS poll was a 0x79, i.e. this poll requested the full
-    // 21-byte read — so buf[9..20] hold fresh pressure. On the first 0x79 frame
-    // (still a 9-byte read) this is false, so we skip the stale pressure block.
-    bool was_pressure = (last_real_id == PSX_ID_PRESSURE);
+    uint8_t prev_real = last_real_id;   // for ANALOG-button toggle detection
     // Decode only genuine controller IDs. A config-mode response (0xF3, seen when a
     // flaky exit_config briefly leaves the pad in config mode) is "present" but must
     // NOT reach decode_buttons — it produces phantom multi-button presses. Instead
@@ -371,7 +411,9 @@ static void psx_process(const uint8_t* buf) {
     // never reaches 0x79 so it re-configs continuously, unlike a DS2 that latches
     // 0x79 and stops; a DS1 left stuck in config mode would otherwise read as gone.
     bool decodable = (id == PSX_ID_DIGITAL || id == PSX_ID_ANALOG ||
-                      id == PSX_ID_PRESSURE || id == PSX_ID_NEGCON);
+                      id == PSX_ID_FLIGHT || id == PSX_ID_PRESSURE ||
+                      id == PSX_ID_NEGCON || id == PSX_ID_GUNCON ||
+                      id == PSX_ID_JOGCON);
     bool is_mouse = (id == PSX_ID_MOUSE);   // PlayStation Mouse: relative pointer
     bool present = decodable || is_mouse || id == PSX_ID_CONFIG;
 
@@ -388,6 +430,16 @@ static void psx_process(const uint8_t* buf) {
             config_attempts = 0;
             psx_settle_until = make_timeout_time_us(PSX_CONFIG_SETTLE_US);
         }
+    }
+
+    // ANALOG-button -> A1 (Guide/PS). DS1/DS2 don't report the ANALOG button as a
+    // bit; it toggles digital<->analog. Since config keeps the pad in analog, a pad
+    // that was analog suddenly reporting digital (0x41) means ANALOG was pressed (a
+    // real digital-only pad is never analog first). Hold A1 briefly so a console's
+    // PS-button init registers while config flips it back to analog.
+    if (id == PSX_ID_DIGITAL &&
+        (prev_real == PSX_ID_ANALOG || prev_real == PSX_ID_PRESSURE)) {
+        psx_a1_hold_until = make_timeout_time_us(200000);   // ~200 ms
     }
 
     if (decodable) {
@@ -418,9 +470,10 @@ static void psx_process(const uint8_t* buf) {
             pressure[10] = buf[6];   // I  -> Cross  (analog)
             pressure[11] = buf[7];   // II -> Square (analog)
             pressure[6]  = buf[8];   // L  -> L1     (analog)
-        } else if (last_id == PSX_ID_ANALOG || last_id == PSX_ID_PRESSURE) {
+        } else if (last_id == PSX_ID_ANALOG || last_id == PSX_ID_FLIGHT ||
+                   last_id == PSX_ID_PRESSURE) {
             rx = buf[5]; ry = buf[6]; lx = buf[7]; ly = buf[8];
-            if (last_id == PSX_ID_PRESSURE && was_pressure) {
+            if (last_id == PSX_ID_PRESSURE) {
                 // DualShock 2 full mode: 12 pressure bytes follow the sticks.
                 // DS2 wire order (buf[9..20]):
                 //   Right,Left,Up,Down, Tri,Cir,Cross,Sq, L1,R1,L2,R2
@@ -440,6 +493,42 @@ static void psx_process(const uint8_t* buf) {
                 pressure[10] = buf[15];  // cross
                 pressure[11] = buf[16];  // square
             }
+        } else if (last_id == PSX_ID_GUNCON) {
+            // GunCon light gun: same reply shape as DualShock. Buttons already
+            // decoded (A->Start, B->Cross, Trigger->Circle). The analog bytes are
+            // 16-bit screen coordinates: X=HSYNC dots, Y=VSYNC scanlines. Map the
+            // aim to the right stick (RX/RY). Off-screen / no light is signalled by
+            // X==0x0001 (Y 0x05 unexpected light, 0x0A no light) -> center the aim.
+            uint16_t gx = ((uint16_t)buf[6] << 8) | buf[5];
+            uint16_t gy = ((uint16_t)buf[8] << 8) | buf[7];
+            if (gx == 0x0001) {
+                rx = 128; ry = 128;   // off-screen: neutral aim
+            } else {
+                rx = guncon_scale(gx, GUNCON_X_MIN, GUNCON_X_MAX);
+                ry = guncon_scale(gy, GUNCON_Y_MIN, GUNCON_Y_MAX);
+            }
+        } else if (last_id == PSX_ID_JOGCON) {
+            // JogCon paddle wheel -> left-stick X. buf[5] is the wheel offset from
+            // its power-on center: 0x00 center, 0x01..0x7F clockwise (right),
+            // 0x80..0xFF counter-clockwise (left); buf[6] counts full rotations.
+            // Cap at half a turn each way (per PsxNewLib), then center at 128.
+            uint8_t w = buf[5];
+            uint8_t pos;
+            if (buf[6] < 0x80) pos = (w < 0x80) ? w : 0x7F;   // CW, cap right
+            else               pos = (w > 0x80) ? w : 0x81;   // CCW, cap left
+            lx = (uint8_t)(pos + 0x80);
+
+            // Recenter force-feedback (EXPERIMENTAL — JogCon FF protocol is
+            // undocumented). Drive the motor opposite the wheel offset, ramped by
+            // distance, through the rumble motor bytes (small=CW, large=CCW guess).
+            uint8_t mag = (w == 0) ? 0 : (w < 0x80 ? w : (uint8_t)(0x100 - w));
+            if (mag < 6) {
+                psx_rumble_small = 0; psx_rumble_large = 0;   // deadzone near center
+            } else {
+                uint8_t force = (mag > 0x40) ? 0xFF : (uint8_t)(mag << 2);
+                psx_rumble_small = (w >= 0x80) ? force : 0;   // wheel left  -> push CW
+                psx_rumble_large = (w <  0x80) ? force : 0;   // wheel right -> push CCW
+            }
         }
 
         // PS1/PS2 pads have no PS/Guide (Home) button, which some consoles need to
@@ -449,6 +538,9 @@ static void psx_process(const uint8_t* buf) {
             buttons |= JP_BUTTON_A1;
             buttons &= ~(JP_BUTTON_S1 | JP_BUTTON_S2);
         }
+
+        // Hold A1 for the window after an ANALOG-button toggle was detected.
+        if (!time_reached(psx_a1_hold_until)) buttons |= JP_BUTTON_A1;
 
         // Pressure controllers (neGcon) stream every poll so analog pressure
         // updates continuously, not just when a button bit toggles.

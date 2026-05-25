@@ -80,6 +80,9 @@ typedef enum {
     LAYOUT_PSX_DUALSHOCK,       // PS1/PS2 analog DualShock (ID 0x73)
     LAYOUT_PSX_DUALSHOCK2,      // PS2 DualShock 2 (ID 0x79): pressure-sensitive
     LAYOUT_PSX_NEGCON,          // Namco neGcon (ID 0x23): twist + analog I/II/L
+    LAYOUT_PSX_FLIGHTSTICK,     // Analog Joystick / Dual Analog flight mode (ID 0x53)
+    LAYOUT_PSX_GUNCON,          // Namco GunCon light gun (ID 0x63): aim on right stick
+    LAYOUT_PSX_JOGCON,          // Namco JogCon (ID 0xE3): paddle wheel on left stick X
     LAYOUT_PSX_MOUSE,           // PlayStation Mouse (ID 0x12): 2 buttons + dx/dy
 } controller_layout_t;
 

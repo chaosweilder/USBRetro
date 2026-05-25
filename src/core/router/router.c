@@ -191,6 +191,9 @@ static const char* get_device_name(const input_event_t* event) {
                 case LAYOUT_PSX_DUALSHOCK:    return "DualShock";
                 case LAYOUT_PSX_DUALSHOCK2:   return "DualShock 2";
                 case LAYOUT_PSX_NEGCON:       return "neGcon";
+                case LAYOUT_PSX_FLIGHTSTICK:  return "Analog Joystick";
+                case LAYOUT_PSX_GUNCON:       return "GunCon";
+                case LAYOUT_PSX_JOGCON:       return "JogCon";
                 case LAYOUT_PSX_MOUSE:        return "PlayStation Mouse";
                 default:                      return "Native";
             }
