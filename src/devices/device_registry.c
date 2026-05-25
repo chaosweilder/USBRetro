@@ -38,6 +38,7 @@ void register_devices() {
     device_interfaces[CONTROLLER_DINPUT] = &hid_gamepad_interface;
     device_interfaces[CONTROLLER_KEYBOARD] = &hid_keyboard_interface;
     device_interfaces[CONTROLLER_MOUSE] = &hid_mouse_interface;
+    device_interfaces[CONTROLLER_3DAPTER] = &triple_adapter_v2_interface;
     // Register other devices here
     // device_interfaces[1] = &another_device_interface;
 
