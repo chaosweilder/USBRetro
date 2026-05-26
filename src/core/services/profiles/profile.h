@@ -282,6 +282,9 @@ const profile_t* profile_get_by_index(output_target_t output, uint8_t index);
 
 // Switch profiles (legacy - affects player 0, with feedback)
 void profile_set_active(output_target_t output, uint8_t index);
+// Same effect for this session, no flash write — for live-control flows
+// (joypad-live) that would otherwise burn flash with thousands of switches.
+void profile_select_active(output_target_t output, uint8_t index);
 void profile_cycle_next(output_target_t output);
 void profile_cycle_prev(output_target_t output);
 

@@ -39,7 +39,8 @@ typedef struct {
     //                 8=S1, 9=S2, 10=L3, 11=R3, 12=DU, 13=DD, 14=DL, 15=DR, 16=A1, 17=A2
     uint8_t left_stick_sens;   // 0-200 (100 = 1.0x, 50 = 0.5x, 200 = 2.0x)
     uint8_t right_stick_sens;  // 0-200
-    uint8_t flags;             // Bit 0: swap sticks, Bit 1: invert LY, Bit 2: invert RY
+    uint8_t flags;             // Bit 0: swap sticks, Bit 1: invert LY, Bit 2: invert RY,
+                               // Bit 3: invert LX, Bit 4: invert RX
     uint8_t socd_mode;         // SOCD cleaning mode (0=passthrough, 1=neutral, 2=up-priority, 3=last-win)
     uint8_t l2_threshold;      // Analog L2 → digital threshold; 0 = use default (128)
     uint8_t r2_threshold;      // Analog R2 → digital threshold; 0 = use default (128)
@@ -50,6 +51,8 @@ typedef struct {
 #define PROFILE_FLAG_SWAP_STICKS  (1 << 0)
 #define PROFILE_FLAG_INVERT_LY    (1 << 1)
 #define PROFILE_FLAG_INVERT_RY    (1 << 2)
+#define PROFILE_FLAG_INVERT_LX    (1 << 3)
+#define PROFILE_FLAG_INVERT_RX    (1 << 4)
 
 // ============================================================================
 // Flash Settings Structure
@@ -169,6 +172,42 @@ uint8_t flash_get_active_profile_index(void);
 // Set active custom profile index (saves to flash with debouncing)
 void flash_set_active_profile_index(uint8_t index);
 
+// Ephemeral variant of the above: update RAM only, do not write to flash.
+// For live-control flows (joypad-live) where many switches per session
+// would otherwise burn flash. Persistent boot default is unchanged.
+void flash_select_active_profile_index(uint8_t index);
+
+// ============================================================================
+// Runtime Overlay (OVERLAY.SET / OVERLAY.CLEAR)
+// ============================================================================
+// A RAM-only "live tweak" layer applied on top of whatever profile is active
+// (built-in, custom, or PROFILE.APPLY ephemeral). Fields set to 0 mean
+// "no change" so the overlay is strictly additive. Unlike PROFILE.APPLY,
+// the overlay does NOT replace the active button_map — it just adds stick /
+// SOCD / threshold transforms.
+//
+// Example: "invert stick X while keeping the current profile's button remap"
+//   OVERLAY.SET {"flags": 8}        // PROFILE_FLAG_INVERT_LX
+//   OVERLAY.CLEAR                   // remove the tweak
+
+typedef struct {
+    uint8_t flags;             // OR'd with profile flags (SWAP_STICKS, INVERT_*)
+    uint8_t left_stick_sens;   // 0 = no change; 1..200 replaces (100 = 1.0x)
+    uint8_t right_stick_sens;  // 0 = no change; 1..200 replaces
+    uint8_t socd_mode;         // 0 = no change; 1..3 overrides
+    uint8_t l2_threshold;      // 0 = no change; 1..255 overrides
+    uint8_t r2_threshold;      // 0 = no change; 1..255 overrides
+} runtime_overlay_t;
+
+// Copy o into the overlay slot and activate it. Pass NULL to deactivate.
+void flash_set_overlay(const runtime_overlay_t* o);
+
+// Deactivate the overlay (idempotent).
+void flash_clear_overlay(void);
+
+// Returns the active overlay, or NULL if none is set.
+const runtime_overlay_t* flash_get_overlay(void);
+
 // Get total profile count (1 default + custom_profile_count)
 uint8_t flash_get_total_profile_count(void);
 
@@ -178,6 +217,26 @@ const custom_profile_t* flash_get_active_custom_profile(void);
 // Cycle to next/previous profile (wraps around)
 void flash_cycle_profile_next(void);
 void flash_cycle_profile_prev(void);
+
+// ============================================================================
+// Ephemeral Runtime Profile Override (PROFILE.APPLY)
+// ============================================================================
+// RAM-only profile slot that supersedes the flash-stored active profile while
+// set. Not persisted, not counted in PROFILE.LIST. Designed for crowd-control
+// / live-remap workflows where many unique maps flow in over short windows —
+// no flash wear, no 4-slot ceiling. Any explicit profile selection
+// (PROFILE.SET / SELECT+D-pad cycling) automatically clears it.
+
+// Copy the given profile into the ephemeral slot and activate it.
+// Pass NULL to deactivate (equivalent to flash_clear_ephemeral_profile).
+void flash_apply_ephemeral_profile(const custom_profile_t* cp);
+
+// Deactivate the ephemeral slot; flash_get_active_custom_profile() resumes
+// returning the flash-stored active profile.
+void flash_clear_ephemeral_profile(void);
+
+// True if an ephemeral profile is currently overriding the flash-stored one.
+bool flash_has_ephemeral_profile(void);
 
 // Persist the system-wide D-pad mode (0=dpad, 1=left stick, 2=right stick).
 // Marks router_saved=1 so apps that restore on boot know the value was

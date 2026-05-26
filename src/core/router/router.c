@@ -900,6 +900,13 @@ void router_submit_input(const input_event_t* event) {
             if (cp->flags & PROFILE_FLAG_INVERT_RY) {
                 remapped.analog[ANALOG_RY] = 255 - remapped.analog[ANALOG_RY];
             }
+            // Invert X axes
+            if (cp->flags & PROFILE_FLAG_INVERT_LX) {
+                remapped.analog[ANALOG_LX] = 255 - remapped.analog[ANALOG_LX];
+            }
+            if (cp->flags & PROFILE_FLAG_INVERT_RX) {
+                remapped.analog[ANALOG_RX] = 255 - remapped.analog[ANALOG_RX];
+            }
 
             // SOCD cleaning
             if (cp->socd_mode > 0 && cp->socd_mode <= 3) {
@@ -921,6 +928,77 @@ void router_submit_input(const input_event_t* event) {
                 }
             }
 
+            did_remap = true;
+            event = &remapped;
+        }
+    }
+
+    // Apply runtime overlay (OVERLAY.SET) — composes ON TOP of whatever
+    // profile is active, including the output device's built-in profile_t
+    // (the overlay's stick/SOCD/threshold tweaks run before output dispatch).
+    // Lets joypad-live add things like "invert LX" without disturbing the
+    // active profile's button_map. Fields with value 0 are skipped, so the
+    // overlay is strictly additive.
+    {
+        const runtime_overlay_t* ov = flash_get_overlay();
+        if (ov) {
+            if (!did_remap) {
+                remapped = *event;
+            }
+            // Stick sensitivity (replace if non-zero)
+            if (ov->left_stick_sens != 0 && ov->left_stick_sens != 100) {
+                float sens = ov->left_stick_sens / 100.0f;
+                int16_t rx = (int16_t)remapped.analog[ANALOG_LX] - 128;
+                int16_t ry = (int16_t)remapped.analog[ANALOG_LY] - 128;
+                remapped.analog[ANALOG_LX] = (uint8_t)(128 + (int16_t)(rx * sens));
+                remapped.analog[ANALOG_LY] = (uint8_t)(128 + (int16_t)(ry * sens));
+            }
+            if (ov->right_stick_sens != 0 && ov->right_stick_sens != 100) {
+                float sens = ov->right_stick_sens / 100.0f;
+                int16_t rx = (int16_t)remapped.analog[ANALOG_RX] - 128;
+                int16_t ry = (int16_t)remapped.analog[ANALOG_RY] - 128;
+                remapped.analog[ANALOG_RX] = (uint8_t)(128 + (int16_t)(rx * sens));
+                remapped.analog[ANALOG_RY] = (uint8_t)(128 + (int16_t)(ry * sens));
+            }
+            // Swap sticks
+            if (ov->flags & PROFILE_FLAG_SWAP_STICKS) {
+                uint8_t tx = remapped.analog[ANALOG_LX], ty = remapped.analog[ANALOG_LY];
+                remapped.analog[ANALOG_LX] = remapped.analog[ANALOG_RX];
+                remapped.analog[ANALOG_LY] = remapped.analog[ANALOG_RY];
+                remapped.analog[ANALOG_RX] = tx;
+                remapped.analog[ANALOG_RY] = ty;
+            }
+            // Invert axes
+            if (ov->flags & PROFILE_FLAG_INVERT_LY) {
+                remapped.analog[ANALOG_LY] = 255 - remapped.analog[ANALOG_LY];
+            }
+            if (ov->flags & PROFILE_FLAG_INVERT_RY) {
+                remapped.analog[ANALOG_RY] = 255 - remapped.analog[ANALOG_RY];
+            }
+            if (ov->flags & PROFILE_FLAG_INVERT_LX) {
+                remapped.analog[ANALOG_LX] = 255 - remapped.analog[ANALOG_LX];
+            }
+            if (ov->flags & PROFILE_FLAG_INVERT_RX) {
+                remapped.analog[ANALOG_RX] = 255 - remapped.analog[ANALOG_RX];
+            }
+            // SOCD cleaning
+            if (ov->socd_mode > 0 && ov->socd_mode <= 3) {
+                remapped.buttons = apply_socd(remapped.buttons,
+                    (socd_mode_t)ov->socd_mode, 0);
+            }
+            // L2/R2 thresholds
+            if (ov->l2_threshold != 0) {
+                remapped.buttons &= ~JP_BUTTON_L2;
+                if (remapped.analog[ANALOG_L2] >= ov->l2_threshold) {
+                    remapped.buttons |= JP_BUTTON_L2;
+                }
+            }
+            if (ov->r2_threshold != 0) {
+                remapped.buttons &= ~JP_BUTTON_R2;
+                if (remapped.analog[ANALOG_R2] >= ov->r2_threshold) {
+                    remapped.buttons |= JP_BUTTON_R2;
+                }
+            }
             did_remap = true;
             event = &remapped;
         }

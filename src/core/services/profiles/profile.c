@@ -202,7 +202,12 @@ const profile_t* profile_get_by_index(output_target_t output, uint8_t index)
 // PROFILE SWITCHING
 // ============================================================================
 
-void profile_set_active(output_target_t output, uint8_t index)
+// Shared core for the persistent (profile_set_active) and ephemeral
+// (profile_select_active) variants. persist=true writes the new index to
+// flash; persist=false updates RAM and triggers feedback only. The latter
+// is for joypad-live / crowd-control flows where flash writes per switch
+// would burn out the chip over thousands of changes per session.
+static void profile_set_active_internal(output_target_t output, uint8_t index, bool persist)
 {
     const profile_set_t* set = get_profile_set(output);
     if (!set || set->profile_count == 0 || index >= set->profile_count) {
@@ -224,11 +229,26 @@ void profile_set_active(output_target_t output, uint8_t index)
     uint8_t player_count = get_player_count ? get_player_count() : 0;
     profile_indicator_trigger(index, player_count);
 
-    // Save to flash
-    profile_save_to_flash(output);
+    if (persist) {
+        profile_save_to_flash(output);
+    }
 
     const char* name = profile_get_name(output, index);
-    printf("[profile] Switched to: %s (output=%d)\n", name ? name : "(unknown)", output);
+    printf("[profile] %s: %s (output=%d)\n",
+           persist ? "Switched" : "Selected (RAM only)",
+           name ? name : "(unknown)", output);
+}
+
+void profile_set_active(output_target_t output, uint8_t index)
+{
+    profile_set_active_internal(output, index, /*persist=*/true);
+}
+
+// Ephemeral variant: same effect for the current session, no flash write.
+// On reboot, the previously-persisted selection comes back.
+void profile_select_active(output_target_t output, uint8_t index)
+{
+    profile_set_active_internal(output, index, /*persist=*/false);
 }
 
 void profile_cycle_next(output_target_t output)
