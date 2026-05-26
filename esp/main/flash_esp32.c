@@ -268,3 +268,16 @@ void flash_set_dpad_mode(uint8_t mode)
     runtime_settings.router_saved = 1;
     flash_save(&runtime_settings);
 }
+
+// Shoulder-swap persistence — referenced by core/router for the L1<->L2 /
+// R1<->R2 toggle. NVS-backed so the choice survives a reboot, mirroring the
+// RP2040 flash_set_shoulder_swap contract.
+void flash_set_shoulder_swap(uint8_t on)
+{
+    on = on ? 1 : 0;
+    if (!runtime_settings_loaded) return;
+    if (runtime_settings.shoulder_swap == on && runtime_settings.router_saved) return;
+    runtime_settings.shoulder_swap = on;
+    runtime_settings.router_saved = 1;
+    flash_save(&runtime_settings);
+}
