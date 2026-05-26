@@ -6,6 +6,84 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.0] — 2026-05-26
+
+### Added
+
+#### New Apps
+- **psx2usb** — PlayStation 1 / PlayStation 2 controllers → USB HID. Hardware-paced PIO+DMA SIO transport (500 kHz, active-pull-up to read old analog pads like the SCPH-110 cleanly at fast clock). Auto-detects controller type and decodes: Digital (SCPH-1080), DualShock analog (0x73), DualShock 2 pressure (0x79), neGcon (0x23), Dual Analog flightstick / SCPH-1110 (0x53), Namco GunCon light gun (0x63) with screen X/Y → right stick, Namco JogCon (0xE3) with paddle wheel → left-stick X plus experimental recenter force-feedback, and PlayStation Mouse / SCPH-1090 (0x12) with relative cursor + 2 buttons. Outputs to all USB device modes; SInput reports authentic Sony face-style and per-protocol layout names. Build targets: `psx2usb_qtpy`, `psx2usb_kb2040`, `psx2usb_pico`.
+- **gc2eth** — GameCube → Ethernet bridge (W5500 / CH9120) for relaying joybus traffic to Dolphin over TCP. Intercept-replay state machine, STATUS-poll caching, speculative pre-send / WRITE / READ caches (experimental, for Madden multiboot research).
+- **joypad-mcp** — MCP server tool for driving an adapter as a synthetic player (vision pipeline, autoplay loop, web control UI, camera pause/resume).
+
+#### New Output Modes
+- **GBA Link** — `gc2usb` `USB_OUTPUT_MODE_GBA_LINK` vendor-bulk transport that exposes the GBA's joybus link over USB to a forked Dolphin (10× faster than TCP); multiboot of payload onto real GBA via `tools/usbgba-multiboot`; verified end-to-end with the joypad GBA-as-controller payload. Behind a CMake opt-in.
+- **GameCube GBA-as-controller** — `gc2usb` multiboots Doridian's gba-as-controller payload onto a connected GBA so it becomes a controller, with an animated eyes overlay and per-USB-mode splash text on the multiboot ROM.
+- **3DO keyboard and mouse** — `usb23do` routes USB keyboards (ID 0x4B) and mice (ID 0x49) to the 3DO's keyboard/mouse pod outputs.
+- **Amiga / Atari DE9 output** — Amiga/Atari CD32 + joystick output driver for XIAO RP2040 (`USB2AMI`, community contribution).
+
+#### New Board Targets
+- **HID-Remapper `remapper_v7`** — `usb2usb` dual-RP2040 host+device split board (SWD link on GP28/27, side-channel on GP23/24/25/26; power-cycle after flash is by design). MAX3421E SPI USB host variant (`usb2usb_feather_rp2040_usb_host_max3421`) for the Adafruit USB Host FeatherWing path.
+- **`controller_btusb_feather_rp2040_usb_host`** — new target with tri-state pins, USB-host capability, and OLED + I2C peer.
+- **`gc2usb_pico`** — Raspberry Pi Pico target with status LED, BOOTSEL button, and USB mode switching (GC data on GP28).
+- **`gc2usb_rp2040zero`** — CMake target aligned with the shipped GP29 wiring.
+
+#### Output & Device
+- **Dreamcast VMU emulation** — FT1 / FT3 (and SD-card backed) persistence; gating via `CONFIG_VMU` / `CONFIG_SD`.
+- **SD card filesystem** — SD HAL + FatFs filesystem service (PR #1 baseline).
+- **OLED menu** — tiny static-table OLED menu (USB Mode / Reboot / Bootloader) for controller-with-display builds.
+- **eyes animation** — standalone two-eye animation module with per-button reactions; consumed by `controller_btusb` and `gba-as-controller`.
+- **player_leds_gpio** — 4-LED player indicator driven from raw GPIOs (compile-time, opt-in).
+- **uart_host** — drains synthetic input via stdio stdin (drops the unused AI inject/blend protocol).
+- **CAPS.GET** — web config can query the active app's input/output capabilities.
+- **CDC streaming** — single-USB-packet event format cuts streaming latency on the data CDC.
+- **Runtime profile / auto-fire** — runtime button mapping and turbo/auto-fire with `usb2neogeo` adoption (community contribution by herzmx, PR #131).
+
+#### Controller & Input
+- **Mouse via gamepad** — quadrature-encoded mouse input, scroll wheel, auto-detect from device type, platform switching, per-platform DPI.
+- **Xbox One console auth pass-through** (`xbone`) — completes the Xbox One console-side handshake; MAX3421E SPI clock bumped to 16 MHz for chunked-auth headroom; GIP_VIRTUAL_KEYCODE emitted for the Guide button.
+- **Switch Pro Joy-Con Charging Grip** — works as a single player (was previously two slots).
+- **Sony DS4 (USB)** — radial deadzone instead of per-axis rectangular.
+
+### Changed
+- **XInput XSM3** — per-board Xbox 360 security serial derived from the RP2040 chip unique ID (matches USB `iSerialNumber`), with the packet XOR checksum recomputed. Two adapters can now authenticate to one Xbox 360 simultaneously; previously the console accepted the first and rejected the second as a duplicate.
+- **SInput feature response** — re-framed as a 64-byte packet with a command-echo byte so SDL/Steam recognize the device; without it the controller was "detected but no buttons in Steam".
+- **SInput polling rate** — advertised 1 kHz to match the 1 ms HID endpoint.
+- **`gc2usb`** — per-controller hotkeys (instead of global); GBA shoulder-button swap option; persistent d-pad mode; S1+S2 hotkey combos; auto-calibrating L2/R2 rest values with threshold=0 (fixes stuck-on triggers).
+- **`bt2usb`** — `REQUIRE_BT_INPUT` defined so fresh boards default to BT host ON.
+- **`flash`** — schema-versioned settings + pad config; auto-wipes on schema mismatch instead of mis-applying old data.
+- **HID host** — only fetches the USB product string for unknown devices (skip for known VID/PID).
+- **NeoPixel power pin** — drives the load-switch via `PICO_DEFAULT_WS2812_POWER_PIN` (e.g., Feather RP2040 P1.14).
+- **pico-pio-usb** pinned to `d6c02ac` (pre-tightening); Docker forced to ARM GNU Toolchain 15.2.rel1; Makefile auto-detects the latest ARM GNU install instead of a hard-pinned version.
+- **`controller_btusb`** — paged display modes, FeatherWing pin-mapping fix, general hardening; ESP32 / nRF pico-sdk include guards.
+- **`pad`** — validate saved config + bound I2C ops + better web defaults.
+
+### Fixed
+- **GameCube keyboard** — 3-key rollover + arrow-key D-pad inversion.
+- **Dreamcast** — enumeration race condition and VMU write reliability; Core-0 TX workaround restored on KB2040; upstream Core-1 TX config restored on `usb2dc`.
+- **`switch_pro`** — flaky init by handling `0x21` reports and guarding LED OFF spam.
+- **`wii_ext`** — neutral report seeded for format 0x03 (Pro default) so initial reads aren't garbage.
+- **Router MERGE_BLEND** — analog stick read using local merge buffer (community PR #133, herzmx) plus a separate fix for analog stick reads from the merge buffer.
+- **`xbone`** — CI link errors for non-USB-device targets.
+- **`gc2usb` GBA Link** — Kawasedo cipher (multiboot) ported verbatim from `eth-multiboot.js`; aggressive cold-start RESET retry (the first joybus RESET after GBA power-cycle fails ~50% of the time); 130 MHz sys_clock set before `tusb_init`; init-order, FIFO sizing, and flow-control hardening.
+- **CD32 / Amiga output** — ghost button presses during BOOTSEL reads; LED disconnect detection.
+- **`profile`** — don't force L2/R2 threshold when no profile is loaded.
+- **`neopixel`** — blink states behind `reset_period` no longer race.
+- **`usb2neogeo`** — profile cycling fix; runtime_profile docs.
+
+### Build / CI / Docs
+- `esp/nrf` builds — fix unguarded pico-sdk headers + add `flash_set_dpad_mode` stubs so cross-platform code links.
+- `controller_btusb` added to release artifacts on rpi / esp / nrf; `usb2usb_feather_rp2040_usb_host` added to the release matrix.
+- Unified `docs/usb2gc` build guide covering KB2040 / Pi Pico / RP2040-Zero; corrected bogus pinout claims; "Build" column in adapter tables; "DIY" page surfaces guides.
+- `tools/dolphin-fork` build instructions for the `joypad-gba-usb` fork.
+- `.dev/docs` removed from tracking — internal planning files, now gitignored.
+- FUNDING switched to GitHub Sponsors.
+
+### Community contributions
+- **herzmx** — runtime mapping + auto-fire profile (PR #131), `usb2neogeo` adoption; MERGE_BLEND race fix (PR #133); `usbh_alt_ps3` driver (PR #132).
+- **thgill** — `USB2AMI` Amiga/Atari output + Dreamcast VMU/SD merge (PR #140).
+
+---
+
 ## [2.0.0] — 2026-04-18
 
 ### Added

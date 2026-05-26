@@ -46,6 +46,7 @@ nav:
     - WiFi (JOCP): input/wifi-jocp.md
     - SNES: input/snes.md
     - N64: input/n64.md
+    - PSX/PS2: input/psx.md
     - GameCube: input/gamecube.md
     - LodgeNet: input/lodgenet.md
     - NES: input/nes.md
@@ -101,6 +102,7 @@ nav:
       - neogeo2usb: apps/neogeo2usb.md
       - lodgenet2usb: apps/lodgenet2usb.md
       - wii2usb: apps/wii2usb.md
+      - psx2usb: apps/psx2usb.md
     - Wii Adapters:
       - wii2gc (GameCube): apps/wii2gc.md
       - wii2n64 (N64): apps/wii2n64.md
