@@ -26,6 +26,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **`controller_btusb_feather_rp2040_usb_host`** — new target with tri-state pins, USB-host capability, and OLED + I2C peer.
 - **`gc2usb_pico`** — Raspberry Pi Pico target with status LED, BOOTSEL button, and USB mode switching (GC data on GP28).
 - **`gc2usb_rp2040zero`** — CMake target aligned with the shipped GP29 wiring.
+- **`bt2usb_waveshare_rp2350b_plus_w`** — `bt2usb` for the Waveshare RP2350B-Plus-W. Waveshare wires the Raspberry Pi RM2 module to GP36/37/38/39 (REG_ON/DATA/CS/CLK) instead of the Pico 2 W's GP23/24/25/29; a custom board header in `src/boards/headers/` keeps the radio pins right and uses GP23 as LED2 instead of asserting WL_REG_ON. A stock `bt2usb_pico2_w` UF2 does not work on this board.
 
 #### Output & Device
 - **Dreamcast VMU emulation** — FT1 / FT3 (and SD-card backed) persistence; gating via `CONFIG_VMU` / `CONFIG_SD`.

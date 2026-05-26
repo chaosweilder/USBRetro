@@ -1280,9 +1280,11 @@ target_link_libraries(joypad_usb_rp2350usba PRIVATE ${COMMON_LIBRARIES} tinyusb_
 joypad_target_common(joypad_usb_rp2350usba)
 joypad_add_btstack(joypad_usb_rp2350usba)
 
-# --- BT to USB (Pico W / Pico 2 W built-in Bluetooth) ---
-# Only build when targeting Pico W or Pico 2 W
-if (PICO_BOARD STREQUAL "pico_w" OR PICO_BOARD STREQUAL "pico2_w")
+# --- BT to USB (Pico W / Pico 2 W / Waveshare RP2350B-Plus-W built-in Bluetooth) ---
+# Only build when targeting a board with a built-in CYW43 / RM2 radio
+if (PICO_BOARD STREQUAL "pico_w" OR
+    PICO_BOARD STREQUAL "pico2_w" OR
+    PICO_BOARD STREQUAL "waveshare_rp2350b_plus_w")
     add_executable(joypad_bt2usb)
     target_compile_definitions(joypad_bt2usb PRIVATE
         CONFIG_BT2USB=1

@@ -59,6 +59,7 @@ BOARD_SCRIPT_feather := boards/build_ada_feather.sh
 BOARD_SCRIPT_macropad := boards/build_ada_macropad.sh
 BOARD_SCRIPT_rp2350usba := boards/build_waveshare_rp2350_usb_a.sh
 BOARD_SCRIPT_rp2040_eth := boards/build_waveshare_rp2040_eth.sh
+BOARD_SCRIPT_waveshare_rp2350b_plus_w := boards/build_waveshare_rp2350b_plus_w.sh
 
 # Console targets (cmake target names)
 CONSOLE_3do := joypad_3do
@@ -178,6 +179,7 @@ APP_usb2usb_remapper_v7 := pico usb2usb_remapper_v7 usb2usb_remapper_v7 USB USB
 APP_usb2usb_rp2350usba := rp2350usba usb_rp2350usba usb2usb_rp2350usba USB/BT USB
 APP_bt2usb_pico_w := pico_w bt2usb bt2usb_pico_w Bluetooth USB
 APP_bt2usb_pico2_w := pico2_w bt2usb bt2usb_pico2_w Bluetooth USB
+APP_bt2usb_waveshare_rp2350b_plus_w := waveshare_rp2350b_plus_w bt2usb bt2usb_waveshare_rp2350b_plus_w Bluetooth USB
 APP_bt2loopy_pico_w := pico_w bt2loopy bt2loopy_pico_w Bluetooth Loopy
 APP_bt2nuon_pico_w := pico_w bt2nuon bt2nuon_pico_w Bluetooth Nuon
 APP_bt2nuon_pico2_w := pico2_w bt2nuon bt2nuon_pico2_w Bluetooth Nuon
@@ -578,6 +580,10 @@ bt2usb_pico_w:
 .PHONY: bt2usb_pico2_w
 bt2usb_pico2_w:
 	$(call build_app,bt2usb_pico2_w)
+
+.PHONY: bt2usb_waveshare_rp2350b_plus_w
+bt2usb_waveshare_rp2350b_plus_w:
+	$(call build_app,bt2usb_waveshare_rp2350b_plus_w)
 
 .PHONY: bt2loopy_pico_w
 bt2loopy_pico_w:
@@ -1276,6 +1282,10 @@ flash-bt2usb_pico_w:
 .PHONY: flash-bt2usb_pico2_w
 flash-bt2usb_pico2_w:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=bt2usb_pico2_w
+
+.PHONY: flash-bt2usb_waveshare_rp2350b_plus_w
+flash-bt2usb_waveshare_rp2350b_plus_w:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=bt2usb_waveshare_rp2350b_plus_w
 
 .PHONY: flash-bt2loopy_pico_w
 flash-bt2loopy_pico_w:
