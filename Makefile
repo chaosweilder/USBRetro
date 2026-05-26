@@ -195,6 +195,7 @@ APP_wifi2usb_pico_w := pico_w wifi2usb wifi2usb_pico_w WiFi USB
 APP_wifi2usb_pico2_w := pico2_w wifi2usb wifi2usb_pico2_w WiFi USB
 APP_snes2usb_kb2040 := kb2040 snes2usb snes2usb_kb2040 SNES USB
 APP_psx2usb_qtpy := qtpy psx2usb psx2usb_qtpy PS1/PS2 USB
+APP_psx2usb_kb2040 := kb2040 psx2usb psx2usb_kb2040 PS1/PS2 USB
 APP_psx2usb_pico := pico psx2usb psx2usb_pico PS1/PS2 USB
 APP_n642usb_kb2040 := kb2040 n642usb n642usb_kb2040 N64 USB
 APP_nuon2usb_kb2040 := kb2040 nuon2usb nuon2usb_kb2040 Nuon USB
@@ -906,6 +907,10 @@ snes2usb_kb2040:
 psx2usb_qtpy:
 	$(call build_app,psx2usb_qtpy)
 
+.PHONY: psx2usb_kb2040
+psx2usb_kb2040:
+	$(call build_app,psx2usb_kb2040)
+
 .PHONY: psx2usb_pico
 psx2usb_pico:
 	$(call build_app,psx2usb_pico)
@@ -1339,6 +1344,10 @@ flash-snes2usb_kb2040:
 .PHONY: flash-psx2usb_qtpy
 flash-psx2usb_qtpy:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=psx2usb_qtpy
+
+.PHONY: flash-psx2usb_kb2040
+flash-psx2usb_kb2040:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=psx2usb_kb2040
 
 .PHONY: flash-psx2usb_pico
 flash-psx2usb_pico:

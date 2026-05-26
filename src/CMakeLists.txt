@@ -2016,6 +2016,11 @@ target_compile_definitions(joypad_psx2usb PRIVATE CONFIG_PSX2USB=1 CONFIG_USB=1 
 if(PICO_BOARD STREQUAL "adafruit_qtpy_rp2040")
     target_compile_definitions(joypad_psx2usb PRIVATE
         PSX_PIN_DAT=29 PSX_PIN_CMD=28 PSX_PIN_ATT=27 PSX_PIN_CLK=26)
+# KB2040 wiring on the A0-A3 pads: A0=CLK=GP26, A1=ATT=GP27, A2=CMD=GP28,
+# A3=DAT=GP29. CLK/ATT (26/27) must stay consecutive for the PIO side-set.
+elseif(PICO_BOARD STREQUAL "adafruit_kb2040")
+    target_compile_definitions(joypad_psx2usb PRIVATE
+        PSX_PIN_DAT=29 PSX_PIN_CMD=28 PSX_PIN_ATT=27 PSX_PIN_CLK=26)
 # Raspberry Pi Pico wiring: DAT=GP22, CMD=GP19, ATT(LATCH)=GP21, CLK=GP20,
 # VCC=3V3, GND, 10k pull-up on DAT.
 elseif(PICO_BOARD STREQUAL "pico")
