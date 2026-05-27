@@ -16,6 +16,7 @@
 #include "core/input_event.h"
 #include "core/buttons.h"
 #include "core/services/players/feedback.h"
+#include "core/services/button/button.h"
 
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
@@ -541,6 +542,12 @@ static void psx_process(const uint8_t* buf) {
 
         // Hold A1 for the window after an ANALOG-button toggle was detected.
         if (!time_reached(psx_a1_hold_until)) buttons |= JP_BUTTON_A1;
+
+        // Board's user button (BOOTSEL on QT Py/KB2040, GPIO 7 on Feather etc.)
+        // -> A1 (Guide/PS) while held. Lets the adapter trigger a Home/PS button
+        // press without a Select+Start or ANALOG-button toggle. Double/triple
+        // clicks still cycle the USB output mode through the button service.
+        if (button_is_pressed()) buttons |= JP_BUTTON_A1;
 
         // Pressure controllers (neGcon) stream every poll so analog pressure
         // updates continuously, not just when a button bit toggles.

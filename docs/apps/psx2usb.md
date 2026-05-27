@@ -31,6 +31,7 @@ Reads a native PSX/PS2 controller directly via the SIO bus and outputs as a USB 
 - **JogCon** -- Paddle wheel mapped to left-stick X with experimental recenter force-feedback.
 - **Rumble** -- DualShock motor bytes driven from the output's feedback state.
 - **ANALOG button -> A1/Guide** -- detected via the analog<->digital mode toggle and held briefly so a console PS-button init registers.
+- **Board user button -> A1/Guide** -- BOOTSEL (QT Py / KB2040) or the board's user GPIO emits A1 while held. Double-click still cycles USB output mode, triple-click resets to SInput.
 - **USB output modes** -- SInput, XInput, PS3, PS4, Switch, Keyboard/Mouse.
 - **Web config** -- [config.joypad.ai](https://config.joypad.ai) for mode switching and monitoring.
 
@@ -48,3 +49,5 @@ Reads a native PSX/PS2 controller directly via the SIO bus and outputs as a USB 
 make psx2usb_qtpy
 make flash-psx2usb_qtpy
 ```
+
+See the [PSX2USB build guide](../hardware/builds/psx2usb-qtpy.md) for the connector pinout, per-board wiring tables, and the pull-up + rumble notes.
