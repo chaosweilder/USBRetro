@@ -91,6 +91,18 @@ static void usb_suspend_check(void)
     }
 }
 
+// PS3 "Turn off controller" override. The PS3 fires this when the user
+// selects Settings -> Accessory Settings -> Turn off controller while we
+// are in PS3 output mode. The wired DS3 surface can't actually disappear
+// (we stay plugged in), so propagate the intent to the BT side -- a real
+// DS4/DS3 bridged over Bluetooth loses its host and auto-sleeps within a
+// minute. User presses the controller's PS button to wake + re-pair.
+void app_on_console_shutdown(void)
+{
+    printf("[app:bt2usb] Console shutdown -> disconnecting bridged BT controller\n");
+    btstack_host_disconnect_all_devices();
+}
+
 // ============================================================================
 // LED STATUS
 // ============================================================================

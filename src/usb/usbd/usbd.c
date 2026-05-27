@@ -2044,9 +2044,16 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     return len;
 }
 
+// Weak default for app_on_console_shutdown(). Apps that need to react to a
+// host "turn off controller" command (currently only PS3) override this --
+// see src/apps/bt2usb/app.c for the BT-disconnect handler.
+__attribute__((weak)) void app_on_console_shutdown(void)
+{
+}
+
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
-    printf("[usbd] set_report_cb: itf=%d report_id=%d type=%d len=%d mode=%d\n",
+    printf("[usbd] set_report_cb: itf=%d report_id=0x%02x type=%d len=%d mode=%d\n",
            itf, report_id, report_type, bufsize, output_mode);
 
     // SInput/KB/Mouse composite: route by interface
