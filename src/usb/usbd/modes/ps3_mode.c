@@ -179,6 +179,7 @@ static void ps3_mode_handle_output(uint8_t report_id, const uint8_t* data, uint1
     // default and the PS3 continues talking to the wired DS3 surface as
     // before. See joypad-ai/joypad-os#145.
     if (report_id == 0xF4 && len >= 2 && data[0] == 0x42 && data[1] == 0x0C) {
+        printf("[ps3_mode] Host shutdown (F4 42 0C) -> app_on_console_shutdown()\n");
         app_on_console_shutdown();
         return;
     }
