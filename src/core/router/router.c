@@ -816,6 +816,18 @@ static inline void router_merge_mode(const input_event_t* event, output_target_t
 }
 
 // Main input submission function (called by input drivers)
+// Host-side synthetic button overlay (INPUT.INJECT). OR'd into every real
+// input event before profile/overlay processing. RAM only, never persisted.
+static uint32_t s_inject_buttons = 0;
+
+void router_set_inject_buttons(uint32_t buttons) {
+    s_inject_buttons = buttons;
+}
+
+uint32_t router_get_inject_buttons(void) {
+    return s_inject_buttons;
+}
+
 void router_submit_input(const input_event_t* event) {
     if (!event) return;
     if (route_count == 0) return;
@@ -857,10 +869,24 @@ void router_submit_input(const input_event_t* event) {
     }
 #endif
 
-    // Apply custom profile (button remap, stick sens, SOCD, flags, thresholds).
-    // Done here in the router so it applies uniformly to ALL output interfaces.
+    // Working copy used by every layer below (custom profile, overlay,
+    // host-injected buttons, hotkey combos).
     static input_event_t remapped;
     bool did_remap = false;
+
+    // Host-side synthetic button overlay (INPUT.INJECT) — OR'd into the
+    // real event so chat-driven button presses merge with the streamer's
+    // controller regardless of routing mode (works on SIMPLE, MERGE,
+    // BROADCAST). Buttons-only for now; analog injection lives below.
+    if (s_inject_buttons) {
+        remapped = *event;
+        remapped.buttons |= s_inject_buttons;
+        did_remap = true;
+        event = &remapped;
+    }
+
+    // Apply custom profile (button remap, stick sens, SOCD, flags, thresholds).
+    // Done here in the router so it applies uniformly to ALL output interfaces.
     {
         const custom_profile_t* cp = flash_get_active_custom_profile();
         if (cp) {

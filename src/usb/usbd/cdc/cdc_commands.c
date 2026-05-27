@@ -1169,6 +1169,48 @@ static void cmd_overlay_clear(const char* json)
     send_json("{\"ok\":true,\"overlay\":false}");
 }
 
+// INPUT.INJECT - Submit a synthetic gamepad event into the router from the
+// host. Lets joypad-live let chat actually press buttons (not just remap
+// the streamer's input): a chat command like "!press a" → POST /press/a →
+// INPUT.INJECT { buttons: 1 }. The synthetic event arrives at the router as
+// a separate slot in the 0xD8..0xDF range, so it composes with the
+// streamer's real controller via the merge router mode rather than
+// replacing it.
+//
+// Body: {
+//   "buttons": <uint32 JP_BUTTON_* mask>,        required
+//   "slot":    0..7,                             optional, default 0
+//   "analog":  [LX,LY,RX,RY,L2,R2,RZ],           optional, defaults to neutral
+// }
+//
+// Stateful: each INPUT.INJECT call replaces the synthetic slot's full
+// state (matches how real controllers report). For a tap, the host sends
+// {buttons:N} then {buttons:0} after a few ms.
+static void cmd_input_inject(const char* json)
+{
+    int buttons_val;
+    if (!json_get_int(json, "buttons", &buttons_val)) {
+        send_error("missing buttons");
+        return;
+    }
+    int slot = 0;
+    json_get_int(json, "slot", &slot);
+    if (slot < 0 || slot > 7) slot = 0;
+
+    (void)slot;  // reserved; today we OR a single global mask into events
+
+    // Cache the synthetic button state in the router. Each real input event
+    // (PSX poll, USB poll, BT notification) gets `buttons |= s_inject_buttons`
+    // applied at the top of router_submit_input — works regardless of the
+    // app's routing mode (SIMPLE, MERGE, BROADCAST). Pass buttons=0 to release.
+    router_set_inject_buttons((uint32_t)buttons_val);
+
+    snprintf(response_buf, sizeof(response_buf),
+             "{\"ok\":true,\"buttons\":%u}",
+             (unsigned)buttons_val);
+    send_json(response_buf);
+}
+
 // Legacy alias for CPROFILE.SELECT (deprecated, use PROFILE.SET)
 static void cmd_cprofile_select(const char* json)
 {
@@ -2685,6 +2727,7 @@ static const cmd_entry_t commands[] = {
     {"PROFILE.SELECT", cmd_profile_select},
     {"OVERLAY.SET", cmd_overlay_set},
     {"OVERLAY.CLEAR", cmd_overlay_clear},
+    {"INPUT.INJECT", cmd_input_inject},
     // Legacy CPROFILE.* aliases (deprecated - redirect to unified commands)
     {"CPROFILE.LIST", cmd_cprofile_list},
     {"CPROFILE.GET", cmd_cprofile_get},

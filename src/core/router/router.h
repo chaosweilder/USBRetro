@@ -139,6 +139,14 @@ void router_init(const router_config_t* config);
 // NOTE: This is the ONLY function input drivers should call!
 void router_submit_input(const input_event_t* event);
 
+// Host-side synthetic input "press overlay" — buttons set via INPUT.INJECT
+// are OR'd into every real input event as it passes through the router.
+// Works in any routing mode (SIMPLE, MERGE, BROADCAST). Pass 0 to release.
+// Lets joypad-live chat-driven button presses merge with the streamer's
+// real controller regardless of how the app is configured for player slots.
+void router_set_inject_buttons(uint32_t buttons);
+uint32_t router_get_inject_buttons(void);
+
 // Set global d-pad mode (applies to all inputs in router)
 // 0=d-pad, 1=left stick, 2=right stick
 void router_set_dpad_mode(uint8_t mode);
