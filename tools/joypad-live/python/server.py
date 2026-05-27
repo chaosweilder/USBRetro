@@ -27,13 +27,84 @@ Web Serial) before running this.
 """
 
 import argparse
+import collections
 import json
+import queue
 import struct
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import serial  # pyserial
+
+
+# ============================================================================
+# Event broadcaster — drives the viewer overlay's live activity feed via SSE.
+# Each command endpoint publishes an event with user/platform attribution
+# (read from X-User / X-Platform request headers, set by the chat bots).
+# ============================================================================
+
+class EventBroadcaster:
+    def __init__(self, max_history: int = 50):
+        self._lock = threading.Lock()
+        self._history = collections.deque(maxlen=max_history)
+        self._subscribers: list[queue.Queue] = []
+
+    def publish(self, kind: str, label: str, user: str | None, platform: str | None):
+        ev = {
+            "ts": int(time.time() * 1000),
+            "kind": kind,
+            "label": label,
+            "user": user or "anonymous",
+            "platform": platform or "?",
+        }
+        with self._lock:
+            self._history.append(ev)
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait(ev)
+                except queue.Full:
+                    pass
+
+    def subscribe(self) -> tuple[queue.Queue, list]:
+        q = queue.Queue(maxsize=100)
+        with self._lock:
+            self._subscribers.append(q)
+            return q, list(self._history)
+
+    def unsubscribe(self, q: queue.Queue):
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+
+events = EventBroadcaster()
+
+# Friendly button name → JP_BUTTON_* bitmask, used by /press, /hold endpoints.
+# Aliases per common labels (Xbox A, PS Cross, Switch B, etc.) — first match
+# in this dict wins for any given name.
+BUTTON_NAMES = {
+    "a": 1, "cross": 1, "b1": 1,
+    "b": 2, "circle": 2, "b2": 2,
+    "x": 4, "square": 4, "b3": 4,
+    "y": 8, "triangle": 8, "b4": 8,
+    "l1": 16, "lb": 16,
+    "r1": 32, "rb": 32,
+    "l2": 64, "lt": 64,
+    "r2": 128, "rt": 128,
+    "select": 256, "back": 256, "minus": 256, "share": 256, "s1": 256,
+    "start": 512, "plus": 512, "options": 512, "s2": 512,
+    "l3": 1024, "ls": 1024,
+    "r3": 2048, "rs": 2048,
+    "up": 4096, "u": 4096, "du": 4096,
+    "down": 8192, "d": 8192, "dd": 8192,
+    "left": 16384, "l": 16384, "dl": 16384,
+    "right": 32768, "r": 32768, "dr": 32768,
+    "home": 65536, "guide": 65536, "ps": 65536, "a1": 65536,
+}
+
+TAP_MS = 80  # default duration of a single /press tap
 
 CDC_SYNC = 0xAA
 MSG_CMD = 0x01
@@ -149,9 +220,67 @@ def make_handler(cdc: CdcClient):
         def log_message(self, fmt, *a):  # quieter logging
             print("[http]", self.command, self.path, "->", fmt % a if a else fmt)
 
+        def _attrib(self):
+            """Read viewer attribution from headers set by the chat bots."""
+            return (
+                self.headers.get("X-User") or "anonymous",
+                self.headers.get("X-Platform") or "?",
+            )
+
+        def _serve_html(self, filename):
+            """Serve a static HTML file from tools/joypad-live/."""
+            from pathlib import Path
+            html_path = Path(__file__).resolve().parent.parent / filename
+            if not html_path.exists():
+                return self._send({"ok": False, "error": f"{filename} not found"}, 404)
+            body = html_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
             path = self.path.strip("/")
-            if path in ("", "health"):
+            if path in ("", "dashboard"):
+                # Streamer's control surface — manual override panel.
+                self._serve_html("dashboard.html")
+            elif path == "overlay":
+                # Viewer-facing OBS browser source. Reads /events SSE for the
+                # live activity feed; lists chat commands.
+                self._serve_html("overlay.html")
+            elif path == "events":
+                # Server-Sent Events stream of command activity. The overlay
+                # subscribes here; bots publish via the command endpoints.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("X-Accel-Buffering", "no")  # disable proxy buffering
+                self.end_headers()
+                q, history = events.subscribe()
+                try:
+                    # Replay recent history so an overlay reconnect doesn't
+                    # start with an empty feed.
+                    for ev in history:
+                        self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            ev = q.get(timeout=15)
+                            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                        except queue.Empty:
+                            # SSE comment line — keeps the connection alive
+                            # through aggressive proxies (and OBS itself).
+                            self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    events.unsubscribe(q)
+                return
+            elif path == "health":
                 self._send({"ok": True, "port": cdc.port})
             elif path == "info":
                 self._send(cdc.command("INFO"))
@@ -165,9 +294,17 @@ def make_handler(cdc: CdcClient):
             # Hot-path selection uses PROFILE.SELECT — RAM only, no flash
             # write. The persistent boot default survives via /default/<n>.
             if path.startswith("profile/") and path[8:].isdigit():
-                self._send(cdc.command("PROFILE.SELECT", index=int(path[8:])))
+                user, plat = self._attrib()
+                r = cdc.command("PROFILE.SELECT", index=int(path[8:]))
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("effect", r.get("name", f"profile {path[8:]}"), user, plat)
             elif path == "neutral":
-                self._send(cdc.command("PROFILE.SELECT", index=0))
+                user, plat = self._attrib()
+                r = cdc.command("PROFILE.SELECT", index=0)
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("reset", "neutral", user, plat)
             elif path.startswith("default/") and path[8:].isdigit():
                 # Persistent — writes to flash. For "make this the new boot
                 # default," not for hot-path crowd-control switching.
@@ -187,10 +324,18 @@ def make_handler(cdc: CdcClient):
                     args = json.loads(self.rfile.read(length) or b"{}")
                 except Exception:
                     return self._send({"ok": False, "error": "bad json body"}, 400)
-                self._send(cdc.command("PROFILE.APPLY", **args))
+                user, plat = self._attrib()
+                r = cdc.command("PROFILE.APPLY", **args)
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("effect", r.get("name") or args.get("name") or "apply", user, plat)
             elif path == "clear":
                 # PROFILE.CLEAR — drop the ephemeral override.
-                self._send(cdc.command("PROFILE.CLEAR"))
+                user, plat = self._attrib()
+                r = cdc.command("PROFILE.CLEAR")
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("reset", "clear apply", user, plat)
             elif path == "overlay":
                 # OVERLAY.SET — runtime "live tweak" layer composed on top of
                 # whatever profile is active. Body fields (all optional):
@@ -201,9 +346,62 @@ def make_handler(cdc: CdcClient):
                     args = json.loads(self.rfile.read(length) or b"{}")
                 except Exception:
                     return self._send({"ok": False, "error": "bad json body"}, 400)
-                self._send(cdc.command("OVERLAY.SET", **args))
+                user, plat = self._attrib()
+                r = cdc.command("OVERLAY.SET", **args)
+                self._send(r)
+                if r.get("ok"):
+                    # Summarize the overlay in a viewer-friendly label.
+                    flags = args.get("flags", 0) or 0
+                    parts = []
+                    if flags & 1:  parts.append("swap sticks")
+                    if flags & 2:  parts.append("invert LY")
+                    if flags & 4:  parts.append("invert RY")
+                    if flags & 8:  parts.append("invert LX")
+                    if flags & 16: parts.append("invert RX")
+                    if args.get("socd_mode"): parts.append(f"SOCD {args['socd_mode']}")
+                    label = " + ".join(parts) or "overlay"
+                    events.publish("overlay", label, user, plat)
             elif path == "overlay/clear":
-                self._send(cdc.command("OVERLAY.CLEAR"))
+                user, plat = self._attrib()
+                r = cdc.command("OVERLAY.CLEAR")
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("reset", "clear overlay", user, plat)
+            elif path.startswith("press/"):
+                name = path[6:]
+                mask = BUTTON_NAMES.get(name.lower())
+                if mask is None:
+                    return self._send({"ok": False, "error": f"unknown button: {name}"}, 400)
+                cdc.command("INPUT.INJECT", buttons=mask)
+                time.sleep(TAP_MS / 1000.0)
+                cdc.command("INPUT.INJECT", buttons=0)
+                user, plat = self._attrib()
+                events.publish("press", f"tap {name.upper()}", user, plat)
+                self._send({"ok": True, "tapped": name, "mask": mask})
+            elif path.startswith("hold/"):
+                name = path[5:]
+                mask = BUTTON_NAMES.get(name.lower())
+                if mask is None:
+                    return self._send({"ok": False, "error": f"unknown button: {name}"}, 400)
+                r = cdc.command("INPUT.INJECT", buttons=mask)
+                user, plat = self._attrib()
+                events.publish("press", f"hold {name.upper()}", user, plat)
+                self._send(r)
+            elif path == "release":
+                user, plat = self._attrib()
+                r = cdc.command("INPUT.INJECT", buttons=0)
+                self._send(r)
+                if r.get("ok"):
+                    events.publish("reset", "release", user, plat)
+            elif path == "inject":
+                # Raw INPUT.INJECT — body forwarded verbatim. For advanced
+                # use (custom analog values, non-zero slot, etc.).
+                length = int(self.headers.get("Content-Length", 0))
+                try:
+                    args = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    return self._send({"ok": False, "error": "bad json body"}, 400)
+                self._send(cdc.command("INPUT.INJECT", **args))
             else:
                 self._send({"ok": False, "error": "not found"}, 404)
 

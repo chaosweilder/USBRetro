@@ -21,6 +21,7 @@
 // Only one process may own the CDC port at a time. Close config.joypad.ai
 // (browser Web Serial) before running this.
 
+using System.Collections.Concurrent;
 using System.IO.Ports;
 using System.Net;
 using System.Text;
@@ -37,6 +38,100 @@ public static class Program
 
     static SerialPort _sp = null!;
     static readonly object _lock = new();
+
+    // ========================================================================
+    // Event broadcaster — drives the viewer overlay's live activity feed via
+    // SSE on GET /events. Each command endpoint publishes a {kind, label, user,
+    // platform, ts} event after success. Bots forward X-User / X-Platform
+    // headers so the feed shows e.g. "alice@twitch → tap A" in real time.
+    // Mirrors the Python bridge's EventBroadcaster 1:1.
+    // ========================================================================
+
+    const int EventHistoryMax = 50;
+    static readonly object _evLock = new();
+    static readonly LinkedList<Dictionary<string, object?>> _evHistory = new();
+    static readonly List<BlockingCollection<Dictionary<string, object?>>> _evSubs = new();
+
+    static void PublishEvent(string kind, string label, string? user, string? platform)
+    {
+        var ev = new Dictionary<string, object?>
+        {
+            ["ts"]       = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ["kind"]     = kind,
+            ["label"]    = label,
+            ["user"]     = user ?? "anonymous",
+            ["platform"] = platform ?? "?",
+        };
+        lock (_evLock)
+        {
+            _evHistory.AddLast(ev);
+            while (_evHistory.Count > EventHistoryMax) _evHistory.RemoveFirst();
+            foreach (var sub in _evSubs)
+            {
+                try { sub.TryAdd(ev); } catch { /* sub disposed mid-publish */ }
+            }
+        }
+    }
+
+    static (BlockingCollection<Dictionary<string, object?>>, List<Dictionary<string, object?>>) SubscribeEvents()
+    {
+        var q = new BlockingCollection<Dictionary<string, object?>>(boundedCapacity: 100);
+        lock (_evLock)
+        {
+            _evSubs.Add(q);
+            return (q, new List<Dictionary<string, object?>>(_evHistory));
+        }
+    }
+
+    static void UnsubscribeEvents(BlockingCollection<Dictionary<string, object?>> q)
+    {
+        lock (_evLock) { _evSubs.Remove(q); }
+        try { q.Dispose(); } catch { /* already disposed */ }
+    }
+
+    // Read viewer attribution from request headers (set by the chat bots).
+    static (string user, string platform) Attrib(HttpListenerRequest req)
+    {
+        return (
+            req.Headers["X-User"]     ?? "anonymous",
+            req.Headers["X-Platform"] ?? "?"
+        );
+    }
+
+    // Pull an int out of a deserialized JSON body (Dictionary<string, object?>
+    // where values are JsonElements). Used to summarize overlay flag bitmaps.
+    static long JsonInt(Dictionary<string, object?> d, string key, long fallback = 0)
+    {
+        if (!d.TryGetValue(key, out var v) || v == null) return fallback;
+        if (v is JsonElement je && je.ValueKind == JsonValueKind.Number) return je.GetInt64();
+        if (v is long l) return l;
+        if (v is int i) return i;
+        return fallback;
+    }
+
+    // Friendly button name → JP_BUTTON_* bitmask. Used by /press, /hold.
+    static readonly Dictionary<string, uint> BUTTON_NAMES = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["a"]=1, ["cross"]=1, ["b1"]=1,
+        ["b"]=2, ["circle"]=2, ["b2"]=2,
+        ["x"]=4, ["square"]=4, ["b3"]=4,
+        ["y"]=8, ["triangle"]=8, ["b4"]=8,
+        ["l1"]=16, ["lb"]=16,
+        ["r1"]=32, ["rb"]=32,
+        ["l2"]=64, ["lt"]=64,
+        ["r2"]=128, ["rt"]=128,
+        ["select"]=256, ["back"]=256, ["minus"]=256, ["share"]=256, ["s1"]=256,
+        ["start"]=512, ["plus"]=512, ["options"]=512, ["s2"]=512,
+        ["l3"]=1024, ["ls"]=1024,
+        ["r3"]=2048, ["rs"]=2048,
+        ["up"]=4096, ["u"]=4096, ["du"]=4096,
+        ["down"]=8192, ["d"]=8192, ["dd"]=8192,
+        ["left"]=16384, ["l"]=16384, ["dl"]=16384,
+        ["right"]=32768, ["r"]=32768, ["dr"]=32768,
+        ["home"]=65536, ["guide"]=65536, ["ps"]=65536, ["a1"]=65536,
+    };
+
+    const int TAP_MS = 80;  // default /press tap duration
 
     public static int Main(string[] args)
     {
@@ -123,13 +218,44 @@ public static class Program
             + "(GET /profiles | POST /profile/<n> | POST /neutral)");
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; http.Stop(); };
 
+        // Each request runs on a worker thread so long-lived SSE connections
+        // (GET /events) don't block other handlers.
         while (http.IsListening)
         {
             HttpListenerContext ctx;
             try { ctx = http.GetContext(); } catch { break; }
-            HandleRequest(ctx, port);
+            ThreadPool.QueueUserWorkItem(_ => {
+                try { HandleRequest(ctx, port); }
+                catch (Exception e) { Console.Error.WriteLine($"handler error: {e.Message}"); }
+            });
         }
         return 0;
+    }
+
+    // Lifted out so PublishEvent hooks can early-bail when Cmd() returned an
+    // error from the firmware (matches Python's `r.get("ok")` check).
+    static bool IsOk(Dictionary<string, object?> resp)
+    {
+        if (resp.TryGetValue("ok", out var v))
+        {
+            if (v is bool b) return b;
+            if (v is JsonElement je && je.ValueKind == JsonValueKind.True) return true;
+        }
+        // Some commands (INFO, etc.) don't return an "ok" key. Treat the
+        // absence of an "error" key as success too.
+        return !resp.ContainsKey("error");
+    }
+
+    static void WriteSse(HttpListenerContext ctx, Dictionary<string, object?> ev)
+    {
+        WriteRaw(ctx, "data: " + JsonSerializer.Serialize(ev) + "\n\n");
+    }
+
+    static void WriteRaw(HttpListenerContext ctx, string s)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(s);
+        ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+        ctx.Response.OutputStream.Flush();
     }
 
     static void HandleRequest(HttpListenerContext ctx, string port)
@@ -138,9 +264,67 @@ public static class Program
         string method = ctx.Request.HttpMethod;
         Dictionary<string, object?> resp;
         int code = 200;
+        // Static HTML pages copied next to the binary by JoypadLive.csproj.
+        //   /  or  /dashboard → dashboard.html  (streamer's manual control)
+        //   /overlay          → overlay.html    (viewer OBS browser source)
+        if (method == "GET" && (path == "" || path == "dashboard" || path == "overlay"))
+        {
+            string file = (path == "overlay") ? "overlay.html" : "dashboard.html";
+            string htmlPath = Path.Combine(AppContext.BaseDirectory, file);
+            if (File.Exists(htmlPath))
+            {
+                byte[] html = File.ReadAllBytes(htmlPath);
+                ctx.Response.StatusCode = 200;
+                ctx.Response.ContentType = "text/html; charset=utf-8";
+                ctx.Response.AppendHeader("Access-Control-Allow-Origin", "*");
+                ctx.Response.OutputStream.Write(html, 0, html.Length);
+                ctx.Response.Close();
+                Console.WriteLine($"{method} /{path} -> {file} ({html.Length} bytes)");
+                return;
+            }
+            // fall through to 404 below
+        }
+
+        // SSE — chunked stream of {ts, kind, label, user, platform} JSON
+        // events. Overlay page (overlay.html) subscribes via EventSource;
+        // bots publish via every command endpoint.
+        if (method == "GET" && path == "events")
+        {
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "text/event-stream; charset=utf-8";
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+            ctx.Response.AppendHeader("Access-Control-Allow-Origin", "*");
+            ctx.Response.AppendHeader("X-Accel-Buffering", "no");
+            ctx.Response.SendChunked = true;
+
+            var (q, history) = SubscribeEvents();
+            try
+            {
+                // Replay history so a reconnect doesn't show an empty feed.
+                foreach (var ev in history) WriteSse(ctx, ev);
+                // Stream new events; emit a heartbeat comment every 15s so
+                // OBS/proxies keep the connection open.
+                while (true)
+                {
+                    if (q.TryTake(out var ev, TimeSpan.FromSeconds(15)))
+                        WriteSse(ctx, ev);
+                    else
+                        WriteRaw(ctx, ": heartbeat\n\n");
+                }
+            }
+            catch (HttpListenerException) { /* client disconnected */ }
+            catch (IOException) { /* socket closed */ }
+            catch (ObjectDisposedException) { }
+            finally
+            {
+                UnsubscribeEvents(q);
+                try { ctx.Response.Close(); } catch { }
+            }
+            return;
+        }
         try
         {
-            if (method == "GET" && (path == "" || path == "health"))
+            if (method == "GET" && path == "health")
                 resp = new() { ["ok"] = true, ["port"] = port };
             else if (method == "GET" && path == "info")
                 resp = Cmd("INFO");
@@ -150,9 +334,24 @@ public static class Program
             // write. The persistent boot default survives via /default/<n>.
             else if (method == "POST" && path.StartsWith("profile/")
                      && int.TryParse(path[8..], out int n))
+            {
                 resp = Cmd("PROFILE.SELECT", new() { ["index"] = n });
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    string name = (resp.TryGetValue("name", out var nv) ? nv?.ToString() : null) ?? $"profile {n}";
+                    PublishEvent("effect", name, u, p);
+                }
+            }
             else if (method == "POST" && path == "neutral")
+            {
                 resp = Cmd("PROFILE.SELECT", new() { ["index"] = 0 });
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("reset", "neutral", u, p);
+                }
+            }
             else if (method == "POST" && path.StartsWith("default/")
                      && int.TryParse(path[8..], out int dn))
                 // Persistent — writes to flash. For "make this the new boot
@@ -166,26 +365,105 @@ public static class Program
             }
             else if (method == "POST" && path == "apply")
             {
-                // PROFILE.APPLY — ephemeral RAM-only remap. Body forwarded as args.
                 using var reader = new StreamReader(ctx.Request.InputStream);
                 var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(reader.ReadToEnd()) ?? new();
                 resp = Cmd("PROFILE.APPLY", body);
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    string label =
+                        (resp.TryGetValue("name", out var nv) ? nv?.ToString() : null)
+                        ?? (body.TryGetValue("name", out var bnv) ? bnv?.ToString() : null)
+                        ?? "apply";
+                    PublishEvent("effect", label, u, p);
+                }
             }
             else if (method == "POST" && path == "clear")
             {
                 resp = Cmd("PROFILE.CLEAR");
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("reset", "clear apply", u, p);
+                }
             }
             else if (method == "POST" && path == "overlay")
             {
-                // OVERLAY.SET — runtime "live tweak" layer composed on top of
-                // whatever profile is active. Body forwarded as args.
                 using var reader = new StreamReader(ctx.Request.InputStream);
                 var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(reader.ReadToEnd()) ?? new();
                 resp = Cmd("OVERLAY.SET", body);
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    long flags = JsonInt(body, "flags");
+                    long socd  = JsonInt(body, "socd_mode");
+                    var parts = new List<string>();
+                    if ((flags & 1)  != 0) parts.Add("swap sticks");
+                    if ((flags & 2)  != 0) parts.Add("invert LY");
+                    if ((flags & 4)  != 0) parts.Add("invert RY");
+                    if ((flags & 8)  != 0) parts.Add("invert LX");
+                    if ((flags & 16) != 0) parts.Add("invert RX");
+                    if (socd != 0) parts.Add($"SOCD {socd}");
+                    string label = parts.Count > 0 ? string.Join(" + ", parts) : "overlay";
+                    PublishEvent("overlay", label, u, p);
+                }
             }
             else if (method == "POST" && path == "overlay/clear")
             {
                 resp = Cmd("OVERLAY.CLEAR");
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("reset", "clear overlay", u, p);
+                }
+            }
+            else if (method == "POST" && path.StartsWith("press/"))
+            {
+                string name = path[6..];
+                if (!BUTTON_NAMES.TryGetValue(name, out uint mask))
+                {
+                    code = 400;
+                    resp = new() { ["ok"] = false, ["error"] = $"unknown button: {name}" };
+                }
+                else
+                {
+                    Cmd("INPUT.INJECT", new() { ["buttons"] = mask });
+                    Thread.Sleep(TAP_MS);
+                    Cmd("INPUT.INJECT", new() { ["buttons"] = 0 });
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("press", $"tap {name.ToUpper()}", u, p);
+                    resp = new() { ["ok"] = true, ["tapped"] = name, ["mask"] = mask };
+                }
+            }
+            else if (method == "POST" && path.StartsWith("hold/"))
+            {
+                string name = path[5..];
+                if (!BUTTON_NAMES.TryGetValue(name, out uint mask))
+                {
+                    code = 400;
+                    resp = new() { ["ok"] = false, ["error"] = $"unknown button: {name}" };
+                }
+                else
+                {
+                    resp = Cmd("INPUT.INJECT", new() { ["buttons"] = mask });
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("press", $"hold {name.ToUpper()}", u, p);
+                }
+            }
+            else if (method == "POST" && path == "release")
+            {
+                resp = Cmd("INPUT.INJECT", new() { ["buttons"] = 0 });
+                if (IsOk(resp))
+                {
+                    var (u, p) = Attrib(ctx.Request);
+                    PublishEvent("reset", "release", u, p);
+                }
+            }
+            else if (method == "POST" && path == "inject")
+            {
+                using var reader = new StreamReader(ctx.Request.InputStream);
+                var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(reader.ReadToEnd()) ?? new();
+                resp = Cmd("INPUT.INJECT", body);
             }
             else
             {
