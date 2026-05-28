@@ -4,21 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Joypad OS (formerly **USBRetro**) is firmware for RP2040-based adapters that provides universal controller I/O. Old code/commits may reference `USBR_BUTTON_*` or `usbretro` naming.
+Joypad OS (formerly **USBRetro**) is firmware for RP2040 and ESP32-S3 based adapters that provides universal controller I/O. Old code/commits may reference `USBR_BUTTON_*` or `usbretro` naming.
 
 **Inputs:**
 - USB HID controllers, keyboards, mice
 - USB X-input (Xbox controllers)
 - Bluetooth controllers (via USB BT dongle or Pico W)
 - WiFi controllers (via JOCP protocol on Pico W)
-- Native controllers (SNES, N64, GameCube via joybus)
+- Native controllers (SNES, N64, GameCube via joybus, LodgeNet via PIO)
 
 **Outputs:**
 - Retro consoles: PCEngine, GameCube, Dreamcast, Nuon, 3DO, Loopy
 - USB Device: HID gamepad, XInput, DirectInput, PS3/PS4/Switch modes
 - UART: ESP32 Bluetooth bridge
 
-Uses TinyUSB for USB, BTstack for Bluetooth, LWIP for WiFi networking, and RP2040 PIO for timing-critical console protocols.
+Uses TinyUSB for USB, BTstack for Bluetooth, LWIP for WiFi networking, and RP2040 PIO for timing-critical console protocols. ESP32-S3 support uses ESP-IDF with FreeRTOS for BLE-to-USB applications.
 
 ## Build Commands
 
@@ -43,17 +43,26 @@ make usb2usb_feather   # USB/BT → USB HID
 make snes2usb_kb2040   # SNES → USB HID
 make n642usb_kb2040    # N64 → USB HID
 make gc2usb_kb2040     # GameCube → USB HID
+make lodgenet2usb_pico # LodgeNet → USB HID (Pico)
+make lodgenet2usb_pico2 # LodgeNet → USB HID (Pico 2)
 make n642dc_kb2040     # N64 → Dreamcast
 make bt2usb_pico_w     # BT-only → USB HID (Pico W)
+make bt2usb_xiao_esp32s3    # BLE-only → USB HID (ESP32-S3, requires ESP-IDF)
+make bt2usb_seeed_xiao_nrf52840   # BLE-only → USB HID (Seeed XIAO nRF52840, requires NCS)
 make wifi2usb_pico_w   # WiFi → USB HID (Pico W)
+make controller_btusb_pico_w        # GPIO+JoyWing → BLE+USB HID (Pico W)
+make controller_btusb_rp2040_abb    # GPIO+USB Host → USB HID (ABB Passthrough)
 
-# Build all
+# Build all (RP2040 targets only)
 make all
 make clean
 
 # Flash (macOS - looks for /Volumes/RPI-RP2)
 make flash              # Flash most recent build
 make flash-usb2pce_kb2040  # Flash specific app
+
+# ESP32-S3 (requires ESP-IDF, see .dev/docs/esp32-port.md)
+make flash-bt2usb_xiao_esp32s3  # Flash via esptool
 ```
 
 Output: `releases/joypad_<commit>_<app>_<board>.uf2`
@@ -69,15 +78,18 @@ Output: `releases/joypad_<commit>_<app>_<board>.uf2`
 | `usb23do` | RP2040-Zero | USB/BT | 3DO |
 | `usb2loopy` | KB2040 | USB/BT | Loopy |
 | `usb2usb` | Feather/RP2040-Zero | USB/BT | USB HID |
-| `bt2usb` | Pico W/Pico 2 W | BT-only | USB HID |
+| `bt2usb` | Pico W/Pico 2 W/ESP32-S3/XIAO nRF52840 | BT/BLE | USB HID |
 | `wifi2usb` | Pico W/Pico 2 W | WiFi (JOCP) | USB HID |
 | `snes2usb` | KB2040 | SNES | USB HID |
 | `n642usb` | KB2040 | N64 | USB HID |
-| `gc2usb` | KB2040 | GameCube | USB HID |
+| `gc2usb` | KB2040/RP2040-Zero/Pico | GameCube | USB HID |
+| `lodgenet2usb` | Pico/Pico 2 | LodgeNet (N64/GC/SNES) | USB HID |
 | `n642dc` | KB2040 | N64 | Dreamcast |
 | `snes23do` | RP2040-Zero | SNES | 3DO |
 | `usb2uart` | KB2040 | USB | UART/ESP32 |
 | `controller_*` | Various | GPIO | USB HID |
+| `controller_btusb` | Pico W/Pico 2 W/ESP32-S3/nRF52840 | GPIO | BLE + USB HID |
+| `controller_btusb_rp2040_abb` | RP2040 ABB (Passthrough) | GPIO + USB Host | USB HID |
 
 ## Architecture
 
@@ -85,8 +97,12 @@ Output: `releases/joypad_<commit>_<app>_<board>.uf2`
 
 ```
 src/
-├── main.c                      # Entry point, main loop
-├── CMakeLists.txt              # Build configuration
+├── main.c                      # RP2040 entry point, main loop
+├── CMakeLists.txt              # RP2040 build configuration
+├── platform/
+│   ├── platform.h              # Platform HAL (time, identity, reboot)
+│   ├── rp2040/platform_rp2040.c
+│   └── esp32/platform_esp32.c
 ├── core/                       # Shared firmware infrastructure
 │   ├── buttons.h               # JP_BUTTON_* definitions (W3C order)
 │   ├── input_event.h           # Unified input event structure
@@ -111,6 +127,7 @@ src/
 │   ├── usb2uart/               # USB → UART bridge
 │   ├── snes2usb/               # SNES → USB HID
 │   ├── snes23do/               # SNES → 3DO
+│   ├── lodgenet2usb/           # LodgeNet → USB HID
 │   └── controller/             # Custom GPIO controllers
 ├── usb/
 │   ├── usbh/                   # USB Host (input)
@@ -124,7 +141,11 @@ src/
 ├── bt/                         # Bluetooth support
 │   ├── bthid/                  # BT HID device drivers
 │   │   └── devices/            # BT controller drivers
+│   ├── btstack/                # BTstack host integration
+│   │   └── btstack_host.c      # HID host, scanning, pairing
 │   └── transport/              # BT transport layer
+│       ├── bt_transport_cyw43.c  # Pico W transport
+│       └── bt_transport_esp32.c  # ESP32-S3 transport
 ├── wifi/                       # WiFi support (Pico W)
 │   └── jocp/                   # JOCP protocol implementation
 │       ├── jocp.h              # Protocol definitions
@@ -143,7 +164,37 @@ src/
     └── host/                   # Native inputs (we read controllers)
         ├── snes/               # SNES controller reading
         ├── n64/                # N64 controller reading (joybus)
-        └── gc/                 # GameCube controller reading (joybus)
+        ├── gc/                 # GameCube controller reading (joybus)
+        └── lodgenet/           # LodgeNet hotel controllers (PIO, N64/GC/SNES)
+esp/                                # ESP-IDF build directory (ESP32-S3)
+├── CMakeLists.txt                  # ESP-IDF project file
+├── Makefile                        # Build/flash/monitor shortcuts
+├── env.sh                          # ESP-IDF environment activation
+├── sdkconfig.defaults              # Common ESP32-S3 config
+├── sdkconfig.board.devkit          # Board-specific overrides
+└── main/
+    ├── CMakeLists.txt              # Component registration + shared sources
+    ├── main.c                      # FreeRTOS entry point
+    ├── flash_esp32.c               # NVS-based flash persistence
+    ├── button_esp32.c              # GPIO button driver
+    ├── ws2812_esp32.c              # NeoPixel stub
+    ├── btstack_hal_esp32.c         # BTstack HAL glue
+    ├── btstack_config.h            # BLE-only BTstack config
+    └── tusb_config_esp32.h         # ESP32-S3 TinyUSB config
+nrf/                                # nRF Connect SDK build directory (nRF52840)
+├── CMakeLists.txt                  # Zephyr app project file
+├── Makefile                        # Build/flash/monitor shortcuts
+├── prj.conf                        # Zephyr Kconfig (BT HCI raw, no Zephyr USB)
+├── boards/                         # Board-specific overlays
+│   ├── xiao_ble.overlay            # Disable Zephyr USBD node
+│   └── xiao_ble.conf               # XIAO nRF52840 board config
+└── src/
+    ├── main.c                      # Zephyr entry point
+    ├── flash_nrf.c                 # NVS-based flash persistence
+    ├── button_nrf.c                # Button stub (no user button)
+    ├── ws2812_nrf.c                # NeoPixel stub
+    ├── btstack_config.h            # BLE-only BTstack config wrapper
+    └── tusb_config_nrf.h           # nRF5x TinyUSB config
 ```
 
 ### Data Flow
@@ -157,7 +208,8 @@ Bluetooth ────┼──→ router_submit_input() ──→ router ──
 WiFi (JOCP) ──┤                              │               ├──→ Nuon, 3DO
 Native SNES ──┤                              │               ├──→ USB Device
 Native N64 ───┤                              │               └──→ UART
-Native GC ────┘
+Native GC ────┤
+LodgeNet ─────┘
                                     profile_apply()
                                     (button remapping)
 ```
@@ -239,6 +291,7 @@ Console protocols use RP2040 PIO for precise timing:
 - **3DO**: `sampling.pio`, `output.pio`
 - **Loopy**: `loopy.pio`
 - **N64/GC Host**: `joybus.pio` (shared with GC device)
+- **LodgeNet Host**: `lodgenet.pio` (MCU + SR programs, swapped at runtime)
 
 ## Development Workflow
 
@@ -295,6 +348,55 @@ Console protocols use RP2040 PIO for precise timing:
 
 5. Remember to invert Y-axis if protocol uses non-HID convention
 
+### LodgeNet Host (reference implementation)
+
+The LodgeNet host (`src/native/host/lodgenet/`) is a good reference for PIO-based native input with:
+- **Multi-protocol auto-detection**: MCU (N64/GC) and SR (SNES) protocols on a single PIO SM, with programs swapped at runtime via `pio_remove_program`/`pio_add_program`
+- **Device type detection**: N64 vs GC distinguished by protocol flags (byte[1] bit 6)
+- **Controller layout reporting**: Sets `event.layout` to `LAYOUT_NINTENDO_N64`, `LAYOUT_GAMECUBE`, or `LAYOUT_NINTENDO_4FACE` for SInput face style
+- **VCC pin**: Drives a GPIO high to power the controller (RJ11 connector)
+- **Poll throttling**: MCU at ~60Hz, SR at ~131Hz (matching reference hardware framework)
+- **Encoded virtual buttons**: Impossible d-pad combos (SOCD) decoded as LodgeNet system buttons (Menu, Select, etc.)
+
+## ESP32-S3 Development
+
+The `bt2usb` app also runs on ESP32-S3, using BLE (no Classic BT) for controller input and USB OTG for HID output. See `.dev/docs/esp32-port.md` for full details.
+
+```bash
+# Prerequisites: ESP-IDF v6.0+ installed at ~/esp-idf
+make bt2usb_xiao_esp32s3          # Build
+make flash-bt2usb_xiao_esp32s3    # Flash via esptool
+make monitor-bt2usb_xiao_esp32s3  # UART serial monitor
+```
+
+Key differences from RP2040:
+- **BLE only** - ESP32-S3 has no Classic BT; only BLE controllers work (Xbox BLE, 8BitDo BLE, etc.)
+- **FreeRTOS** - BTstack runs in its own task; main loop must not block (`tud_task_ext(1, false)` not `tud_task()`)
+- **Platform HAL** - Shared code uses `platform/platform.h` instead of pico-sdk APIs directly
+- **Build system** - ESP-IDF/CMake under `esp/`, separate from the RP2040 pico-sdk build under `src/`
+
+See `docs/ESP32.md` for full setup, architecture, and board details.
+
+## nRF52840 Development
+
+The `bt2usb` app also runs on Seeed XIAO nRF52840 (xiao_ble), using BLE (no Classic BT) for controller input and USB for HID output. Uses nRF Connect SDK (Zephyr) with BTstack + TinyUSB (not Zephyr native stacks) to maximize shared code.
+
+```bash
+# Prerequisites: nRF Connect SDK v3.1.0+ (installed via make init-nrf)
+make init-nrf                # One-time NCS workspace setup
+make bt2usb_seeed_xiao_nrf52840         # Build
+make flash-bt2usb_seeed_xiao_nrf52840   # Flash via UF2 bootloader
+make monitor-bt2usb_seeed_xiao_nrf52840 # UART serial monitor
+```
+
+Key differences from RP2040:
+- **BLE only** - nRF52840 supports Classic BT but this port is BLE-only like ESP32; only BLE controllers work
+- **Zephyr RTOS** - BTstack runs in its own Zephyr thread (`k_thread_create`); main loop yields via `k_msleep(1)`
+- **Raw HCI** - Zephyr provides raw HCI passthrough (`CONFIG_BT_HCI_RAW=y`), BTstack acts as BLE host
+- **TinyUSB owns USB** - Zephyr USB stack disabled; TinyUSB's `dcd_nrf5x.c` drives hardware directly
+- **RTT console** - Since TinyUSB owns USB, debug output uses Segger RTT (not CDC)
+- **Build system** - nRF Connect SDK/west/CMake under `nrf/`, separate from `src/` and `esp/`
+
 ## Common Pitfalls
 
 - **GameCube requires 130MHz** - `set_sys_clock_khz(130000, true)`
@@ -304,6 +406,12 @@ Console protocols use RP2040 PIO for precise timing:
   - Sony/Xbox/8BitDo controllers: Native HID, no inversion needed
   - Nintendo controllers: Invert Y (Nintendo uses 0=down, 255=up)
   - Native GC/N64: Invert Y when reading
+- **ESP32 `tud_task()` blocks forever** - On FreeRTOS, `tud_task()` = `tud_task_ext(UINT32_MAX, false)`. Always use `tud_task_ext(1, false)` on ESP32
+- **ESP32 BTstack threading** - All BTstack API calls must happen in the BTstack FreeRTOS task, not the main task
+- **ESP32 Classic BT guards** - `gap_inquiry_*`, `gap_set_class_of_device()`, `gap_discoverable_control()` are Classic-only; guard with `#ifndef BTSTACK_USE_ESP32`
+- **nRF Classic BT guards** - Same Classic-only APIs must be guarded with `#ifndef BTSTACK_USE_NRF`
+- **nRF BTstack threading** - All BTstack API calls must happen in the BTstack Zephyr thread, not the main thread
+- **nRF Zephyr USB disabled** - `CONFIG_USB_DEVICE_STACK=n` and `&usbd { status = "disabled"; }` required so TinyUSB can own the USB peripheral
 
 ## External Dependencies
 

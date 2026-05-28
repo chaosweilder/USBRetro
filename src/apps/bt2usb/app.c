@@ -17,12 +17,91 @@
 #include "core/services/leds/leds.h"
 
 #include "tusb.h"
-#include "pico/stdlib.h"
-#include "pico/cyw43_arch.h"
+#include "platform/platform.h"
 #include <stdio.h>
 
-// External: CYW43 transport
+#ifdef BTSTACK_USE_ESP32
+#include "driver/gpio.h"
+extern const bt_transport_t bt_transport_esp32;
+// Status LED GPIO — board-specific defaults
+// Feather ESP32-S3: GPIO 13 (red LED, active high). GPIO 21 is NeoPixel power!
+// Seeed XIAO ESP32-S3: GPIO 21 (active low)
+#ifndef STATUS_LED_GPIO
+  #ifdef BOARD_FEATHER_ESP32S3
+    #define STATUS_LED_GPIO 13
+  #else
+    #define STATUS_LED_GPIO 21
+  #endif
+#endif
+#ifndef STATUS_LED_ACTIVE_LOW
+  #ifdef BOARD_FEATHER_ESP32S3
+    #define STATUS_LED_ACTIVE_LOW 0
+  #else
+    #define STATUS_LED_ACTIVE_LOW 1
+  #endif
+#endif
+#elif defined(BTSTACK_USE_NRF)
+extern const bt_transport_t bt_transport_nrf;
+// nRF: LED status handled by ws2812_nrf.c (RGB LEDs driven via neopixel API)
+#ifdef OLED_I2C_DISPLAY
+#include "core/services/display/display.h"
+#include "core/input_event.h"
+#include "core/buttons.h"
+#endif
+#else
+#include "pico/cyw43_arch.h"
 extern const bt_transport_t bt_transport_cyw43;
+#endif
+
+// ============================================================================
+// USB BUS SUSPEND / RESUME
+// ============================================================================
+// When the USB host (e.g. PS3) enters sleep, the bus suspends (no SOF >3 ms).
+// We drop the active BT link so the bridged controller (e.g. DS4) auto-sleeps
+// instead of staying powered forever — the PS3 keeps VBUS hot during sleep so
+// nothing else would tell the controller to power down. On resume, the existing
+// scan loop reconnects when the controller advertises again.
+
+static volatile bool usb_bus_suspended = false;
+static bool          usb_bus_suspended_seen = false;   // mirror for edge detect
+
+void tud_suspend_cb(bool remote_wakeup_en)
+{
+    (void)remote_wakeup_en;
+    usb_bus_suspended = true;
+}
+
+void tud_resume_cb(void)
+{
+    usb_bus_suspended = false;
+}
+
+// Called from app_task; performs the actual BT disconnect on a suspend edge so
+// btstack APIs run from the main-loop context they expect (not the USB IRQ).
+static void usb_suspend_check(void)
+{
+    bool now = usb_bus_suspended;
+    if (now == usb_bus_suspended_seen) return;
+    usb_bus_suspended_seen = now;
+    if (now) {
+        printf("[app:bt2usb] USB bus suspended -> disconnecting BT to let controller sleep\n");
+        btstack_host_disconnect_all_devices();
+    } else {
+        printf("[app:bt2usb] USB bus resumed -> scan/reconnect will pick the controller back up when it advertises\n");
+    }
+}
+
+// PS3 "Turn off controller" override. The PS3 fires this when the user
+// selects Settings -> Accessory Settings -> Turn off controller while we
+// are in PS3 output mode. The wired DS3 surface can't actually disappear
+// (we stay plugged in), so propagate the intent to the BT side -- a real
+// DS4/DS3 bridged over Bluetooth loses its host and auto-sleeps within a
+// minute. User presses the controller's PS button to wake + re-pair.
+void app_on_console_shutdown(void)
+{
+    printf("[app:bt2usb] Console shutdown -> disconnecting bridged BT controller\n");
+    btstack_host_disconnect_all_devices();
+}
 
 // ============================================================================
 // LED STATUS
@@ -31,32 +110,37 @@ extern const bt_transport_t bt_transport_cyw43;
 static uint32_t led_last_toggle = 0;
 static bool led_state = false;
 
-// Update LED based on connection/scan status
-// - Slow blink (1Hz): Scanning
-// - Solid on: Device paired, not scanning
-// - Off: No devices, not scanning
+// Update LED based on connection status
+// - Blink (0.8s): No device connected (scanning, connecting, or idle)
+// - Solid on: Device connected
+static void platform_led_set(bool on)
+{
+#ifdef BTSTACK_USE_ESP32
+    gpio_set_level(STATUS_LED_GPIO, (on ^ STATUS_LED_ACTIVE_LOW) ? 1 : 0);
+#elif defined(BTSTACK_USE_NRF)
+    // No-op: RGB LEDs driven by ws2812_nrf.c via neopixel_task()
+    (void)on;
+#else
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, on ? 1 : 0);
+#endif
+}
+
 static void led_status_update(void)
 {
-    uint32_t now = to_ms_since_boot(get_absolute_time());
+    uint32_t now = platform_time_ms();
 
-    if (btstack_host_is_scanning()) {
-        // Scanning - blink (500ms on/off = 1Hz)
-        if (now - led_last_toggle >= 500) {
-            led_state = !led_state;
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state ? 1 : 0);
-            led_last_toggle = now;
-        }
-    } else if (btstack_classic_get_connection_count() > 0) {
-        // Device connected, not scanning - solid on
+    if (btstack_classic_get_connection_count() > 0) {
+        // Device connected - solid on
         if (!led_state) {
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+            platform_led_set(true);
             led_state = true;
         }
     } else {
-        // No devices, not scanning - off
-        if (led_state) {
-            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-            led_state = false;
+        // No device connected - blink
+        if (now - led_last_toggle >= 400) {
+            led_state = !led_state;
+            platform_led_set(led_state);
+            led_last_toggle = now;
         }
     }
 }
@@ -77,9 +161,9 @@ static void on_button_event(button_event_t event)
         case BUTTON_EVENT_DOUBLE_CLICK: {
             // Double-click to cycle USB output mode
             printf("[app:bt2usb] Double-click - switching USB output mode...\n");
-            tud_task();
-            sleep_ms(50);
-            tud_task();
+            tud_task_ext(1, false);
+            platform_sleep_ms(50);
+            tud_task_ext(1, false);
 
             usb_output_mode_t next = usbd_get_next_mode();
             printf("[app:bt2usb] Switching to %s\n", usbd_get_mode_name(next));
@@ -135,13 +219,170 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 }
 
 // ============================================================================
+// OLED DISPLAY (XIAO Expansion Board - SSD1306 128x64 I2C)
+// ============================================================================
+
+#ifdef OLED_I2C_DISPLAY
+
+// Arrow characters for display (1=up, 2=down, 3=left, 4=right)
+#define ARROW_UP    "\x01"
+#define ARROW_DOWN  "\x02"
+#define ARROW_LEFT  "\x03"
+#define ARROW_RIGHT "\x04"
+
+typedef struct {
+    uint32_t mask;
+    const char* name;
+} button_name_t;
+
+static const button_name_t button_names[] = {
+    { JP_BUTTON_DU, ARROW_UP },
+    { JP_BUTTON_DR, ARROW_RIGHT },
+    { JP_BUTTON_DD, ARROW_DOWN },
+    { JP_BUTTON_DL, ARROW_LEFT },
+    { JP_BUTTON_B1, "B1" },
+    { JP_BUTTON_B2, "B2" },
+    { JP_BUTTON_B3, "B3" },
+    { JP_BUTTON_B4, "B4" },
+    { JP_BUTTON_L1, "L1" },
+    { JP_BUTTON_R1, "R1" },
+    { JP_BUTTON_L2, "L2" },
+    { JP_BUTTON_R2, "R2" },
+    { JP_BUTTON_S1, "S1" },
+    { JP_BUTTON_S2, "S2" },
+    { JP_BUTTON_L3, "L3" },
+    { JP_BUTTON_R3, "R3" },
+    { JP_BUTTON_A1, "A1" },
+    { 0, NULL }
+};
+
+static const char* transport_str(input_transport_t t) {
+    switch (t) {
+        case INPUT_TRANSPORT_BT_CLASSIC: return "BT";
+        case INPUT_TRANSPORT_BT_BLE:     return "BLE";
+        default:                         return "?";
+    }
+}
+
+static void oled_init(void) {
+    display_i2c_config_t cfg = {
+        .i2c_inst = 0,
+        .pin_sda  = 0,     // Configured by devicetree on nRF
+        .pin_scl  = 0,
+        .addr     = 0x3C,
+    };
+#ifdef BOARD_FEATHER_NRF52840
+    display_init_i2c(&cfg);  // SH1107 FeatherWing OLED
+    printf("[app:bt2usb] OLED display initialized (SH1107 I2C)\n");
+#else
+    display_init_ssd1306_i2c(&cfg);  // SSD1306 XIAO Expansion Board
+    printf("[app:bt2usb] OLED display initialized (SSD1306 I2C)\n");
+#endif
+}
+
+static input_event_t oled_cached_event;
+static bool oled_has_event = false;
+
+static void oled_update_display(void) {
+    static uint32_t last_update = 0;
+    static uint32_t last_buttons = 0;
+    uint32_t now = platform_time_ms();
+
+    // Cache latest router output
+    if (playersCount > 0 && players[0].dev_addr >= 0) {
+        const input_event_t* ev = router_get_output(OUTPUT_TARGET_USB_DEVICE, 0);
+        if (ev) {
+            oled_cached_event = *ev;
+            oled_has_event = true;
+        }
+    }
+
+    // Feed button presses to marquee (edge detection)
+    uint32_t buttons = oled_has_event ? oled_cached_event.buttons : 0;
+    uint32_t newly_pressed = ~last_buttons & buttons;
+    last_buttons = buttons;
+    for (int i = 0; button_names[i].name != NULL; i++) {
+        if (newly_pressed & button_names[i].mask) {
+            display_marquee_add(button_names[i].name);
+        }
+    }
+
+    if (now - last_update < 50) return;  // 20fps max
+    last_update = now;
+
+    display_clear();
+
+    // Line 1 (large, y=0): USB output mode
+    usb_output_mode_t mode = usbd_get_mode();
+    display_text_large(0, 0, usbd_get_mode_name(mode));
+
+    // Separator
+    display_hline(0, 17, DISPLAY_WIDTH);
+
+    // Lines 2-4: Controller info
+    if (playersCount > 0 && players[0].dev_addr >= 0) {
+        const char* name = get_player_name(0);
+        if (name) {
+            display_text(0, 20, name);
+        }
+
+        char info[22];
+        snprintf(info, sizeof(info), "%s dev:%d P%d/%d",
+                 transport_str(players[0].transport),
+                 players[0].dev_addr,
+                 players[0].player_number, playersCount);
+        display_text(0, 30, info);
+
+        if (oled_has_event) {
+            char line[22];
+            snprintf(line, sizeof(line), "L:%02X,%02X R:%02X,%02X T:%02X,%02X",
+                     oled_cached_event.analog[ANALOG_LX], oled_cached_event.analog[ANALOG_LY],
+                     oled_cached_event.analog[ANALOG_RX], oled_cached_event.analog[ANALOG_RY],
+                     oled_cached_event.analog[ANALOG_L2], oled_cached_event.analog[ANALOG_R2]);
+            display_text(0, 40, line);
+        }
+    } else {
+        display_text(0, 28, "No controller");
+    }
+
+    // Bottom (y=52): Button marquee
+    display_marquee_tick();
+    display_marquee_render(52);
+
+    display_update();
+}
+
+#endif // OLED_I2C_DISPLAY
+
+// ============================================================================
 // APP INITIALIZATION
 // ============================================================================
 
 void app_init(void)
 {
     printf("[app:bt2usb] Initializing BT2USB v%s\n", APP_VERSION);
+#ifdef BTSTACK_USE_ESP32
+    printf("[app:bt2usb] ESP32-S3 BLE -> USB HID\n");
+    // Init status LED GPIO
+    gpio_config_t led_cfg = {
+        .pin_bit_mask = (1ULL << STATUS_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&led_cfg);
+    gpio_set_level(STATUS_LED_GPIO, STATUS_LED_ACTIVE_LOW ? 1 : 0);  // Start OFF
+#elif defined(BTSTACK_USE_NRF)
+#ifdef BOARD_FEATHER_NRF52840
+    printf("[app:bt2usb] Adafruit Feather nRF52840 Express BLE -> USB HID\n");
+#else
+    printf("[app:bt2usb] Seeed XIAO nRF52840 BLE -> USB HID\n");
+#endif
+    // RGB LEDs initialized by ws2812_nrf.c via leds_init()
+#ifdef OLED_I2C_DISPLAY
+    oled_init();
+#endif
+#else
     printf("[app:bt2usb] Pico W built-in Bluetooth -> USB HID\n");
+#endif
 
     // Initialize button service (uses BOOTSEL button on Pico W)
     button_init();
@@ -170,10 +411,16 @@ void app_init(void)
     };
     players_init_with_config(&player_cfg);
 
-    // Initialize Bluetooth transport (CYW43)
+    // Initialize Bluetooth transport
     // Must use bt_init() to set global transport pointer and register drivers
     printf("[app:bt2usb] Initializing Bluetooth...\n");
+#ifdef BTSTACK_USE_ESP32
+    bt_init(&bt_transport_esp32);
+#elif defined(BTSTACK_USE_NRF)
+    bt_init(&bt_transport_nrf);
+#else
     bt_init(&bt_transport_cyw43);
+#endif
 
     printf("[app:bt2usb] Initialization complete\n");
     printf("[app:bt2usb]   Routing: Bluetooth -> USB Device (HID Gamepad)\n");
@@ -189,6 +436,9 @@ void app_init(void)
 
 void app_task(void)
 {
+    // Handle USB suspend/resume edges (PS3 sleep -> drop BT, PS3 wake -> rescan)
+    usb_suspend_check();
+
     // Process button input
     button_task();
 
@@ -224,4 +474,8 @@ void app_task(void)
             }
         }
     }
+
+#ifdef OLED_I2C_DISPLAY
+    oled_update_display();
+#endif
 }

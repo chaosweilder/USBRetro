@@ -6,6 +6,210 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.0] — 2026-05-27
+
+### Added
+
+#### New Apps
+- **psx2usb** — PlayStation 1 / PlayStation 2 controllers → USB HID. Hardware-paced PIO+DMA SIO transport (500 kHz, active-pull-up to read old analog pads like the SCPH-110 cleanly at fast clock). Auto-detects controller type and decodes: Digital (SCPH-1080), DualShock analog (0x73), DualShock 2 pressure (0x79), neGcon (0x23), Dual Analog flightstick / SCPH-1110 (0x53), Namco GunCon light gun (0x63) with screen X/Y → right stick, Namco JogCon (0xE3) with paddle wheel → left-stick X plus experimental recenter force-feedback, and PlayStation Mouse / SCPH-1090 (0x12) with relative cursor + 2 buttons. Board's user button (BOOTSEL on QT Py / KB2040) emits A1 / Guide while held. Outputs to all USB device modes; SInput reports authentic Sony face-style and per-protocol layout names. Build targets: `psx2usb_qtpy`, `psx2usb_kb2040`, `psx2usb_pico`.
+- **gc2eth** — GameCube → Ethernet bridge (W5500 / CH9120) for relaying joybus traffic to Dolphin over TCP. Intercept-replay state machine, STATUS-poll caching, speculative pre-send / WRITE / READ caches (experimental, for Madden multiboot research).
+- **joypad-mcp** — MCP server tool for driving an adapter as a synthetic player (vision pipeline, autoplay loop, web control UI, camera pause/resume).
+- **joypad-live** — host-side toolkit for live controller remapping and input injection (Twitch crowd-control, streamer overlays, automation). `tools/joypad-live/` ships Python + C# REST bridges with parity tests, a web dashboard, an OBS viewer overlay, `/press` HTTP endpoints, an SSE event feed, a Twitch IRC chat-driven crowd-control bot, and a `restream-bot` unified chat firehose listener. Firmware side adds RAM-only CDC commands so live tweaks don't burn flash with thousands of switches: `PROFILE.APPLY` (button-map override), `PROFILE.SELECT` (profile index override), `OVERLAY.SET / CLEAR / GET` (runtime overlay composed on top of the active profile), and `INPUT.INJECT` (host-side button injection that merges with real controller input).
+
+#### New Output Modes
+- **GBA Link** — `gc2usb` `USB_OUTPUT_MODE_GBA_LINK` vendor-bulk transport that exposes the GBA's joybus link over USB to a forked Dolphin (10× faster than TCP); multiboot of payload onto real GBA via `tools/usbgba-multiboot`; verified end-to-end with the joypad GBA-as-controller payload. Behind a CMake opt-in.
+- **GameCube GBA-as-controller** — `gc2usb` multiboots Doridian's gba-as-controller payload onto a connected GBA so it becomes a controller, with an animated eyes overlay and per-USB-mode splash text on the multiboot ROM.
+- **3DO keyboard and mouse** — `usb23do` routes USB keyboards (ID 0x4B) and mice (ID 0x49) to the 3DO's keyboard/mouse pod outputs.
+- **Amiga / Atari DE9 output** — Amiga/Atari CD32 + joystick output driver for XIAO RP2040 (`USB2AMI`, community contribution).
+
+#### New Board Targets
+- **HID-Remapper `remapper_v7`** — `usb2usb` dual-RP2040 host+device split board (SWD link on GP28/27, side-channel on GP23/24/25/26; power-cycle after flash is by design). MAX3421E SPI USB host variant (`usb2usb_feather_rp2040_usb_host_max3421`) for the Adafruit USB Host FeatherWing path.
+- **`controller_btusb_feather_rp2040_usb_host`** — new target with tri-state pins, USB-host capability, and OLED + I2C peer.
+- **`gc2usb_pico`** — Raspberry Pi Pico target with status LED, BOOTSEL button, and USB mode switching (GC data on GP28).
+- **`gc2usb_rp2040zero`** — CMake target aligned with the shipped GP29 wiring.
+- **`bt2usb_waveshare_rp2350b_plus_w`** — `bt2usb` for the Waveshare RP2350B-Plus-W. Waveshare wires the Raspberry Pi RM2 module to GP36/37/38/39 (REG_ON/DATA/CS/CLK) instead of the Pico 2 W's GP23/24/25/29; a custom board header in `src/boards/headers/` keeps the radio pins right and uses GP23 as LED2 instead of asserting WL_REG_ON. A stock `bt2usb_pico2_w` UF2 does not work on this board.
+
+#### Output & Device
+- **Dreamcast VMU emulation** — FT1 / FT3 (and SD-card backed) persistence; gating via `CONFIG_VMU` / `CONFIG_SD`. A freshly-preformatted virtual VMU now drops a default `ICONDATA_VMS` (Joypad OS LOGO_32) in save-area blocks 0-1 so the DC BIOS shows a logo instead of the no-icon placeholder; user saves on SD overlay it as usual. Tool: `tools/vmu/gen_default_icondata.py` to swap the default logo.
+- **PS3 power-down passthrough** — both PS3 sleep (USB bus suspend) and the PS3's *Settings → Accessory Settings → Turn off controller* menu now propagate to the bridged controller. On suspend, the adapter drops the BT link so a bridged DS4 / DS3 auto-sleeps within ~1 min instead of staying powered forever (PS3 keeps VBUS hot during sleep). The menu trigger is detected as the DS3 `0xF4` feature report with `0x42 0x0C` payload and routes to a weak `app_on_console_shutdown()` callback that `bt2usb` and `usb2usb` (with USB BT dongle) override to drop the BT ACL link (full baseband disconnect, not just the HID profile — DS4 lightbar latched solid otherwise). Closes #145.
+- **SD card filesystem** — SD HAL + FatFs filesystem service (PR #1 baseline).
+- **OLED menu** — tiny static-table OLED menu (USB Mode / Reboot / Bootloader) for controller-with-display builds.
+- **eyes animation** — standalone two-eye animation module with per-button reactions; consumed by `controller_btusb` and `gba-as-controller`.
+- **player_leds_gpio** — 4-LED player indicator driven from raw GPIOs (compile-time, opt-in).
+- **uart_host** — drains synthetic input via stdio stdin (drops the unused AI inject/blend protocol).
+- **CAPS.GET** — web config can query the active app's input/output capabilities.
+- **CDC streaming** — single-USB-packet event format cuts streaming latency on the data CDC.
+- **Runtime profile / auto-fire** — runtime button mapping and turbo/auto-fire with `usb2neogeo` adoption (community contribution by herzmx, PR #131).
+
+#### Controller & Input
+- **Mouse via gamepad** — quadrature-encoded mouse input, scroll wheel, auto-detect from device type, platform switching, per-platform DPI.
+- **Xbox One console auth pass-through** (`xbone`) — completes the Xbox One console-side handshake; MAX3421E SPI clock bumped to 16 MHz for chunked-auth headroom; GIP_VIRTUAL_KEYCODE emitted for the Guide button.
+- **Original Xbox per-button pressure** — XID (Duke / S-controller) reports analog pressure for A / B / X / Y / Black / White; the `tusb_xinput` parser previously threshold-quantized those bytes away. Now preserved alongside the digital bits and forwarded into the router's `pressure[]` block in canonical W3C / PS slot order. PS3 USB output mode automatically passes them through to the DS3 12-byte pressure block — verified end-to-end on real PS3 hardware. Xbox 360 / One paths unchanged (face buttons are digital on those generations).
+- **Switch Pro Joy-Con Charging Grip** — works as a single player (was previously two slots).
+- **Sony DS4 (USB)** — radial deadzone instead of per-axis rectangular.
+
+### Changed
+- **XInput XSM3** — per-board Xbox 360 security serial derived from the RP2040 chip unique ID (matches USB `iSerialNumber`), with the packet XOR checksum recomputed. Two adapters can now authenticate to one Xbox 360 simultaneously; previously the console accepted the first and rejected the second as a duplicate.
+- **SInput feature response** — re-framed as a 64-byte packet with a command-echo byte so SDL/Steam recognize the device; without it the controller was "detected but no buttons in Steam".
+- **SInput polling rate** — advertised 1 kHz to match the 1 ms HID endpoint.
+- **`gc2usb`** — per-controller hotkeys (instead of global); GBA shoulder-button swap option; persistent d-pad mode; S1+S2 hotkey combos; auto-calibrating L2/R2 rest values with threshold=0 (fixes stuck-on triggers).
+- **`bt2usb`** — `REQUIRE_BT_INPUT` defined so fresh boards default to BT host ON.
+- **`flash`** — schema-versioned settings + pad config; auto-wipes on schema mismatch instead of mis-applying old data.
+- **HID host** — only fetches the USB product string for unknown devices (skip for known VID/PID).
+- **NeoPixel power pin** — drives the load-switch via `PICO_DEFAULT_WS2812_POWER_PIN` (e.g., Feather RP2040 P1.14).
+- **pico-pio-usb** pinned to `d6c02ac` (pre-tightening); Docker forced to ARM GNU Toolchain 15.2.rel1; Makefile auto-detects the latest ARM GNU install instead of a hard-pinned version.
+- **`controller_btusb`** — paged display modes, FeatherWing pin-mapping fix, general hardening; ESP32 / nRF pico-sdk include guards.
+- **`pad`** — validate saved config + bound I2C ops + better web defaults.
+
+### Fixed
+- **GameCube keyboard** — 3-key rollover + arrow-key D-pad inversion.
+- **Dreamcast** — enumeration race condition and VMU write reliability; Core-0 TX workaround restored on KB2040; upstream Core-1 TX config restored on `usb2dc`.
+- **`switch_pro`** — flaky init by handling `0x21` reports and guarding LED OFF spam.
+- **`wii_ext`** — neutral report seeded for format 0x03 (Pro default) so initial reads aren't garbage.
+- **Router MERGE_BLEND** — analog stick read using local merge buffer (community PR #133, herzmx) plus a separate fix for analog stick reads from the merge buffer.
+- **`xbone`** — CI link errors for non-USB-device targets.
+- **`gc2usb` GBA Link** — Kawasedo cipher (multiboot) ported verbatim from `eth-multiboot.js`; aggressive cold-start RESET retry (the first joybus RESET after GBA power-cycle fails ~50% of the time); 130 MHz sys_clock set before `tusb_init`; init-order, FIFO sizing, and flow-control hardening.
+- **CD32 / Amiga output** — ghost button presses during BOOTSEL reads; LED disconnect detection.
+- **`profile`** — don't force L2/R2 threshold when no profile is loaded.
+- **`neopixel`** — blink states behind `reset_period` no longer race.
+- **`usb2neogeo`** — profile cycling fix; runtime_profile docs.
+
+### Build / CI / Docs
+- `esp/nrf` builds — fix unguarded pico-sdk headers and keep platform flash stubs in sync as new `flash_*` setters were declared (`flash_set_dpad_mode`, `flash_set_shoulder_swap`, and the joypad-live ephemeral-state batch: `flash_select_active_profile_index`, `flash_set/get/clear_overlay`, `flash_apply/clear/has_ephemeral_profile`). Each batch was caught after a CI break — `feedback_esp_nrf_flash_stubs` documents the recurring trap + the local audit one-liner that catches it before push.
+- `controller_btusb` added to release artifacts on rpi / esp / nrf; `usb2usb_feather_rp2040_usb_host` added to the release matrix; `bt2usb_waveshare_rp2350b_plus_w` added so the Waveshare RM2 board ships its own UF2.
+- Unified `docs/usb2gc` build guide covering KB2040 / Pi Pico / RP2040-Zero; corrected bogus pinout claims; "Build" column in adapter tables; "DIY" page surfaces guides.
+- **psx2usb hardware build guide** — `docs/hardware/builds/psx2usb-qtpy.md` covers QT Py / KB2040 / Pi Pico wiring, the 9-pin PSX connector pinout, DAT pull-up and rumble-rail notes, build / flash, output-mode walkthrough, and the supported-controller table.
+- `tools/dolphin-fork` build instructions for the `joypad-gba-usb` fork.
+- `.dev/docs` removed from tracking — internal planning files, now gitignored.
+- FUNDING switched to GitHub Sponsors.
+
+### Community contributions
+- **herzmx** — runtime mapping + auto-fire profile (PR #131), `usb2neogeo` adoption; MERGE_BLEND race fix (PR #133); `usbh_alt_ps3` driver (PR #132).
+- **thgill** — `USB2AMI` Amiga/Atari output + Dreamcast VMU/SD merge (PR #140).
+
+---
+
+## [2.0.0] — 2026-04-18
+
+### Added
+
+#### New Apps
+- **bt2wiiext** — Bluetooth controllers → Wii extension port (Classic Controller Pro I2C slave emulation with marcan/Dolphin extension encryption); fully functional in libogc-based homebrew controller tester apps
+- **wii2usb / wii2gc / wii2n64** — Wii extension accessories (Nunchuck, Classic, Classic Pro) → USB HID, GameCube, or N64
+- **bt2gc / bt2nuon / bt2loopy** — Bluetooth → GameCube, Nuon, and Casio Loopy output (Pico W)
+- **nuon2usb** — Read Nuon controllers as USB HID input
+- **nuonserial** — Polyface serial adapter for Nuon homebrew development
+- **lodgenet2gc / lodgenet2n64** — LodgeNet hotel controllers → GameCube or N64
+- **nes2usb** — NES controller → USB HID via PIO (community contribution)
+- **jvs2usb** — JVS arcade I/O board → USB HID (community contribution)
+- **controller_btusb** — Universal GPIO/JoyWing controller app with simultaneous BLE + USB HID output
+- **usb2ble** — USB controllers → BLE gamepad output
+- **btusb2usb** — Combined PIO-USB host + CYW43 Bluetooth + USB device on a single Pico W
+
+#### New Platforms
+- **Seeed XIAO nRF52840** and **Adafruit Feather nRF52840** — bt2usb and usb2usb targets
+- **MAX3421E SPI USB host** — Feather RP2040 + USB Host FeatherWing support
+- **Pico 2 W** — bt2n64 and n642dc targets
+
+#### Web Config
+- Complete UI redesign with sidebar navigation and dark theme
+- **BT Host page** — live scan status, paired device list, per-device forget, transport details
+- **USB Host page** — runtime D+ pin configuration for PIO-USB
+- **Router page** — routing mode, merge mode, and D-Pad mode adjustable at runtime
+- **Profiles page** — create, edit, clone, and delete custom profiles; clone from built-in profiles
+- **Hotkeys page** — configure button combo actions
+- **Feedback page** — onboard LED toggle, RGB LED pin/count, SInput RGB, buzzer settings
+- **Native Output page** — runtime Joybus pin configuration (usb2gc, extensible to other consoles)
+- **Device Info** — firmware version check and one-click OTA update via File System Access API
+- BLE NUS (Web Bluetooth) wireless configuration transport — configure over Bluetooth without USB
+- Dirty-state tracking for save buttons; auto-reconnect after device reboot
+- **Input test** — per-player live input stream with device names and smooth RAF batching
+
+#### Controller & Input
+- F1/F2 function keys available for hotkey combos
+- Configurable hotkey combos: button remap, D-Pad mode cycle, profile next/previous
+- Custom profiles now apply uniformly in the router across all outputs
+- BLE Central scanning for Bluetooth controllers on Pico W, nRF52840, and ESP32-S3
+- Synthesize digital L2/R2 from analog triggers when no built-in profile is present
+
+#### Output & Device
+- BLE gamepad output as composite HID device (gamepad + keyboard + mouse)
+- Xbox BLE gamepad mode with dual GATT service support
+- Generic native-output configuration API (OUTPUT.NATIVE.GET/SET)
+- CYW43 onboard LED status patterns: blinking = scanning, solid = connected, off = idle
+- **gc2usb** — auto-calibrating stick range scaling (tracks min/max per axis, expands to full 0-255)
+- **gc2usb_rp2040zero** — new build target (GC data on GP29, NeoPixel on GP16)
+- **gc2usb_pico** — new build target for Raspberry Pi Pico (GC data on GP28; GP29 isn't broken out on standard Pico)
+- **Dual Nunchuck mode** — two I2C Nunchucks merged into one input (left stick + right stick, 4 face buttons)
+- **Batch flash tool** — `tools/flash-loop.sh` for flashing multiple boards in sequence
+- **8BitDo Ultimate BLE button mapping** — dedicated map for controllers with back paddles (VID 0x2DC8, >14 buttons)
+
+### Changed
+- **usb2gc / wii2gc** — automatic console detection via GC_DATA pin; Joybus pin overridable at runtime via web config
+- **Trigger threshold** — default changed from 128 (50% travel) to 1 (any press)
+- libxsm3 converted to a maintained fork (RobertDaleSmith/libxsm3) as a submodule
+- Platform HAL extended with GPIO and ADC abstractions for cross-platform pad input
+- Flash initialization made idempotent to support early hardware detection paths
+- BT scan now suppressed when a USB device is connected; scan duration is timed or indefinite based on context
+- Stream throttle state resets on web config page refresh (device names persist)
+
+### Fixed
+- N64 pak compatibility with Everdrive, PixelFX Game ID detection, and Cruisin' USA
+- N64 cold-boot detection and Core 1 flash-safety hang on Pico 2 W (RP2350)
+- Bluetooth generic gamepad analog axis scaling (was 1–255, corrected to 0–255)
+- Profile clone from built-in now copies actual button mappings (was copying passthrough for all buttons)
+- Custom profile chaining bug where L1→B1 + B1→R3 incorrectly produced L1→R3
+- XInput device naming showing "Sony DualShock 3" for Xbox controllers (HID type slots uninitialized)
+- BT device names now preferred over generic driver name in input test display
+- Input test transport labels: "bt classic" vs "ble" for clarity
+- nRF52840: CDC serial hang caused by stack overflow; pad config NVS key conflict; GPIO HAL guard omissions
+- MAX3421E SPI hang on boards using SPI1
+- NeoPixel data loss on multi-LED chains
+- BOOTSEL button reads throttled to prevent blocking flash access and interrupts
+- Wii extension support extended to all accessories (Nunchuck, Classic, Classic Pro, and others)
+- Wii extension calibration block checksum corrected to Dolphin's 8-bit format (`cal[14] = sum+0x55`, `cal[15] = cal[14]+0x55`); previous 16-bit big-endian sum was rejected by the Wii System Menu, causing it to fall back to internal defaults and mis-map analog axes
+- PCEngine docs: added voltage level warning for 5V→3.3V level shifting
+
+### Known limitations
+
+- **bt2wiiext on Wii System Menu** — analog stick direction mapping has unresolved issues specific to the System Menu's cursor logic; the firmware reports correct format-0x01 byte values (verified in libogc-based homebrew controller tester apps) but the System Menu interprets them differently. Buttons and analog triggers work correctly in all tested contexts.
+
+---
+
+## [1.9.0] — 2026-02-25
+
+### Added
+- **N64 console output** — new `bt2n64` (Pico W / Pico 2 W) and `usb2n64` (KB2040) apps using joybus-pio N64Console C API (not yet in CI release builds)
+- **Nuon console output** — new `bt2nuon` and `n642nuon` apps for Nuon controller output via Polyface protocol (not yet in CI release builds)
+- **ESP32-S3 bt2usb support** — BLE controllers to USB HID on ESP32-S3 with TinyUF2 drag-and-drop firmware updates
+- **ESP32-S3 bt2usb UF2** added to CI build and release workflow
+- **Battery level reporting** for DS3 (USB + BT), DS4/DS5 (via SInput), Switch Pro Controller, and Wii U Pro Controller
+- **BLE Battery Service integration** for automatic battery reporting on BLE controllers
+- **DS4/DS5 touchpad pass-through** to SInput
+- **neogeo2usb** — Neo Geo+ to USB adapter with D-pad mode hotkeys, RP2040-Zero support, and documentation (community contribution by herzmx)
+- **Generic HID descriptor-driven Xbox BT driver** — replaces vendor-specific Xbox BT drivers with unified HID parser approach
+
+### Fixed
+- **Xbox BT overhaul** — replaced vendor drivers with generic HID descriptor-driven gamepad parsing; fixed button masks, D-pad parsing, Share button, and Elite BT parsing
+- **Xbox Classic BT connection timeout** on CYW43
+- **Switch Pro BT pairing, reconnection, and analog parsing** on CYW43
+- **Sony BT reconnection** on CYW43 dual-path conflict
+- **SET_REPORT failing** for Sony controllers on CYW43 direct L2CAP path
+- **DS4 clone hanging Pico W** by skipping SDP over CYW43
+- **DS5 BT battery offset** (53 → 52) and Sony battery parsing for USB offset and charging states
+- **SInput feature report** not updating on BT controller swap
+- **L2/R2 pressure missing** for digital-only trigger controllers
+- **ESP32 button GPIO** and `tud_task()` blocking on mode switch
+- **Generic HID gamepad parsing** for Xbox-style controllers
+- **Broken docs links** in README, HARDWARE.md, and INSTALLATION.md
+- **PCEngine protocol doc** — fixed 8 factual errors
+- **CI cleanup** — delete intermediate firmware artifacts after collect
+
+### Changed
+- BLE generic gamepad driver now reuses USB HID parser for consistency
+
+---
+
 ## [1.8.0] — 2026-02-15
 
 ### Added

@@ -16,6 +16,7 @@
 #define PAD_CONFIG_MACROPAD_H
 
 #include "../pad_input.h"
+#include "core/buttons.h"
 
 // User button: Rotary encoder button (GPIO 0)
 // Set via BUTTON_USER_GPIO=0 in CMakeLists.txt
@@ -70,16 +71,26 @@ static const pad_device_config_t pad_config_macropad = {
     // Aux buttons (unused)
     .a1 = 0,                // Home / Guide (Encoder button)
     .a2 = PAD_PIN_DISABLED,
+    .a3 = PAD_PIN_DISABLED,
+    .a4 = PAD_PIN_DISABLED,
 
     // Extra buttons (Key 2 unused)
     .l4 = PAD_PIN_DISABLED,
     .r4 = PAD_PIN_DISABLED,
+
+    // No toggle switch (dpad always digital)
+    .toggle = { 
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, 
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, 
+    },
 
     // No analog sticks
     .adc_lx = PAD_PIN_DISABLED,
     .adc_ly = PAD_PIN_DISABLED,
     .adc_rx = PAD_PIN_DISABLED,
     .adc_ry = PAD_PIN_DISABLED,
+    .adc_lt = PAD_PIN_DISABLED,
+    .adc_rt = PAD_PIN_DISABLED,
 
     .invert_lx = false,
     .invert_ly = false,
@@ -114,6 +125,25 @@ static const pad_device_config_t pad_config_macropad = {
         { 64,  64,   0},  // Key 12: Y       - Yellow (Xbox Y)
     },
 
+    // D-pad LEDs pulse with breathing animation
+    .led_pulse_mask = (1<<0) | (1<<3) | (1<<4) | (1<<6),
+
+    // Button-to-LED mapping (pressed keys flash white)
+    .led_button_map = {
+        JP_BUTTON_DL,  //  0: Key 1  D-Left
+        JP_BUTTON_S1,  //  1: Key 2  Select
+        JP_BUTTON_L1,  //  2: Key 3  L1
+        JP_BUTTON_DD,  //  3: Key 4  D-Down
+        JP_BUTTON_DU,  //  4: Key 5  D-Up
+        JP_BUTTON_R1,  //  5: Key 6  R1
+        JP_BUTTON_DR,  //  6: Key 7  D-Right
+        JP_BUTTON_B1,  //  7: Key 8  A
+        JP_BUTTON_B3,  //  8: Key 9  X
+        JP_BUTTON_S2,  //  9: Key 10 Start
+        JP_BUTTON_B2,  // 10: Key 11 B
+        JP_BUTTON_B4,  // 11: Key 12 Y
+    },
+
     // Speaker for haptic/rumble feedback
     .speaker_pin = 16,          // Speaker on GPIO 16
     .speaker_enable_pin = 14,   // Speaker shutdown on GPIO 14 (active high to enable)
@@ -126,9 +156,15 @@ static const pad_device_config_t pad_config_macropad = {
     .display_dc = 24,           // OLED DC
     .display_rst = 23,          // OLED Reset
 
-    // QWIIC UART for linking two MacroPads (GPIO 20=TX, 21=RX on UART1)
-    .qwiic_tx = 20,             // QWIIC SDA → UART1 TX
-    .qwiic_rx = 21,             // QWIIC SCL → UART1 RX
+    // QWIIC / STEMMA QT (GPIO 20=SDA, 21=SCL on I2C0)
+    .qwiic_tx = 20,             // STEMMA QT SDA (I2C0)
+    .qwiic_rx = 21,             // STEMMA QT SCL (I2C0)
+    0
+    .usb_host_dp = PAD_PIN_DISABLED,
+    .joywing = { 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+    },
 };
 
 #endif // PAD_CONFIG_MACROPAD_H

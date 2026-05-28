@@ -1,0 +1,25 @@
+# Adafruit Feather ESP32-S3 board overrides
+# Button: GPIO 0 (BOOT button)
+# NeoPixel: GPIO 33 (active high, no level shift)
+# Status LED: GPIO 13
+
+# 4MB flash (same as default, but explicit for this board)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Custom partition table for TinyUF2
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_uf2.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_uf2.csv"
+
+# Flash tool: don't reset before flash (device enters bootloader via CDC command)
+CONFIG_ESPTOOLPY_BEFORE_NORESET=y
+
+# Console: use UART1 on GPIO39/38 (header TX/RX pins) so panic handler
+# output is visible on the serial monitor. App code also redirects stdout
+# to UART1 via uart1_console_init() as backup.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_NUM=1
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=39
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=38
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

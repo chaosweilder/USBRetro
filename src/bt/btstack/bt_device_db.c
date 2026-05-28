@@ -69,10 +69,11 @@ const bt_device_profile_t BT_PROFILE_SONY = {
 
 const bt_device_profile_t BT_PROFILE_SWITCH = {
     .name = "Switch",
-    .classic = BT_CLASSIC_HID_HOST,
+    .classic = BT_CLASSIC_DIRECT_L2CAP,
     .ble = BT_BLE_GATT_HIDS,
     .hid_mode = BT_HID_MODE_REPORT,
     .pin_type = BT_PIN_NONE,
+    .default_vid = 0x057E,
 };
 
 const bt_device_profile_t BT_PROFILE_SWITCH2 = {
@@ -121,8 +122,8 @@ static const bt_device_name_entry_t name_table[] = {
 // ============================================================================
 
 const bt_device_profile_t* bt_device_lookup(const char* name, uint16_t company_id) {
-    // Company ID match (Switch 2 — no name in advertising)
-    if (company_id == 0x0553) {
+    // Company ID match — identifies devices from BLE manufacturer-specific advertising data
+    if (company_id == 0x0553) {  // Nintendo (Switch 2)
         return &BT_PROFILE_SWITCH2;
     }
 
@@ -146,5 +147,7 @@ uint16_t bt_device_wiimote_pid_from_name(const char* name) {
     if (!name || !name[0]) return 0;
     if (strstr(name, "-UC") != NULL) return 0x0330;           // Wii U Pro
     if (strstr(name, "RVL-CNT-01") != NULL) return 0x0306;    // Wiimote
+    if (strstr(name, "Pro Controller") != NULL) return 0x2009; // Switch Pro
+    if (strstr(name, "Joy-Con") != NULL) return 0x2006;        // Joy-Con (L default)
     return 0;
 }

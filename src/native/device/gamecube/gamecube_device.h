@@ -18,12 +18,25 @@
 #define MAX_PLAYERS 4
 #define GC_KEY_NOT_FOUND 0x00 // Define lookup table (all initialized to NOT_FOUND to start)
 
+#ifndef SHIELD_PIN_L
 #define SHIELD_PIN_L 4  // Connector shielding mounted to GPIOs [4, 5,26,27]
-#define SHIELD_PIN_R 26
+#endif
 
+#ifndef SHIELD_PIN_R
+#define SHIELD_PIN_R 26
+#endif
+
+#ifndef BOOTSEL_PIN
 #define BOOTSEL_PIN 11
+#endif
+
+#ifndef GC_DATA_PIN
 #define GC_DATA_PIN 7
+#endif
+
+#ifndef GC_3V3_PIN
 #define GC_3V3_PIN 6
+#endif
 
 // NGC button modes
 #define BUTTON_MODE_0  0x00
@@ -48,6 +61,7 @@
 
 // Global variables
 extern PIO pio;
+extern bool gc_config_mode;  // True when no GC 3.3V detected (CDC config mode)
 
 // Function declarations
 void ngc_init(void);

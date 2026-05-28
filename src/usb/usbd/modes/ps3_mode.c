@@ -8,7 +8,7 @@
 #include "descriptors/ps3_descriptors.h"
 #include "core/buttons.h"
 #include "core/services/players/manager.h"
-#include "pico/unique_id.h"
+#include "platform/platform.h"
 #include <string.h>
 
 // ============================================================================
@@ -32,19 +32,19 @@ static void ps3_mode_init(void)
     ps3_output_available = false;
     ps3_ef_byte = 0;
 
-    // Generate plausible BT addresses from RP2040 unique board ID
+    // Generate plausible BT addresses from board unique ID
     memset(&ps3_pairing, 0, sizeof(ps3_pairing));
-    pico_unique_board_id_t board_id;
-    pico_get_unique_board_id(&board_id);
+    uint8_t board_id[8];
+    platform_get_unique_id(board_id, sizeof(board_id));
     // Device address: bytes 0-5 of board ID
     ps3_pairing.device_address[0] = 0x00;  // Leading zero
     for (int i = 0; i < 6; i++) {
-        ps3_pairing.device_address[1 + i] = board_id.id[i];
+        ps3_pairing.device_address[1 + i] = board_id[i];
     }
     // Host address: bytes 2-7 XOR'd for differentiation
     ps3_pairing.host_address[0] = 0x00;  // Leading zero
     for (int i = 0; i < 6; i++) {
-        ps3_pairing.host_address[1 + i] = board_id.id[i] ^ 0xAA;
+        ps3_pairing.host_address[1 + i] = board_id[i] ^ 0xAA;
     }
 }
 
@@ -167,7 +167,22 @@ static bool ps3_mode_send_report(uint8_t player_index,
 
 static void ps3_mode_handle_output(uint8_t report_id, const uint8_t* data, uint16_t len)
 {
-    (void)report_id;
+    // PS3 "Turn off controller" handshake. When the user selects the
+    // accessory-settings menu entry, the PS3 sends a feature report on
+    // 0xF4 with the DS3 "Set Operational" opcode (0x42) and state 0x0C
+    // (state 0x0B precedes it as a prep step but isn't sufficient on its
+    // own). A real DS3 powers off here. The wired adapter can't actually
+    // disappear from USB, but we propagate the intent to the bridged
+    // input source via the weak app_on_console_shutdown() callback --
+    // bt2usb overrides it to drop the BT link so a real DS4/DS3 attached
+    // wirelessly auto-sleeps. Apps that don't override get the no-op
+    // default and the PS3 continues talking to the wired DS3 surface as
+    // before. See joypad-ai/joypad-os#145.
+    if (report_id == 0xF4 && len >= 2 && data[0] == 0x42 && data[1] == 0x0C) {
+        printf("[ps3_mode] Host shutdown (F4 42 0C) -> app_on_console_shutdown()\n");
+        app_on_console_shutdown();
+        return;
+    }
 
     // Some hosts (like WebHID) may include report ID in buffer, some don't
     // Check if buffer starts with report ID 0x01 and skip it if so

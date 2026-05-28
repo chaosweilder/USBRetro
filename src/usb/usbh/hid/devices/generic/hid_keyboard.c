@@ -4,7 +4,7 @@
 #include "core/router/router.h"
 #include "core/router/router.h"
 #include "core/input_event.h"
-#include "pico/time.h"
+#include "platform/platform.h"
 
 // Analog stick intensity values (canonical - console layer can scale if needed)
 #define KB_ANALOG_MID 64
@@ -414,8 +414,12 @@ void process_hid_keyboard(uint8_t dev_addr, uint8_t instance, uint8_t const* hid
   if (hatSwitchKeys) {
     uint8_t hat_switch_x, hat_switch_y;
     calculate_coordinates(hatSwitchKeys, 100, &hat_switch_x, &hat_switch_y);
-    dpad_up = hat_switch_y > 128;
-    dpad_down = hat_switch_y < 128;
+    // calculate_coordinates returns screen-style coords: 0° (Up) → small Y,
+    // 180° (Down) → large Y. Dpad bools follow the same screen convention,
+    // so up = y < 128, down = y > 128. The previous comparisons inverted
+    // up/down on arrow-key (and W/S) → dpad output.
+    dpad_up = hat_switch_y < 128;
+    dpad_down = hat_switch_y > 128;
     dpad_left = hat_switch_x < 128;
     dpad_right = hat_switch_x > 128;
   }
@@ -449,7 +453,14 @@ void process_hid_keyboard(uint8_t dev_addr, uint8_t instance, uint8_t const* hid
     .buttons = buttons,
     .button_count = 10,  // Keyboard maps to 10 buttons (B1-B4, L1, R1, L2, R2, L3, R3)
     .analog = {analog_left_x, analog_left_y, analog_right_x, analog_right_y, analog_l, analog_r},
-    .keys = reportKeys
+    .keys = reportKeys,
+    // Raw HID kb state preserved alongside the lossy gamepad-mapped `keys` field;
+    // event-driven output paths (e.g. 3DO PS/2 emulation) need full fidelity.
+    .kb_modifier = report->modifier,
+    .kb_keys = {
+      report->keycode[0], report->keycode[1], report->keycode[2],
+      report->keycode[3], report->keycode[4], report->keycode[5],
+    },
   };
   router_submit_input(&event);
 
@@ -520,7 +531,7 @@ void task_hid_keyboard(uint8_t dev_addr, uint8_t instance, device_output_config_
   const uint32_t interval_ms = 20;
   static uint32_t start_ms = 0;
 
-  uint32_t current_time_ms = to_ms_since_boot(get_absolute_time());
+  uint32_t current_time_ms = platform_time_ms();
   if (current_time_ms - start_ms >= interval_ms)
   {
     start_ms = current_time_ms;

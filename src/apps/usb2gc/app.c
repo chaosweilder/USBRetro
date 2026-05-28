@@ -3,6 +3,16 @@
 //
 // This file contains app-specific initialization and logic.
 // The firmware calls app_init() after core system initialization.
+//
+// Mode detection:
+//   GC_DATA pin HIGH (joybus pull-up from powered console) → Play mode
+//                                                            (USB host → GameCube joybus output)
+//   GC_DATA pin LOW  (no console: our pull-down dominates) → Config mode
+//                                                            (USB device with CDC for web configuration)
+//
+// Detect happens BEFORE joybus PIO init claims the pin. In play mode the
+// joybus init reconfigures the pin (pull-up + PIO function), overwriting
+// the pull-down used here.
 
 #include "app.h"
 #include "profiles.h"
@@ -10,10 +20,14 @@
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
 #include "core/services/profiles/profile.h"
+#include "core/services/storage/flash.h"
 #include "core/input_interface.h"
 #include "core/output_interface.h"
+#include "core/services/leds/leds.h"
 #include "native/device/gamecube/gamecube_device.h"
 #include "usb/usbh/usbh.h"
+#include "usb/usbd/usbd.h"
+#include "pico/stdlib.h"
 #include <stdio.h>
 
 // ============================================================================
@@ -24,7 +38,7 @@ static const profile_config_t app_profile_config = {
     .output_profiles = {
         [OUTPUT_TARGET_GAMECUBE] = &gc_profile_set,
     },
-    .shared_profiles = NULL,
+    .shared_profiles = &gc_profile_set,  // Also shared so CDC config can find profiles
 };
 
 // ============================================================================
@@ -37,6 +51,11 @@ static const InputInterface* input_interfaces[] = {
 
 const InputInterface** app_get_input_interfaces(uint8_t* count)
 {
+    if (gc_config_mode) {
+        // Config mode: no USB host input needed
+        *count = 0;
+        return NULL;
+    }
     *count = sizeof(input_interfaces) / sizeof(input_interfaces[0]);
     return input_interfaces;
 }
@@ -47,14 +66,51 @@ const InputInterface** app_get_input_interfaces(uint8_t* count)
 
 extern const OutputInterface gamecube_output_interface;
 
-static const OutputInterface* output_interfaces[] = {
+static const OutputInterface* gc_output_interfaces[] = {
     &gamecube_output_interface,
+};
+
+static const OutputInterface* cdc_output_interfaces[] = {
+    &usbd_output_interface,
 };
 
 const OutputInterface** app_get_output_interfaces(uint8_t* count)
 {
-    *count = sizeof(output_interfaces) / sizeof(output_interfaces[0]);
-    return output_interfaces;
+    // Detect mode by checking GC_DATA joybus signal pin.
+    // Joybus convention: console-side pull-up to 3.3V keeps the line HIGH
+    // when the console is powered. With our internal pull-down (~50kΩ) the
+    // ~1kΩ console pull-up easily wins → reads HIGH. With no console (or
+    // console off), our pull-down dominates → reads LOW.
+    //
+    // Same pattern can be reused on usb2n64 (joybus) and any other adapter
+    // whose console output line idles HIGH when powered.
+    //
+    // Honor runtime pin override from web config so detection lines up with
+    // the same pin joybus init will use later.
+    flash_init();  // idempotent — needed early to read pin override
+    flash_t* settings = flash_get_settings();
+    uint detect_pin = GC_DATA_PIN;
+    if (settings && settings->joybus_data_pin > 0 && settings->joybus_data_pin <= 28) {
+        detect_pin = settings->joybus_data_pin;
+    }
+
+    gpio_init(detect_pin);
+    gpio_set_dir(detect_pin, GPIO_IN);
+    gpio_pull_down(detect_pin);
+    sleep_ms(200);  // Allow line to settle / console power to stabilize
+
+    if (!gpio_get(detect_pin)) {
+        // No console signal → config mode (USB device with CDC)
+        gc_config_mode = true;
+        *count = 1;
+        return cdc_output_interfaces;
+    }
+
+    // GameCube signal detected → play mode (USB host → GC output).
+    // joybus init will reconfigure GC_DATA_PIN (pull-up + PIO function).
+    gc_config_mode = false;
+    *count = sizeof(gc_output_interfaces) / sizeof(gc_output_interfaces[0]);
+    return gc_output_interfaces;
 }
 
 // ============================================================================
@@ -63,7 +119,35 @@ const OutputInterface** app_get_output_interfaces(uint8_t* count)
 
 void app_init(void)
 {
-    printf("[app:usb2gc] Initializing GCUSB v%s\n", APP_VERSION);
+    // Expose the GameCube output to the web config in BOTH modes so the
+    // user can configure the joybus pin even when no console is connected.
+    // (In play mode main.c auto-discovers it; this overrides for config mode.)
+    native_output = &gamecube_output_interface;
+
+    if (gc_config_mode) {
+        printf("[app:usb2gc] Config mode - CDC serial for web configuration\n");
+
+        // Show orange LED to indicate config mode
+        leds_set_color(64, 32, 0);
+
+        // Minimal router config for CDC output
+        router_config_t router_cfg = {
+            .mode = ROUTING_MODE_MERGE,
+            .merge_mode = MERGE_BLEND,
+            .max_players_per_output = {
+                [OUTPUT_TARGET_USB_DEVICE] = 1,
+            },
+            .merge_all_inputs = true,
+        };
+        router_init(&router_cfg);
+
+        // Initialize profile system so web config can read/write profiles
+        profile_init(&app_profile_config);
+
+        return;
+    }
+
+    printf("[app:usb2gc] Initializing usb2gc v%s\n", APP_VERSION);
 
     // Configure router for GCUSB
     router_config_t router_cfg = {
@@ -108,6 +192,8 @@ void app_init(void)
 
 void app_task(void)
 {
+    if (gc_config_mode) return;  // Config mode: nothing to do here
+
     // Forward rumble from GameCube console to USB controllers
     if (gamecube_output_interface.get_rumble) {
         uint8_t rumble = gamecube_output_interface.get_rumble();

@@ -11,7 +11,7 @@
 #include "core/buttons.h"
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
-#include "pico/time.h"
+#include "platform/platform.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -116,8 +116,8 @@ typedef struct __attribute__((packed)) {
     };
 
     uint8_t hat;            // D-pad as hat (0-7, 8=center)
-    uint8_t lx, ly;         // Left stick (0-255)
-    uint8_t rx, ry;         // Right stick (0-255)
+    uint16_t lx, ly;        // Left stick (0-65535, center ~32768)
+    uint16_t rx, ry;        // Right stick (0-65535, center ~32768)
 } switch_simple_report_t;
 
 // ============================================================================
@@ -281,7 +281,7 @@ static bool switch_init(bthid_device_t* device)
 
             // Start init state machine — commands sent from task()
             switch_data[i].init_state = SWITCH_STATE_WAIT_READY;
-            switch_data[i].init_time = to_ms_since_boot(get_absolute_time());
+            switch_data[i].init_time = platform_time_ms();
 
             switch_data[i].event.type = INPUT_TYPE_GAMEPAD;
             switch_data[i].event.transport = INPUT_TRANSPORT_BT_CLASSIC;
@@ -331,6 +331,7 @@ static void switch_process_report(bthid_device_t* device, const uint8_t* data, u
         if (rpt->lstick) buttons |= JP_BUTTON_L3;
         if (rpt->rstick) buttons |= JP_BUTTON_R3;
         if (rpt->home)   buttons |= JP_BUTTON_A1;
+        if (rpt->capture) buttons |= JP_BUTTON_A2;
 
         // D-pad
         if (rpt->up)     buttons |= JP_BUTTON_DU;
@@ -351,6 +352,11 @@ static void switch_process_report(bthid_device_t* device, const uint8_t* data, u
         sw->event.analog[ANALOG_LY] = 255 - scale_12bit_to_8bit(ly);
         sw->event.analog[ANALOG_RX] = scale_12bit_to_8bit(rx);
         sw->event.analog[ANALOG_RY] = 255 - scale_12bit_to_8bit(ry);
+
+        // Battery: bits 7-4 = level (0/2/4/6/8), bit 3 = charging
+        uint8_t bat_raw = rpt->battery_conn >> 4;
+        sw->event.battery_level = (bat_raw > 8) ? 100 : bat_raw * 12 + 5;
+        sw->event.battery_charging = (rpt->battery_conn & 0x08) != 0;
 
         router_submit_input(&sw->event);
 
@@ -373,6 +379,7 @@ static void switch_process_report(bthid_device_t* device, const uint8_t* data, u
         if (rpt->lstick) buttons |= JP_BUTTON_L3;
         if (rpt->rstick) buttons |= JP_BUTTON_R3;
         if (rpt->home)   buttons |= JP_BUTTON_A1;
+        if (rpt->capture) buttons |= JP_BUTTON_A2;
 
         // Hat to D-pad
         if (rpt->hat == 0 || rpt->hat == 1 || rpt->hat == 7) buttons |= JP_BUTTON_DU;
@@ -381,10 +388,11 @@ static void switch_process_report(bthid_device_t* device, const uint8_t* data, u
         if (rpt->hat >= 5 && rpt->hat <= 7) buttons |= JP_BUTTON_DL;
 
         sw->event.buttons = buttons;
-        sw->event.analog[ANALOG_LX] = rpt->lx;
-        sw->event.analog[ANALOG_LY] = 255 - rpt->ly;  // Invert Y (Nintendo: up=high, HID: up=low)
-        sw->event.analog[ANALOG_RX] = rpt->rx;
-        sw->event.analog[ANALOG_RY] = 255 - rpt->ry;  // Invert Y (Nintendo: up=high, HID: up=low)
+        // 16-bit sticks scaled to 8-bit (0-65535 → 0-255)
+        sw->event.analog[ANALOG_LX] = rpt->lx >> 8;
+        sw->event.analog[ANALOG_LY] = 255 - (rpt->ly >> 8);  // Invert Y (Nintendo: up=high, HID: up=low)
+        sw->event.analog[ANALOG_RX] = rpt->rx >> 8;
+        sw->event.analog[ANALOG_RY] = 255 - (rpt->ry >> 8);  // Invert Y (Nintendo: up=high, HID: up=low)
 
         router_submit_input(&sw->event);
     }
@@ -395,7 +403,7 @@ static void switch_task(bthid_device_t* device)
     switch_bt_data_t* sw = (switch_bt_data_t*)device->driver_data;
     if (!sw) return;
 
-    uint32_t now = to_ms_since_boot(get_absolute_time());
+    uint32_t now = platform_time_ms();
 
     switch (sw->init_state) {
         case SWITCH_STATE_WAIT_READY:
@@ -500,7 +508,7 @@ static void switch_disconnect(bthid_device_t* device)
 // ============================================================================
 
 const bthid_driver_t switch_pro_bt_driver = {
-    .name = "Nintendo Switch Pro (BT)",
+    .name = "Switch Pro",
     .match = switch_match,
     .init = switch_init,
     .process_report = switch_process_report,

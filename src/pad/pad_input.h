@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "core/input_event.h"
 #include "core/input_interface.h"
 
 // ============================================================================
@@ -76,15 +77,23 @@ typedef struct {
     int16_t r3;                 // Right stick click
     int16_t a1;                 // Home / Guide
     int16_t a2;                 // Capture / Touchpad
+    int16_t a3;                 // Mute / Aux 3
+    int16_t a4;                 // Aux 4
 
     // Extra buttons (for controllers with more than standard layout)
     int16_t l4;                 // Extra left trigger/paddle
     int16_t r4;                 // Extra right trigger/paddle
 
-    // Toggle switch for D-pad mode (PAD_PIN_DISABLED = not used)
-    // When HIGH: D-pad outputs as digital D-pad
-    // When LOW: D-pad outputs as left analog stick
-    int16_t dpad_toggle;
+    // Function keys (internal only — for hotkey combos, never output to host)
+    int16_t f1;
+    int16_t f2;
+
+    // Toggle switches (up to 2, each with configurable function)
+    struct {
+        int16_t pin;            // GPIO pin (-1 = disabled)
+        uint8_t function;       // PAD_TOGGLE_FUNC_*
+        bool invert;            // true: active low
+    } toggle[2];
 
     // Analog stick ADC channels (0-3 for GPIO 26-29, PAD_PIN_DISABLED = not used)
     // Note: RP2040 has 4 ADC channels on GPIO 26, 27, 28, 29
@@ -92,22 +101,36 @@ typedef struct {
     int8_t adc_ly;              // Left stick Y (ADC channel 0-3)
     int8_t adc_rx;              // Right stick X (ADC channel 0-3)
     int8_t adc_ry;              // Right stick Y (ADC channel 0-3)
+    int8_t adc_lt;              // Left trigger analog (ADC channel 0-3)
+    int8_t adc_rt;              // Right trigger analog (ADC channel 0-3)
 
     bool invert_lx;             // Invert left X axis
     bool invert_ly;             // Invert left Y axis
     bool invert_rx;             // Invert right X axis
     bool invert_ry;             // Invert right Y axis
+    bool sinput_rgb;            // SInput RGB LED overrides NeoPixel color
 
     // Analog stick deadzone (0-127, applied to center)
     uint8_t deadzone;
 
-    // NeoPixel LED configuration (PAD_PIN_DISABLED = not used)
+    // NeoPixel LED configuration. Tri-state to match the web config UI:
+    //   led_pin == 0  → use compile-time default (board's WS2812_PIN)
+    //   led_pin >  0  → override to this GPIO
+    //   led_pin <  0  → explicitly disabled by user (PAD_PIN_DISABLED)
     int8_t led_pin;
-    uint8_t led_count;          // Number of LEDs
+    uint8_t led_count;          // Number of LEDs (0 = use compile-time default)
 
     // Per-LED colors (RGB, up to 16 LEDs)
     // If led_colors is NULL or all zeros, uses default pattern
     uint8_t led_colors[16][3];  // [led_index][R, G, B]
+
+    // Bitmask of LEDs that pulse with breathing animation
+    // bit N = LED N pulses, 0 = all LEDs solid
+    uint16_t led_pulse_mask;
+
+    // Button-to-LED mapping: JP_BUTTON_* value for each LED index
+    // When non-zero, pressed buttons override that LED to bright white
+    uint32_t led_button_map[16];
 
     // Speaker/buzzer configuration (for haptic feedback)
     int8_t speaker_pin;         // PWM output pin (PAD_PIN_DISABLED = not used)
@@ -122,8 +145,45 @@ typedef struct {
     int8_t display_rst;         // Reset pin
 
     // QWIIC UART for linking controllers (PAD_PIN_DISABLED = not used)
-    int8_t qwiic_tx;            // UART TX pin (QWIIC SDA)
-    int8_t qwiic_rx;            // UART RX pin (QWIIC SCL)
+    int8_t qwiic_tx;            // UART TX pin (QWIIC SDA) / I2C SDA
+    int8_t qwiic_rx;            // UART RX pin (QWIIC SCL) / I2C SCL
+    int8_t qwiic_i2c_inst;      // I2C instance for peer mode (-1 = UART, 0 = I2C0, 1 = I2C1)
+
+    // USB host PIO-USB. Same tri-state as led_pin:
+    //   usb_host_dp == 0 → use compile-time default (board's PIO_USB_DP_PIN)
+    //   usb_host_dp >  0 → override D+ to this GPIO (D- always D+1)
+    //   usb_host_dp <  0 → explicitly disabled by user (PAD_PIN_DISABLED)
+    int8_t usb_host_dp;
+
+    // JoyWing seesaw I2C (up to 2, PAD_PIN_DISABLED sda = disabled)
+    struct {
+        int8_t i2c_bus;         // I2C bus (0 or 1)
+        int8_t sda;             // SDA pin (-1 = disabled)
+        int8_t scl;             // SCL pin
+        uint8_t addr;           // I2C address (default 0x49)
+    } joywing[2];
+
+    // Button combo hotkeys (up to 4)
+    struct {
+        uint32_t input_mask;    // 0 = disabled
+        uint32_t output_mask;   // upper byte = action, lower 22 bits = buttons
+    } combo[4];
+
+    // Right hat (digital directions → right analog stick)
+    // 4 pins for a directional hat that outputs as RX/RY (0/128/255)
+    int16_t rhat_up, rhat_down, rhat_left, rhat_right;
+
+    // Capacitive touch sensor → F1 function key
+    // Uses charge-timing: drive touch_out, measure time for touch_in to follow.
+    // Finger adds capacitance → longer charge time → touched.
+    int8_t touch_out;       // Drive pin (PAD_PIN_DISABLED = no touch sensor)
+    int8_t touch_in;        // Sense pin
+
+    // D-pad mode: 0=dpad, 1=left stick, 2=right stick
+    uint8_t dpad_mode;
+
+    // Onboard LED: 0=default(enabled), 1=enabled, 2=disabled
+    uint8_t onboard_led;
 } pad_device_config_t;
 
 // ============================================================================
@@ -138,8 +198,17 @@ int pad_input_add_device(const pad_device_config_t* config);
 // Remove all pad devices
 void pad_input_clear_devices(void);
 
+// Set d-pad mode (0=dpad, 1=left stick, 2=right stick)
+void pad_input_set_dpad_mode(uint8_t mode);
+
 // Get number of registered pad devices
 uint8_t pad_input_get_device_count(void);
+
+// Get current input event for a pad device (NULL if invalid index)
+const input_event_t* pad_input_get_event(uint8_t device_index);
+
+// Get the device config for a pad device (NULL if invalid index)
+const pad_device_config_t* pad_input_get_config(uint8_t device_index);
 
 // Pad input interface (implements InputInterface pattern)
 extern const InputInterface pad_input_interface;
@@ -172,20 +241,52 @@ extern const InputInterface pad_input_interface;
     .r3 = PAD_PIN_DISABLED, \
     .a1 = PAD_PIN_DISABLED, \
     .a2 = PAD_PIN_DISABLED, \
+    .a3 = PAD_PIN_DISABLED, \
+    .a4 = PAD_PIN_DISABLED, \
     .l4 = PAD_PIN_DISABLED, \
     .r4 = PAD_PIN_DISABLED, \
-    .dpad_toggle = PAD_PIN_DISABLED, \
+    .f1 = PAD_PIN_DISABLED, \
+    .f2 = PAD_PIN_DISABLED, \
+    .toggle = { \
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, \
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, \
+    }, \
     .adc_lx = PAD_PIN_DISABLED, \
     .adc_ly = PAD_PIN_DISABLED, \
     .adc_rx = PAD_PIN_DISABLED, \
     .adc_ry = PAD_PIN_DISABLED, \
+    .adc_lt = PAD_PIN_DISABLED, \
+    .adc_rt = PAD_PIN_DISABLED, \
     .invert_lx = false, \
     .invert_ly = false, \
     .invert_rx = false, \
     .invert_ry = false, \
     .deadzone = 10, \
-    .led_pin = PAD_PIN_DISABLED, \
+    .led_pin = 0, /* 0 = use board default, >0 = override, <0 = explicit disable */ \
     .led_count = 0, \
+    .speaker_pin = PAD_PIN_DISABLED, \
+    .speaker_enable_pin = PAD_PIN_DISABLED, \
+    .display_spi = PAD_PIN_DISABLED, \
+    .display_sck = PAD_PIN_DISABLED, \
+    .display_mosi = PAD_PIN_DISABLED, \
+    .display_cs = PAD_PIN_DISABLED, \
+    .display_dc = PAD_PIN_DISABLED, \
+    .display_rst = PAD_PIN_DISABLED, \
+    .qwiic_tx = PAD_PIN_DISABLED, \
+    .qwiic_rx = PAD_PIN_DISABLED, \
+    .qwiic_i2c_inst = PAD_PIN_DISABLED, \
+    .usb_host_dp = 0, /* 0 = use board default, >0 = override, <0 = explicit disable */ \
+    .joywing = { \
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, \
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, \
+    }, \
+    .rhat_up = PAD_PIN_DISABLED, \
+    .rhat_down = PAD_PIN_DISABLED, \
+    .rhat_left = PAD_PIN_DISABLED, \
+    .rhat_right = PAD_PIN_DISABLED, \
+    .touch_out = PAD_PIN_DISABLED, \
+    .touch_in = PAD_PIN_DISABLED, \
+    .onboard_led = PAD_ONBOARD_LED_DEFAULT, \
 }
 
 #endif // PAD_INPUT_H

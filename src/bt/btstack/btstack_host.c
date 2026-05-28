@@ -6,6 +6,14 @@
 // HID Host for Classic BT HID devices.
 
 #include "btstack_host.h"
+
+#ifdef BTSTACK_DEFER_SCAN
+static bool btstack_host_scan_enabled = false;
+void btstack_host_enable_scan(void) {
+    btstack_host_scan_enabled = true;
+    btstack_host_start_scan();
+}
+#endif
 #include "btstack_config.h"
 #include "bt_device_db.h"
 // Include specific BTstack headers instead of umbrella btstack.h
@@ -14,8 +22,9 @@
 #include "btstack_event.h"
 #include "btstack_run_loop.h"
 
-// Run loop depends on transport: embedded for USB dongle, async_context for CYW43
-#ifndef BTSTACK_USE_CYW43
+// Run loop depends on transport: embedded for USB dongle, async_context for CYW43,
+// FreeRTOS for ESP32
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
 #include "btstack_run_loop_embedded.h"
 #endif
 
@@ -33,6 +42,8 @@ extern void btstack_memory_init(void);
 #include "ble/gatt_client.h"
 #include "ble/le_device_db.h"
 #include "ble/gatt-service/hids_client.h"
+#include "ble/gatt-service/device_information_service_client.h"
+#include "ble/gatt-service/battery_service_client.h"
 #include "classic/hid_host.h"
 #include "classic/sdp_client.h"
 #include "classic/sdp_server.h"
@@ -40,8 +51,8 @@ extern void btstack_memory_init(void);
 #include "classic/device_id_server.h"
 
 // Link key storage: TLV (flash) based for all builds
-// USB dongle uses pico_flash_bank_instance(), CYW43 uses SDK's btstack_cyw43.c setup
-#ifndef BTSTACK_USE_CYW43
+// USB dongle uses pico_flash_bank_instance(), CYW43/ESP32 use their own TLV setup
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
 #include "classic/btstack_link_key_db_tlv.h"
 #include "ble/le_device_db_tlv.h"
 #include "btstack_tlv_flash_bank.h"
@@ -50,6 +61,7 @@ extern void btstack_memory_init(void);
 #include "hardware/flash.h"
 #endif
 
+#include "btstack_tlv.h"
 #include "hci_dump.h"
 #include "hci_dump_embedded_stdout.h"
 
@@ -59,6 +71,11 @@ extern void bt_on_disconnect(uint8_t conn_index);
 extern void bt_on_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len);
 extern void bthid_update_device_info(uint8_t conn_index, const char* name,
                                       uint16_t vendor_id, uint16_t product_id);
+extern void bthid_set_battery_level(uint8_t conn_index, uint8_t level);
+extern void bthid_set_hid_descriptor(uint8_t conn_index, const uint8_t* desc, uint16_t desc_len);
+
+// Platform HAL
+extern void platform_reboot(void);
 
 #include <stdio.h>
 #include <string.h>
@@ -71,7 +88,7 @@ extern int find_player_index(int dev_addr, int instance);
 // ============================================================================
 // FLASH HELPERS (for TLV storage)
 // ============================================================================
-#ifndef BTSTACK_USE_CYW43
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
 // Erase both BTstack flash banks (8KB total at end of flash)
 static void __no_inline_not_in_flash_func(flash_erase_banks_func)(void* p) {
     (void)p;
@@ -115,8 +132,12 @@ static void switch2_handle_feedback(void);
 // ============================================================================
 
 #define MAX_BLE_CONNECTIONS 2
-#define SCAN_INTERVAL 0x00A0  // 100ms
-#define SCAN_WINDOW   0x0050  // 50ms
+#ifndef SCAN_INTERVAL
+#define SCAN_INTERVAL 0x00A0  // 100ms (default)
+#endif
+#ifndef SCAN_WINDOW
+#define SCAN_WINDOW   0x0050  // 50ms (default)
+#endif
 
 // ============================================================================
 // STATE
@@ -144,7 +165,7 @@ typedef struct {
     uint16_t report_ccc_handle;
 
     // Device info
-    char name[32];
+    char name[48];
     const bt_device_profile_t* profile;
     uint16_t vid;
     uint16_t pid;
@@ -179,7 +200,7 @@ static struct {
     // Pending connection
     bd_addr_t pending_addr;
     bd_addr_type_t pending_addr_type;
-    char pending_name[32];
+    char pending_name[48];
     const bt_device_profile_t* pending_profile;
     uint16_t pending_vid;
     uint16_t pending_pid;
@@ -187,7 +208,7 @@ static struct {
     // Last connected device (for reconnection)
     bd_addr_t last_connected_addr;
     bd_addr_type_t last_connected_addr_type;
-    char last_connected_name[32];
+    char last_connected_name[48];
     bool has_last_connected;
     uint32_t reconnect_attempt_time;
     uint8_t reconnect_attempts;
@@ -209,6 +230,9 @@ static struct {
 
     // HIDS Client
     uint16_t hids_cid;
+
+    // Battery Service Client
+    uint16_t bas_cid;
 
 } hid_state;
 
@@ -237,17 +261,19 @@ static void switch2_cleanup_on_disconnect(void);
 
 #define MAX_CLASSIC_CONNECTIONS 4
 #define INQUIRY_DURATION 5  // Inquiry duration in 1.28s units
+#define CLASSIC_CONNECT_TIMEOUT_MS 15000  // Max time to establish HID connection
 
 typedef struct {
     bool active;
     uint16_t hid_cid;           // BTstack HID connection ID
     bd_addr_t addr;
-    char name[32];
+    char name[48];
     uint8_t class_of_device[3];
     uint16_t vendor_id;
     uint16_t product_id;
     bool hid_ready;
     const bt_device_profile_t* profile;
+    uint32_t connect_time;      // When connection was initiated (for timeout detection)
 } classic_connection_t;
 
 static struct {
@@ -257,11 +283,12 @@ static struct {
     // Pending incoming connection info (from HCI_EVENT_CONNECTION_REQUEST)
     bd_addr_t pending_addr;
     uint32_t pending_cod;
-    char pending_name[64];
+    char pending_name[48];
     uint16_t pending_vid;
     uint16_t pending_pid;
     bool pending_valid;
     bool pending_outgoing;  // True if we initiated the connection (hid_host_connect)
+    hci_con_handle_t pending_acl_handle;  // ACL handle for pending incoming connection
     const bt_device_profile_t* pending_profile;
     // Pending HID connect (deferred until encryption completes)
     bd_addr_t pending_hid_addr;
@@ -269,6 +296,8 @@ static struct {
     bool pending_hid_connect;
     // Set after outgoing HID fails — wait for device to reconnect incoming
     uint32_t waiting_for_incoming_time;  // 0 = not waiting
+    // Connection timeout recovery
+    uint32_t recovery_start_time;        // When recovery started (0 = no recovery pending)
 } classic_state;
 
 // ============================================================================
@@ -298,7 +327,7 @@ typedef struct {
     hci_con_handle_t acl_handle;
     uint16_t control_cid;
     uint16_t interrupt_cid;
-    char name[32];
+    char name[48];
     uint8_t class_of_device[3];
     uint16_t vendor_id;
     uint16_t product_id;
@@ -362,7 +391,7 @@ static ble_connection_t* find_ble_connection_by_conn_index(uint8_t conn_index) {
     if (conn_index < BLE_CONN_INDEX_OFFSET) return NULL;
     uint8_t ble_index = conn_index - BLE_CONN_INDEX_OFFSET;
     if (ble_index >= MAX_BLE_CONNECTIONS) return NULL;
-    if (hid_state.connections[ble_index].handle == 0) return NULL;
+    if (hid_state.connections[ble_index].handle == HCI_CON_HANDLE_INVALID) return NULL;
     return &hid_state.connections[ble_index];
 }
 
@@ -427,6 +456,12 @@ static void setup_hid_handlers(void)
     printf("[BTSTACK_HOST] Init HIDS client...\n");
     hids_client_init(hid_descriptor_storage, sizeof(hid_descriptor_storage));
 
+    printf("[BTSTACK_HOST] Init DIS client...\n");
+    device_information_service_client_init();
+
+    printf("[BTSTACK_HOST] Init Battery Service client...\n");
+    battery_service_client_init();
+
     printf("[BTSTACK_HOST] Init LE Device DB...\n");
     le_device_db_init();
 
@@ -463,8 +498,8 @@ static void setup_hid_handlers(void)
 }
 
 // btstack_host_init is only used for USB dongle transport
-// For CYW43, use btstack_host_init_hid_handlers() after btstack_cyw43_init()
-#ifndef BTSTACK_USE_CYW43
+// For CYW43/ESP32, use btstack_host_init_hid_handlers() after external BTstack init
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
 
 // TLV context for flash-based link key storage (must be static/persistent)
 static btstack_tlv_flash_bank_t btstack_tlv_flash_bank_context;
@@ -548,6 +583,10 @@ void btstack_host_init(const void* transport)
     printf("[BTSTACK_HOST] Initializing BTstack...\n");
 
     memset(&hid_state, 0, sizeof(hid_state));
+    // Initialize BLE connection handles to invalid (handle 0 is valid in BLE)
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        hid_state.connections[i].handle = HCI_CON_HANDLE_INVALID;
+    }
     hid_state.hci_transport = (const hci_transport_t*)transport;
 
     // HCI dump disabled - too verbose (logs every ACL packet)
@@ -582,6 +621,10 @@ void btstack_host_init_hid_handlers(void)
     printf("[BTSTACK_HOST] Initializing HID handlers (BTstack already initialized externally)...\n");
 
     memset(&hid_state, 0, sizeof(hid_state));
+    // Initialize BLE connection handles to invalid (handle 0 is valid in BLE)
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        hid_state.connections[i].handle = HCI_CON_HANDLE_INVALID;
+    }
     // Note: hci_transport is not set here since BTstack was initialized externally
 
     // Set up HID handlers (BTstack core already initialized by btstack_cyw43_init or similar)
@@ -605,24 +648,101 @@ void btstack_host_power_on(void)
 }
 
 // ============================================================================
+// LAST CONNECTED DEVICE PERSISTENCE (via BTstack TLV)
+// ============================================================================
+
+// TLV tag 'JPLC' = Joypad Last Connected
+#define TLV_TAG_LAST_CONNECTED (((uint32_t)'J' << 24) | ((uint32_t)'P' << 16) | ((uint32_t)'L' << 8) | 'C')
+
+typedef struct {
+    bd_addr_t addr;
+    uint8_t addr_type;
+    char name[48];
+} __attribute__((packed)) last_connected_record_t;
+
+static void btstack_host_save_last_connected(void)
+{
+    const btstack_tlv_t *tlv_impl = NULL;
+    void *tlv_context = NULL;
+    btstack_tlv_get_instance(&tlv_impl, &tlv_context);
+    if (!tlv_impl) return;
+
+    last_connected_record_t record;
+    memcpy(record.addr, hid_state.last_connected_addr, 6);
+    record.addr_type = (uint8_t)hid_state.last_connected_addr_type;
+    strncpy(record.name, hid_state.last_connected_name, sizeof(record.name) - 1);
+    record.name[sizeof(record.name) - 1] = '\0';
+
+    tlv_impl->store_tag(tlv_context, TLV_TAG_LAST_CONNECTED,
+                        (const uint8_t *)&record, sizeof(record));
+}
+
+static void btstack_host_restore_last_connected(void)
+{
+    if (hid_state.has_last_connected) return;  // Already have one (e.g., from same session)
+
+    const btstack_tlv_t *tlv_impl = NULL;
+    void *tlv_context = NULL;
+    btstack_tlv_get_instance(&tlv_impl, &tlv_context);
+    if (!tlv_impl) return;
+
+    last_connected_record_t record;
+    int len = tlv_impl->get_tag(tlv_context, TLV_TAG_LAST_CONNECTED,
+                                (uint8_t *)&record, sizeof(record));
+    if (len != sizeof(record)) return;
+
+    // Validate — addr must not be all zeros
+    bool valid = false;
+    for (int i = 0; i < 6; i++) {
+        if (record.addr[i] != 0) { valid = true; break; }
+    }
+    if (!valid) return;
+
+    memcpy(hid_state.last_connected_addr, record.addr, 6);
+    hid_state.last_connected_addr_type = (bd_addr_type_t)record.addr_type;
+    strncpy(hid_state.last_connected_name, record.name, sizeof(hid_state.last_connected_name) - 1);
+    hid_state.last_connected_name[sizeof(hid_state.last_connected_name) - 1] = '\0';
+    hid_state.has_last_connected = true;
+    hid_state.reconnect_attempts = 0;
+
+    printf("[BTSTACK_HOST] Restored last connected: %02X:%02X:%02X:%02X:%02X:%02X name='%s'\n",
+           record.addr[5], record.addr[4], record.addr[3], record.addr[2], record.addr[1], record.addr[0],
+           hid_state.last_connected_name);
+}
+
+// ============================================================================
 // SCANNING
 // ============================================================================
 
 static uint32_t scan_timeout_end = 0;  // 0 = no timeout (indefinite scan)
+static bool scan_suppressed = false;   // App can suppress auto-restart (e.g. USB device connected)
 
-// Pending BLE gamepad: when we see a gamepad appearance but no name in the ADV packet,
-// stash the address and wait for the scan response (which typically contains the name).
-// This prevents connecting to Xbox controllers as "Generic BLE Gamepad".
+// Pending BLE gamepad: when we see a gamepad appearance or HID UUID but no name in the
+// ADV packet, stash the address and wait for the scan response (which typically contains
+// the name). This prevents connecting to Xbox controllers as "Generic BLE Gamepad".
 static struct {
     bool valid;
     bd_addr_t addr;
     bd_addr_type_t addr_type;
     uint16_t appearance;
+    bool has_hid_uuid;
     uint32_t timestamp;  // For expiry
 } pending_ble_gamepad;
 
+#define BLE_RECONNECT_INTERVAL_MS 20000  // While scanning, try reconnecting to bonded device every 20s
+
 void btstack_host_start_scan(void)
 {
+#ifdef CONFIG_USB2BLE
+    return;  // USB2BLE is BLE peripheral only — no scanning for input devices
+#endif
+#ifdef BTSTACK_DEFER_SCAN
+    if (!btstack_host_scan_enabled) return;
+#endif
+    if (scan_suppressed) {
+        return;  // App suppressed scanning (e.g. BT host disabled)
+    }
+
     if (!hid_state.powered_on) {
         printf("[BTSTACK_HOST] Not powered on yet\n");
         return;
@@ -637,9 +757,17 @@ void btstack_host_start_scan(void)
     gap_start_scan();
     hid_state.scan_active = true;
     hid_state.state = BLE_STATE_SCANNING;
-    hid_state.scan_start_time = btstack_run_loop_get_time_ms();
+    if (hid_state.has_last_connected && hid_state.scan_start_time == 0) {
+        // First scan with a bonded device: offset start time so periodic reconnect
+        // fires after ~3s instead of the full BLE_RECONNECT_INTERVAL_MS (20s)
+        hid_state.scan_start_time = btstack_run_loop_get_time_ms() - BLE_RECONNECT_INTERVAL_MS + 3000;
+    } else {
+        hid_state.scan_start_time = btstack_run_loop_get_time_ms();
+    }
 
-    // Also start classic BT inquiry
+#if !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF) && !defined(CONFIG_USB2BLE)
+    // Also start classic BT inquiry (not available on ESP32-S3/nRF BLE-only)
+    // Skip in USB2BLE mode — Classic inquiry interferes with BLE advertising
     // Alternate between GIAC (general) and LIAC (limited) to discover Wiimotes/Wii U Pro
     // which use Limited Discoverable mode when SYNC button is pressed
     uint32_t lap = classic_state.use_liac ? GAP_IAC_LIMITED_INQUIRY : GAP_IAC_GENERAL_INQUIRY;
@@ -648,6 +776,7 @@ void btstack_host_start_scan(void)
     gap_inquiry_set_lap(lap);
     gap_inquiry_start(INQUIRY_DURATION);
     classic_state.inquiry_active = true;
+#endif
 }
 
 void btstack_host_stop_scan(void)
@@ -662,18 +791,29 @@ void btstack_host_stop_scan(void)
         hid_state.scan_active = false;
     }
 
+#if !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
     if (classic_state.inquiry_active) {
         printf("[BTSTACK_HOST] Stopping Classic inquiry\n");
         gap_inquiry_stop();
         classic_state.inquiry_active = false;
     }
+#endif
 }
 
 void btstack_host_start_timed_scan(uint32_t timeout_ms)
 {
+    scan_suppressed = false;  // Explicit scan request clears suppression
     scan_timeout_end = btstack_run_loop_get_time_ms() + timeout_ms;
     printf("[BTSTACK_HOST] Starting timed scan (%lums)\n", (unsigned long)timeout_ms);
     btstack_host_start_scan();
+}
+
+void btstack_host_suppress_scan(bool suppress)
+{
+    scan_suppressed = suppress;
+    if (suppress && btstack_host_is_scanning()) {
+        btstack_host_stop_scan();
+    }
 }
 
 // ============================================================================
@@ -681,7 +821,6 @@ void btstack_host_start_timed_scan(uint32_t timeout_ms)
 // ============================================================================
 
 #define BLE_CONNECT_TIMEOUT_MS 10000   // 10s timeout for BLE connection attempts
-#define BLE_RECONNECT_INTERVAL_MS 20000  // While scanning, try reconnecting to bonded device every 20s
 
 void btstack_host_connect_ble(bd_addr_t addr, bd_addr_type_t addr_type)
 {
@@ -733,9 +872,9 @@ void btstack_host_process(void)
     // Process transport-specific tasks (e.g., USB polling, CYW43 async context)
     btstack_host_transport_process();
 
-#ifndef BTSTACK_USE_CYW43
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
     // Process BTstack run loop multiple times to let packets flow through HCI->L2CAP->ATT->GATT
-    // Note: CYW43 uses async_context run loop, processed by cyw43_arch_poll() in transport
+    // Note: CYW43 uses async_context, ESP32 uses FreeRTOS run loop - both process automatically
     for (int i = 0; i < 5; i++) {
         btstack_run_loop_embedded_execute_once();
     }
@@ -784,13 +923,58 @@ void btstack_host_process(void)
         classic_state.waiting_for_incoming_time = 0;
     }
 
+    // Classic connection establishment timeout.
+    // If a connection doesn't reach hid_ready within CLASSIC_CONNECT_TIMEOUT_MS,
+    // something went wrong (e.g., CYW43 SPI bus failure during SSP pairing,
+    // incompatible device, or stuck SDP query). Clean up and try to recover.
+    for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
+        classic_connection_t* conn = &classic_state.connections[i];
+        if (conn->active && !conn->hid_ready && conn->connect_time != 0 &&
+            (btstack_run_loop_get_time_ms() - conn->connect_time) >= CLASSIC_CONNECT_TIMEOUT_MS) {
+            printf("[BTSTACK_HOST] Classic connection timeout after %lums (slot %d '%s'), cleaning up\n",
+                   (unsigned long)(btstack_run_loop_get_time_ms() - conn->connect_time), i, conn->name);
+
+            // Try to disconnect (may fail if BT transport is dead)
+            if (conn->hid_cid != 0 && conn->hid_cid != 0xFFFF) {
+                hid_host_disconnect(conn->hid_cid);
+            }
+
+            // Clean up wiimote state if this was a direct L2CAP device
+            if (wiimote_conn.active && memcmp(wiimote_conn.addr, conn->addr, 6) == 0) {
+                memset(&wiimote_conn, 0, sizeof(wiimote_conn));
+            }
+
+            // Clean up connection slot
+            memset(conn, 0, sizeof(*conn));
+            classic_state.pending_valid = false;
+            classic_state.pending_hid_connect = false;
+
+            // Start recovery timer and try to resume scanning
+            classic_state.recovery_start_time = btstack_run_loop_get_time_ms();
+            btstack_host_start_scan();
+            break;  // Only handle one timeout per tick
+        }
+    }
+
+    // Recovery watchdog: if we cleaned up a stuck connection but BT transport
+    // appears dead (no inquiry events received within 10s), force a reboot.
+    if (classic_state.recovery_start_time != 0 &&
+        (btstack_run_loop_get_time_ms() - classic_state.recovery_start_time) >= 10000) {
+        printf("[BTSTACK_HOST] No BT activity after connection timeout recovery, rebooting\n");
+        platform_reboot();
+    }
+
     // Safety net: if idle with no active connections and not scanning, resume scan.
     // This catches edge cases where the state machine gets stuck (e.g., gap_connect_cancel
     // doesn't generate an error event, or a disconnect handler didn't restart scanning).
     // Skip if:
+    //   - scan_suppressed (app paused scanning, e.g. USB device connected)
     //   - waiting for incoming Classic reconnection (outgoing HID failed)
     //   - Classic connection setup in progress (name request, HID connect pending)
-    if (hid_state.state == BLE_STATE_IDLE &&
+#ifndef CONFIG_USB2BLE
+    if (hid_state.powered_on &&
+        !scan_suppressed &&
+        hid_state.state == BLE_STATE_IDLE &&
         hid_state.reconnect_attempt_time == 0 &&
         !hid_state.scan_active &&
         classic_state.waiting_for_incoming_time == 0 &&
@@ -799,6 +983,7 @@ void btstack_host_process(void)
         printf("[BTSTACK_HOST] Safety: idle with no connections, resuming scan\n");
         btstack_host_start_scan();
     }
+#endif
 
     // State/scan_active sync: if BLE scan is running but state is not SCANNING,
     // fix the desync so the advertising handler can auto-connect to devices.
@@ -883,6 +1068,14 @@ static void sdp_query_vid_pid_callback(uint8_t packet_type, uint16_t channel, ui
                         bthid_update_device_info(i, conn->name,
                                                   classic_state.pending_vid,
                                                   classic_state.pending_pid);
+
+                        // Re-send HID descriptor in case driver was re-evaluated to generic
+                        // (descriptor was delivered earlier but ignored by the previous driver)
+                        const uint8_t* hid_desc = hid_descriptor_storage_get_descriptor_data(conn->hid_cid);
+                        uint16_t hid_desc_len = hid_descriptor_storage_get_descriptor_len(conn->hid_cid);
+                        if (hid_desc && hid_desc_len > 0) {
+                            bthid_set_hid_descriptor(i, hid_desc, hid_desc_len);
+                        }
                         break;
                     }
                 }
@@ -936,11 +1129,12 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 hid_state.scan_active = false;
                 classic_state.inquiry_active = false;
 
-                // Set master role policy for incoming connections
+#if !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
+                // Set master role policy for incoming Classic connections
                 // Wiimotes (including Wii U Pro) REQUIRE us to be master
-                // This must be set early, before any connection requests arrive
                 hci_set_master_slave_policy(0);  // 0 = always try to become master
                 printf("[BTSTACK_HOST] Set master role policy\n");
+#endif
 
                 // Print our local BD_ADDR
                 bd_addr_t local_addr;
@@ -964,20 +1158,27 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 }
 
                 // Set local name (for devices that want to see us)
+                // Skip when acting as BLE peripheral — ble_output sets its own name
+#ifndef CONFIG_USB2BLE
                 gap_set_local_name("Joypad Adapter");
+#endif
 
+                // Enable bonding (needed for both Classic and BLE)
+                gap_set_bondable_mode(1);
+                // Set IO capability for "just works" pairing (no PIN required)
+                gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+
+#if !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
+                // Classic BT setup (not available on ESP32-S3 BLE-only)
+#ifndef CONFIG_USB2BLE
                 // Set class of device to Computer (Desktop Workstation)
-                // This helps Sony controllers recognize us as a valid host
+                // Skip when acting as BLE peripheral — appearance is set in adv data
                 gap_set_class_of_device(0x000104);  // Major: Computer, Minor: Desktop
 
                 // Enable SSP (Secure Simple Pairing) on the controller
                 extern const hci_cmd_t hci_write_simple_pairing_mode;
                 hci_send_cmd(&hci_write_simple_pairing_mode, 1);
 
-                // Enable bonding for Classic BT
-                gap_set_bondable_mode(1);
-                // Set IO capability for "just works" pairing (no PIN required)
-                gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
                 // Request bonding during SSP (required for BTstack to store link keys!)
                 gap_ssp_set_authentication_requirement(SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING);
                 // Auto-accept incoming SSP pairing requests
@@ -987,9 +1188,17 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 // Required for Sony controllers (DS3, DS4, DS5) which initiate connections
                 gap_discoverable_control(1);
                 gap_connectable_control(1);
+#endif
+                // USB2BLE: Classic BT stays non-discoverable/non-connectable by default
+#endif
 
-                // Auto-start scanning
+#ifndef CONFIG_USB2BLE
+                // Restore last connected device from NVS (for reconnection after reboot)
+                btstack_host_restore_last_connected();
+
+                // Always start scanning (discovers new devices + triggers periodic reconnect)
                 btstack_host_start_scan();
+#endif
             }
             break;
 
@@ -1003,7 +1212,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             uint8_t adv_event_type = gap_event_advertising_report_get_advertising_event_type(packet);
 
             // Parse name, appearance, and manufacturer data from advertising data
-            char name[32] = {0};
+            char name[48] = {0};
             uint16_t mfr_company_id = 0;
             uint16_t sw2_vid = 0;
             uint16_t sw2_pid = 0;
@@ -1016,10 +1225,11 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 uint8_t len = ad_iterator_get_data_len(&context);
                 const uint8_t *data = ad_iterator_get_data(&context);
 
-                if ((type == BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME ||
-                     type == BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME) && len < sizeof(name)) {
-                    memcpy(name, data, len);
-                    name[len] = 0;
+                if (type == BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME ||
+                    type == BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME) {
+                    uint8_t copy_len = (len < sizeof(name) - 1) ? len : sizeof(name) - 1;
+                    memcpy(name, data, copy_len);
+                    name[copy_len] = 0;
                 }
 
                 // Parse GAP Appearance (2 bytes, little-endian)
@@ -1071,13 +1281,16 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             }
 
             // Merge with pending gamepad data: if we previously saw a gamepad appearance
-            // for this address but no name (ADV packet), and now we have the name
-            // (SCAN_RSP), use the merged data to identify the device properly.
+            // or HID UUID for this address but no name (ADV packet), and now we have
+            // the name (SCAN_RSP), use the merged data to identify the device properly.
             if (pending_ble_gamepad.valid &&
                 memcmp(addr, pending_ble_gamepad.addr, 6) == 0) {
-                // Carry appearance from the ADV packet if not in this packet
+                // Carry appearance and HID UUID from the ADV packet if not in this packet
                 if (appearance == 0) {
                     appearance = pending_ble_gamepad.appearance;
+                }
+                if (!has_hid_uuid) {
+                    has_hid_uuid = pending_ble_gamepad.has_hid_uuid;
                 }
                 if (name[0]) {
                     // Got a name for the pending gamepad — clear pending and proceed
@@ -1089,18 +1302,18 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             const bt_device_profile_t* profile = bt_device_lookup(name, mfr_company_id);
             bool is_known_controller = (profile != &BT_PROFILE_DEFAULT);
 
-            // Generic BLE gamepad detection (fallback for unknown controllers)
+            // Generic BLE HID detection (fallback for unknown controllers)
             // Only triggers when no specific driver matched by name/manufacturer.
-            // Uses GAP Appearance: 0x03C3 = Joystick, 0x03C4 = Gamepad
-            // Does NOT match on HID UUID alone to avoid connecting to keyboards/mice.
+            // Primary signal: HID service UUID (0x1812) in advertisement
+            // Fallback: GAP Appearance 0x03C3 (Joystick) or 0x03C4 (Gamepad)
             // Excludes controllers that use classic BT (DS4, DS3, DS5) — they advertise
             // BLE but must connect via classic for proper driver support.
-            bool is_generic_ble_gamepad = false;
+            bool is_generic_ble_hid = false;
             if (!is_known_controller && !profile->classic_only &&
-                (appearance == 0x03C3 || appearance == 0x03C4)) {
+                (has_hid_uuid || appearance == 0x03C3 || appearance == 0x03C4)) {
                 // If no name yet and this isn't already a scan response, defer connection
                 // to wait for the scan response which typically contains the device name.
-                // This prevents connecting to Xbox controllers as "Generic BLE Gamepad".
+                // This prevents connecting to Xbox controllers as "Generic BLE HID".
                 // Only defer once per address — if we already deferred and the scan response
                 // didn't bring a name (or never arrived), connect as generic on the next ADV.
                 if (!name[0] && adv_event_type != 0x04) {
@@ -1110,24 +1323,25 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         memcpy(pending_ble_gamepad.addr, addr, 6);
                         pending_ble_gamepad.addr_type = addr_type;
                         pending_ble_gamepad.appearance = appearance;
+                        pending_ble_gamepad.has_hid_uuid = has_hid_uuid;
                         pending_ble_gamepad.timestamp = btstack_run_loop_get_time_ms();
-                        printf("[BTSTACK_HOST] Gamepad appearance 0x%04X with no name, waiting for scan response...\n",
-                               appearance);
+                        printf("[BTSTACK_HOST] BLE HID (appearance=0x%04X hid_uuid=%d) with no name, waiting for scan response...\n",
+                               appearance, has_hid_uuid);
                         break;
                     }
                     // Second ADV with no name for same address — proceed as generic
                     pending_ble_gamepad.valid = false;
                 }
-                is_generic_ble_gamepad = true;
-                printf("[BTSTACK_HOST] Generic BLE gamepad detected: \"%s\" appearance=0x%04X hid_uuid=%d\n",
+                is_generic_ble_hid = true;
+                printf("[BTSTACK_HOST] Generic BLE HID detected: \"%s\" appearance=0x%04X hid_uuid=%d\n",
                        name, appearance, has_hid_uuid);
             }
 
-            bool is_controller = is_known_controller || is_generic_ble_gamepad;
+            bool is_controller = is_known_controller || is_generic_ble_hid;
 
             // Auto-connect to supported BLE controllers (skip classic-only devices)
             if (hid_state.state == BLE_STATE_SCANNING && is_controller &&
-                (profile->ble != BT_BLE_NONE || is_generic_ble_gamepad)) {
+                (profile->ble != BT_BLE_NONE || is_generic_ble_hid)) {
                 printf("[BTSTACK_HOST] BLE controller: %02X:%02X:%02X:%02X:%02X:%02X name=\"%s\"\n",
                        addr[5], addr[4], addr[3], addr[2], addr[1], addr[0], name);
                 // Determine display name from profile and PID
@@ -1140,10 +1354,12 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         case 0x2073: type_str = "Switch 2 GameCube"; break;
                         default:     type_str = "Switch 2 Controller"; break;
                     }
-                } else if (!is_generic_ble_gamepad) {
+                } else if (!is_generic_ble_hid) {
                     type_str = profile->name;
-                } else {
+                } else if (appearance == 0x03C3 || appearance == 0x03C4) {
                     type_str = "Generic BLE Gamepad";
+                } else {
+                    type_str = "BLE HID Device";
                 }
                 printf("[BTSTACK_HOST] Connecting to %s...\n", type_str);
                 // Use advertised name if available, otherwise use device type as fallback
@@ -1197,6 +1413,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
 
             // Auto-connect to gamepads and Wiimotes
             if ((is_gamepad || is_joystick || is_wiimote_family) && classic_state.inquiry_active) {
+                // Skip if we already have an active incoming connection to this device
+                // (the device connected to us before we found it in inquiry)
+                if (classic_state.pending_valid && !classic_state.pending_outgoing &&
+                    memcmp(classic_state.pending_addr, addr, 6) == 0) {
+                    printf("[BTSTACK_HOST] Already have incoming connection from this device, skipping outgoing\n");
+                    break;
+                }
+
                 printf("[BTSTACK_HOST] Classic gamepad found, connecting...\n");
                 btstack_host_stop_scan();  // Stop inquiry
 
@@ -1221,13 +1445,21 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     break;
                 }
 
-                if (profile->classic == BT_CLASSIC_DIRECT_L2CAP) {
-                    // Wiimotes/Wii U Pro don't work well with BTstack's hid_host layer
-                    // Use direct L2CAP channel creation instead (like USB Host Shield)
+                bool use_direct_l2cap = (profile->classic == BT_CLASSIC_DIRECT_L2CAP);
+#ifdef BTSTACK_USE_CYW43
+                // CYW43: Use direct L2CAP for Sony controllers to skip SDP.
+                // SDP responses from DS4/DS5 crash the CYW43 SPI bus.
+                if (profile->default_vid == 0x054C) {
+                    use_direct_l2cap = true;
+                    printf("[BTSTACK_HOST] CYW43: forcing direct L2CAP for Sony (skip SDP)\n");
+                }
+#endif
+                if (use_direct_l2cap) {
+                    // Direct L2CAP: skip SDP, create HID channels after encryption
                     printf("[BTSTACK_HOST] %s detected, using direct L2CAP approach\n", profile->name);
                     classic_state.pending_hid_connect = true;
 
-                    // Initialize wiimote connection state
+                    // Initialize direct L2CAP connection state
                     memset(&wiimote_conn, 0, sizeof(wiimote_conn));
                     wiimote_conn.active = true;
                     wiimote_conn.state = WIIMOTE_STATE_IDLE;
@@ -1236,6 +1468,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     wiimote_conn.class_of_device[0] = cod & 0xFF;
                     wiimote_conn.class_of_device[1] = (cod >> 8) & 0xFF;
                     wiimote_conn.class_of_device[2] = (cod >> 16) & 0xFF;
+                    wiimote_conn.vendor_id = profile->default_vid;
+                    wiimote_conn.product_id = profile->default_pid;
 
                     // Allocate classic connection slot for bthid routing
                     classic_connection_t* conn = find_free_classic_connection();
@@ -1250,6 +1484,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         conn->class_of_device[1] = (cod >> 8) & 0xFF;
                         conn->class_of_device[2] = (cod >> 16) & 0xFF;
                         conn->profile = profile;
+                        conn->connect_time = btstack_run_loop_get_time_ms();
                         wiimote_conn.conn_index = conn_index;
                         printf("[BTSTACK_HOST] %s conn_index=%d\n", profile->name, conn_index);
                     }
@@ -1286,6 +1521,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                             conn->class_of_device[1] = (cod >> 8) & 0xFF;
                             conn->class_of_device[2] = (cod >> 16) & 0xFF;
                             conn->profile = profile;
+                            conn->connect_time = btstack_run_loop_get_time_ms();
                         }
                     } else {
                         printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", status);
@@ -1297,6 +1533,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
 
         case GAP_EVENT_INQUIRY_COMPLETE:
             classic_state.inquiry_active = false;
+            classic_state.recovery_start_time = 0;  // BT transport is working
+#ifndef CONFIG_USB2BLE
             // Restart inquiry after it completes (if we're still in scan mode)
             // Toggle between GIAC and LIAC to discover all device types
             if (hid_state.state == BLE_STATE_SCANNING) {
@@ -1308,6 +1546,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 gap_inquiry_start(INQUIRY_DURATION);
                 classic_state.inquiry_active = true;
             }
+#endif
             break;
 
         // Classic BT incoming connection request (DS3 connects this way)
@@ -1369,14 +1608,20 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                                                     BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
                         }
 
-                        // Request authentication for all outgoing connections.
-                        // Switch Pro and other SSP devices need this before HID L2CAP
-                        // channels can be established. Also triggers PIN exchange for
-                        // legacy devices (Wiimote/Wii U Pro).
-                        gap_request_security_level(handle, LEVEL_2);
+                        // Request early authentication for direct L2CAP connections
+                        // (Wiimote/Wii U Pro) where we manage channels ourselves and
+                        // need PIN exchange before L2CAP setup.
+                        // For hid_host_connect() connections: BTstack's HID Host handles
+                        // authentication when creating HID L2CAP channels after SDP.
+                        // Requesting auth here concurrently with SDP causes CYW43 SPI
+                        // bus failures on devices with large HID descriptors (DS4 clones).
+                        if (classic_state.pending_hid_connect && wiimote_conn.active) {
+                            gap_request_security_level(handle, LEVEL_2);
+                        }
                     } else {
                         // Incoming connection (device connected to us)
                         printf("[BTSTACK_HOST] Incoming ACL complete, COD=0x%06X\n", cod);
+                        classic_state.pending_acl_handle = handle;
 
                         // Detect direct L2CAP device by pending profile (if available from prior inquiry).
                         // For incoming reconnections, pending_name is typically empty at
@@ -1448,13 +1693,21 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                             // Request remote name for driver matching (we don't have it from inquiry)
                             gap_remote_name_request(addr, 0, 0);
 
-                            // Query VID/PID via SDP (PnP Information service)
-                            sdp_client_query_uuid16(&sdp_query_vid_pid_callback, addr,
-                                                    BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
+                            // Don't query VID/PID via SDP here — BTstack HID Host runs its
+                            // own SDP query after accepting the incoming connection, and the
+                            // SDP client only handles one query at a time. Our VID/PID query
+                            // would delay HID Host's descriptor query. Instead, query VID/PID
+                            // at HID_SUBEVENT_CONNECTION_OPENED after HID channels are established.
 
-                            // Request authentication — required for DS4/DS5/DS3 and harmless
-                            // for Wiimotes that already have a stored link key
-                            gap_request_security_level(handle, LEVEL_2);
+                            // Request authentication only if we have a stored key (reconnection).
+                            // For new pairings (no key), defer auth to after name resolution
+                            // to avoid concurrent SDP+auth on CYW43 and to let device type
+                            // detection (Switch vs Sony) determine the connection path.
+                            link_key_t incoming_link_key;
+                            link_key_type_t incoming_key_type;
+                            if (gap_get_link_key_for_bd_addr(addr, incoming_link_key, &incoming_key_type)) {
+                                gap_request_security_level(handle, LEVEL_2);
+                            }
                         }
                     }
                 }
@@ -1523,6 +1776,9 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
         }
 
         case HCI_EVENT_LE_META: {
+#ifdef CONFIG_USB2BLE
+            break;  // USB2BLE is a BLE peripheral — ble_output handles LE events
+#endif
             uint8_t subevent = hci_event_le_meta_get_subevent_code(packet);
 
             switch (subevent) {
@@ -1617,7 +1873,46 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     classic_state.pending_outgoing &&
                     classic_state.pending_hid_connect &&
                     memcmp(name_addr, classic_state.pending_addr, 6) == 0) {
-                    printf("[BTSTACK_HOST] Deferred connect: name failed, falling back to HID Host\n");
+                    printf("[BTSTACK_HOST] Deferred connect: name failed, falling back\n");
+
+#ifdef BTSTACK_USE_CYW43
+                    // CYW43: if pending profile is Sony, use direct L2CAP to skip SDP
+                    if (classic_state.pending_profile && classic_state.pending_profile->default_vid == 0x054C) {
+                        printf("[BTSTACK_HOST] CYW43: forcing direct L2CAP for Sony (skip SDP)\n");
+                        memset(&wiimote_conn, 0, sizeof(wiimote_conn));
+                        wiimote_conn.active = true;
+                        wiimote_conn.state = WIIMOTE_STATE_IDLE;
+                        memcpy(wiimote_conn.addr, name_addr, 6);
+                        wiimote_conn.class_of_device[0] = classic_state.pending_cod & 0xFF;
+                        wiimote_conn.class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
+                        wiimote_conn.class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                        wiimote_conn.vendor_id = classic_state.pending_profile->default_vid;
+                        wiimote_conn.product_id = classic_state.pending_profile->default_pid;
+
+                        classic_connection_t* conn = find_free_classic_connection();
+                        if (conn) {
+                            int conn_index = conn - classic_state.connections;
+                            memset(conn, 0, sizeof(*conn));
+                            conn->active = true;
+                            conn->hid_cid = 0xFFFF;
+                            memcpy(conn->addr, name_addr, 6);
+                            conn->class_of_device[0] = classic_state.pending_cod & 0xFF;
+                            conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
+                            conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                            conn->profile = classic_state.pending_profile;
+                            conn->connect_time = btstack_run_loop_get_time_ms();
+                            wiimote_conn.conn_index = conn_index;
+                        }
+
+                        uint8_t status = gap_connect(name_addr, BD_ADDR_TYPE_ACL);
+                        if (status != ERROR_CODE_SUCCESS && status != ERROR_CODE_COMMAND_DISALLOWED) {
+                            printf("[BTSTACK_HOST] gap_connect failed: 0x%02X\n", status);
+                            wiimote_conn.active = false;
+                        }
+                        classic_state.pending_hid_connect = false;
+                        break;
+                    }
+#endif
                     classic_state.pending_hid_connect = false;
 
                     uint16_t hid_cid;
@@ -1633,6 +1928,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                             conn->class_of_device[0] = classic_state.pending_cod & 0xFF;
                             conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
                             conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                            conn->connect_time = btstack_run_loop_get_time_ms();
                         }
                     } else {
                         printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", status);
@@ -1701,10 +1997,28 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 // Late direct-L2CAP device detection for incoming reconnections: if the name
                 // resolves to a direct-L2CAP device and wiimote_conn wasn't set up at
                 // CONNECTION_COMPLETE (because name was unknown), set it up now so
-                // HID_SUBEVENT_INCOMING_CONNECTION can route it correctly.
+                // ENCRYPTION_CHANGE can create outgoing L2CAP channels.
                 const bt_device_profile_t* late_profile = bt_device_lookup_by_name(name);
+                bool late_direct_l2cap = (late_profile->classic == BT_CLASSIC_DIRECT_L2CAP);
+
+#ifdef BTSTACK_USE_CYW43
+                // On CYW43, Sony incoming reconnections use HID Host (not direct L2CAP).
+                // The controller initiates its own L2CAP channels; we just need to stop
+                // scanning and set default VID so the connection slot gets Sony VID.
+                // (Direct L2CAP is only used for outgoing initial pairing to skip SDP.)
+                if (late_profile->default_vid == 0x054C &&
+                    classic_state.pending_valid &&
+                    !classic_state.pending_outgoing &&
+                    memcmp(name_addr, classic_state.pending_addr, 6) == 0) {
+                    printf("[BTSTACK_HOST] Late Sony detection (incoming) - using HID Host path\n");
+                    if (classic_state.pending_vid == 0) {
+                        classic_state.pending_vid = late_profile->default_vid;
+                    }
+                    btstack_host_stop_scan();
+                }
+#endif
                 if (!wiimote_conn.active &&
-                    late_profile->classic == BT_CLASSIC_DIRECT_L2CAP &&
+                    late_direct_l2cap &&
                     classic_state.pending_valid &&
                     !classic_state.pending_outgoing &&
                     memcmp(name_addr, classic_state.pending_addr, 6) == 0) {
@@ -1715,9 +2029,24 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     wiimote_conn.state = WIIMOTE_STATE_IDLE;
                     wiimote_conn.conn_index = -1;
                     memcpy(wiimote_conn.addr, name_addr, 6);
+                    wiimote_conn.acl_handle = classic_state.pending_acl_handle;
                     memcpy(wiimote_conn.class_of_device, &classic_state.pending_cod, 3);
                     strncpy(wiimote_conn.name, name, sizeof(wiimote_conn.name) - 1);
                     wiimote_conn.name[sizeof(wiimote_conn.name) - 1] = '\0';
+                    wiimote_conn.vendor_id = late_profile->default_vid;
+                    wiimote_conn.product_id = classic_state.pending_pid ? classic_state.pending_pid : late_profile->default_pid;
+
+                    // Stop scanning — we have an incoming connection to handle
+                    btstack_host_stop_scan();
+
+                    // Request auth if no stored key (first-time pairing).
+                    // For reconnections, HCI auto-encrypts with the stored key.
+                    link_key_t late_link_key;
+                    link_key_type_t late_key_type;
+                    if (!gap_get_link_key_for_bd_addr(name_addr, late_link_key, &late_key_type)) {
+                        printf("[BTSTACK_HOST] No stored key, requesting auth for SSP pairing\n");
+                        gap_request_security_level(classic_state.pending_acl_handle, LEVEL_2);
+                    }
                 }
 
                 // Deferred outgoing connection: name was unavailable at inquiry time,
@@ -1735,7 +2064,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     const bt_device_profile_t* deferred_profile = bt_device_lookup_by_name(name);
                     classic_state.pending_profile = deferred_profile;
 
-                    if (deferred_profile->classic == BT_CLASSIC_DIRECT_L2CAP) {
+                    bool deferred_direct_l2cap = (deferred_profile->classic == BT_CLASSIC_DIRECT_L2CAP);
+#ifdef BTSTACK_USE_CYW43
+                    if (deferred_profile->default_vid == 0x054C) {
+                        deferred_direct_l2cap = true;
+                        printf("[BTSTACK_HOST] CYW43: forcing direct L2CAP for Sony (skip SDP)\n");
+                    }
+#endif
+                    if (deferred_direct_l2cap) {
                         printf("[BTSTACK_HOST] Deferred connect: %s detected, using direct L2CAP\n",
                                deferred_profile->name);
                         classic_state.pending_hid_connect = true;
@@ -1748,6 +2084,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         wiimote_conn.class_of_device[0] = classic_state.pending_cod & 0xFF;
                         wiimote_conn.class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
                         wiimote_conn.class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
+                        wiimote_conn.vendor_id = deferred_profile->default_vid;
+                        wiimote_conn.product_id = deferred_profile->default_pid;
 
                         classic_connection_t* conn = find_free_classic_connection();
                         if (conn) {
@@ -1761,6 +2099,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                             conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
                             conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
                             conn->profile = deferred_profile;
+                            conn->connect_time = btstack_run_loop_get_time_ms();
                             wiimote_conn.conn_index = conn_index;
                         }
 
@@ -1792,6 +2131,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                                 conn->class_of_device[1] = (classic_state.pending_cod >> 8) & 0xFF;
                                 conn->class_of_device[2] = (classic_state.pending_cod >> 16) & 0xFF;
                                 conn->profile = deferred_profile;
+                                conn->connect_time = btstack_run_loop_get_time_ms();
                             }
                         } else {
                             printf("[BTSTACK_HOST] hid_host_connect failed: %d\n", status);
@@ -1815,11 +2155,16 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 printf("[BTSTACK_HOST] BLE disconnect: notifying bthid (conn_index=%d)\n", conn->conn_index);
                 bt_on_disconnect(conn->conn_index);
                 memset(conn, 0, sizeof(*conn));
+                conn->handle = HCI_CON_HANDLE_INVALID;
 
                 // Clean up GATT/HIDS client state for this connection
                 if (hid_state.hids_cid != 0) {
                     hids_client_disconnect(hid_state.hids_cid);
                     hid_state.hids_cid = 0;
+                }
+                if (hid_state.bas_cid != 0) {
+                    battery_service_client_disconnect(hid_state.bas_cid);
+                    hid_state.bas_cid = 0;
                 }
                 hid_state.gatt_state = GATT_IDLE;
                 hid_state.gatt_handle = 0;
@@ -1955,6 +2300,22 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             uint8_t status = packet[2];
             hci_con_handle_t handle = little_endian_read_16(packet, 3);
             printf("[BTSTACK_HOST] Authentication complete: handle=0x%04X status=0x%02X\n", handle, status);
+
+            // Handle PIN_OR_KEY_MISSING (0x06): controller cleared its link key
+            // (e.g., put in pairing mode) but we still have a stale stored key.
+            // Delete the stale key and disconnect so next attempt triggers fresh pairing.
+            if (status == 0x06 && classic_state.pending_valid) {
+                printf("[BTSTACK_HOST] Auth failed (key rejected), deleting stale link key\n");
+                gap_drop_link_key_for_bd_addr(classic_state.pending_addr);
+
+                // Clean up wiimote state if auth failed before L2CAP channels were created
+                if (wiimote_conn.active && wiimote_conn.acl_handle == handle) {
+                    memset(&wiimote_conn, 0, sizeof(wiimote_conn));
+                }
+                classic_state.pending_hid_connect = false;
+
+                gap_disconnect(handle);
+            }
             break;
         }
 
@@ -1973,6 +2334,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                 (wiimote_conn.state == WIIMOTE_STATE_IDLE ||
                  wiimote_conn.state == WIIMOTE_STATE_W4_CONTROL_CONNECTED) &&
                 wiimote_conn.control_cid == 0) {
+
+                // For incoming reconnections, don't create outgoing L2CAP channels.
+                // The controller will initiate its own channels via HID Host.
+                // Creating outgoing channels conflicts with the incoming ones.
+                if (classic_state.pending_valid && !classic_state.pending_outgoing) {
+                    printf("[BTSTACK_HOST] Wiimote: incoming reconnection, waiting for HID Host channels\n");
+                    break;
+                }
 
                 printf("[BTSTACK_HOST] Wiimote: encryption enabled, creating HID Control channel (PSM 0x11)...\n");
 
@@ -2026,6 +2395,10 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
 
     if (packet_type != HCI_EVENT_PACKET) return;
 
+#ifdef CONFIG_USB2BLE
+    return;  // USB2BLE is a BLE peripheral — ble_output handles SM events
+#endif
+
     uint8_t event_type = hci_event_packet_get_type(packet);
 
     switch (event_type) {
@@ -2054,6 +2427,7 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
                     hid_state.last_connected_name[sizeof(hid_state.last_connected_name) - 1] = '\0';
                     hid_state.has_last_connected = true;
                     hid_state.reconnect_attempts = 0;
+                    btstack_host_save_last_connected();
                     printf("[BTSTACK_HOST] Stored device for reconnection: %02X:%02X:%02X:%02X:%02X:%02X name='%s'\n",
                            conn->addr[5], conn->addr[4], conn->addr[3], conn->addr[2], conn->addr[1], conn->addr[0],
                            hid_state.last_connected_name);
@@ -2101,6 +2475,7 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
                         hid_state.last_connected_name[sizeof(hid_state.last_connected_name) - 1] = '\0';
                     }
                     hid_state.has_last_connected = true;
+                    btstack_host_save_last_connected();
 
                     // Route based on BLE strategy
                     if (conn->profile && conn->profile->ble == BT_BLE_DIRECT_ATT) {
@@ -2988,6 +3363,101 @@ static void start_hids_client(ble_connection_t *conn)
            status, hid_state.hids_cid);
 }
 
+// ============================================================================
+// BAS (BATTERY SERVICE) CLIENT HANDLER
+// ============================================================================
+
+static void bas_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(packet_type);
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (hci_event_packet_get_type(packet) != HCI_EVENT_GATTSERVICE_META) return;
+
+    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+        case GATTSERVICE_SUBEVENT_BATTERY_SERVICE_CONNECTED: {
+            uint8_t status = gattservice_subevent_battery_service_connected_get_status(packet);
+            uint8_t num_instances = gattservice_subevent_battery_service_connected_get_num_instances(packet);
+            printf("[BTSTACK_HOST] BAS connected: status=%d instances=%d\n", status, num_instances);
+            break;
+        }
+
+        case GATTSERVICE_SUBEVENT_BATTERY_SERVICE_LEVEL: {
+            uint8_t att_status = gattservice_subevent_battery_service_level_get_att_status(packet);
+            uint8_t level = gattservice_subevent_battery_service_level_get_level(packet);
+
+            if (att_status != ATT_ERROR_SUCCESS) break;
+
+            // Find conn_index for the current BLE connection
+            int conn_index = get_ble_conn_index_by_handle(hid_state.gatt_handle);
+            if (conn_index >= 0) {
+                bthid_set_battery_level((uint8_t)conn_index, level);
+            }
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+static void start_battery_service_client(hci_con_handle_t handle)
+{
+    uint8_t status = battery_service_client_connect(handle, bas_client_handler, 60000, &hid_state.bas_cid);
+    if (status != ERROR_CODE_SUCCESS) {
+        printf("[BTSTACK_HOST] BAS connect failed: status=%d\n", status);
+    } else {
+        printf("[BTSTACK_HOST] BAS connect started: cid=0x%04X\n", hid_state.bas_cid);
+    }
+}
+
+// ============================================================================
+// DIS (DEVICE INFORMATION SERVICE) CLIENT HANDLER
+// ============================================================================
+
+static void dis_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
+{
+    UNUSED(packet_type);
+    UNUSED(channel);
+    UNUSED(size);
+
+    if (hci_event_packet_get_type(packet) != HCI_EVENT_GATTSERVICE_META) return;
+
+    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_PNP_ID: {
+            hci_con_handle_t handle = gattservice_subevent_device_information_pnp_id_get_con_handle(packet);
+            uint16_t vid = gattservice_subevent_device_information_pnp_id_get_vendor_id(packet);
+            uint16_t pid = gattservice_subevent_device_information_pnp_id_get_product_id(packet);
+            uint8_t vendor_source = gattservice_subevent_device_information_pnp_id_get_vendor_source_id(packet);
+
+            printf("[BTSTACK_HOST] DIS PnP ID: vendor_source=%d VID=0x%04X PID=0x%04X handle=0x%04X\n",
+                   vendor_source, vid, pid, handle);
+
+            ble_connection_t *conn = find_connection_by_handle(handle);
+            if (conn && (conn->vid != vid || conn->pid != pid)) {
+                conn->vid = vid;
+                conn->pid = pid;
+                printf("[BTSTACK_HOST] DIS: updating device info for conn_index=%d\n", conn->conn_index);
+                bthid_update_device_info(conn->conn_index, conn->name, vid, pid);
+            }
+            break;
+        }
+
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_DONE: {
+            hci_con_handle_t handle = gattservice_subevent_device_information_done_get_con_handle(packet);
+            uint8_t att_status = gattservice_subevent_device_information_done_get_att_status(packet);
+            printf("[BTSTACK_HOST] DIS query done: handle=0x%04X status=0x%02X\n", handle, att_status);
+            // Start Battery Service client after DIS completes (avoids GATT procedure contention)
+            start_battery_service_client(handle);
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
 static void hids_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
 {
     UNUSED(packet_type);  // hids_client passes HCI_EVENT_GATTSERVICE_META, not HCI_EVENT_PACKET
@@ -3023,6 +3493,23 @@ static void hids_client_handler(uint8_t packet_type, uint16_t channel, uint8_t *
                     printf("[BTSTACK_HOST] Calling bt_on_hid_ready(%d) for BLE device '%s'\n",
                            conn->conn_index, conn->name);
                     bt_on_hid_ready(conn->conn_index);
+
+                    // Pass HID descriptor to bthid for generic gamepad parsing
+                    const uint8_t* hid_desc = hids_client_descriptor_storage_get_descriptor_data(hid_state.hids_cid, 0);
+                    uint16_t hid_desc_len = hids_client_descriptor_storage_get_descriptor_len(hid_state.hids_cid, 0);
+                    if (hid_desc && hid_desc_len > 0) {
+                        printf("[BTSTACK_HOST] BLE HID descriptor: %d bytes\n", hid_desc_len);
+                        bthid_set_hid_descriptor(conn->conn_index, hid_desc, hid_desc_len);
+                    }
+
+                    // Query Device Information Service for PnP ID (VID/PID)
+                    // This enables re-matching drivers by VID after initial name-based match
+                    uint8_t dis_status = device_information_service_client_query(conn->handle, dis_client_handler);
+                    if (dis_status != ERROR_CODE_SUCCESS) {
+                        printf("[BTSTACK_HOST] DIS query failed to start: status=%d (singleton busy)\n", dis_status);
+                        // DIS unavailable — start BAS directly as fallback
+                        start_battery_service_client(conn->handle);
+                    }
                 }
 
                 // Explicitly enable notifications
@@ -3081,7 +3568,7 @@ static ble_connection_t* find_connection_by_handle(hci_con_handle_t handle)
 static ble_connection_t* find_free_connection(void)
 {
     for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
-        if (hid_state.connections[i].handle == 0) {
+        if (hid_state.connections[i].handle == HCI_CON_HANDLE_INVALID) {
             return &hid_state.connections[i];
         }
     }
@@ -3110,6 +3597,8 @@ bool btstack_host_is_scanning(void)
 // ============================================================================
 // CLASSIC BT HID HOST PACKET HANDLER
 // ============================================================================
+
+static bool btstack_report_debug_done = false;
 
 static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size)
 {
@@ -3147,6 +3636,7 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                     memcpy(conn->class_of_device, wiimote_conn.class_of_device, 3);
                     strncpy(conn->name, wiimote_conn.name, sizeof(conn->name) - 1);
                     conn->vendor_id = 0x057E;  // Nintendo
+                    conn->connect_time = btstack_run_loop_get_time_ms();
                     // Get index for wiimote_conn
                     for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
                         if (&classic_state.connections[i] == conn) {
@@ -3159,8 +3649,17 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                 break;
             }
 
-            printf("[BTSTACK_HOST] HID incoming connection, cid=0x%04X - accepting\n", hid_cid);
-            hid_host_accept_connection(hid_cid, HID_PROTOCOL_MODE_REPORT);
+            // Determine protocol mode from device profile (if name is available)
+            hid_protocol_mode_t accept_mode = HID_PROTOCOL_MODE_REPORT_WITH_FALLBACK_TO_BOOT;
+            if (classic_state.pending_valid && classic_state.pending_name[0]) {
+                const bt_device_profile_t* profile = bt_device_lookup_by_name(classic_state.pending_name);
+                if (profile->hid_mode == BT_HID_MODE_REPORT) {
+                    accept_mode = HID_PROTOCOL_MODE_REPORT;
+                }
+            }
+            printf("[BTSTACK_HOST] HID incoming connection, cid=0x%04X - accepting (mode=%s)\n",
+                   hid_cid, accept_mode == HID_PROTOCOL_MODE_REPORT ? "REPORT" : "FALLBACK");
+            hid_host_accept_connection(hid_cid, accept_mode);
 
             // Allocate connection slot if needed
             if (!find_classic_connection_by_cid(hid_cid)) {
@@ -3194,6 +3693,7 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                         // It will be cleared in HID_SUBEVENT_CONNECTION_OPENED
                         printf("[BTSTACK_HOST] Using pending COD: 0x%06X\n", (unsigned)classic_state.pending_cod);
                     }
+                    conn->connect_time = btstack_run_loop_get_time_ms();
                 }
             }
             break;
@@ -3214,7 +3714,7 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
             classic_state.pending_valid = false;
 
             if (status != ERROR_CODE_SUCCESS) {
-                printf("[BTSTACK_HOST] HID connection failed, status=0x%02X\n", status);
+                printf("[BTSTACK_HOST] HID connection failed, cid=0x%04X status=0x%02X\n", hid_cid, status);
                 // Remove connection slot
                 classic_connection_t* conn = find_classic_connection_by_cid(hid_cid);
                 if (conn) {
@@ -3256,6 +3756,8 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                     const bt_device_profile_t* conn_profile = bt_device_lookup_by_name(conn->name);
                     if (conn_profile->classic == BT_CLASSIC_DIRECT_L2CAP) {
                         is_direct_l2cap = true;
+                    }
+                    if (!conn->profile) {
                         conn->profile = conn_profile;
                     }
                 }
@@ -3316,13 +3818,17 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                                conn_index, wiimote_conn.control_cid, wiimote_conn.interrupt_cid, wiimote_conn.using_hid_host);
 
                         if (wiimote_conn.using_hid_host) {
-                            // Using HID Host fallback - ready to go
+                            // Using HID Host — set up state but defer bt_on_hid_ready
+                            // to DESCRIPTOR_AVAILABLE. BTstack's HID Host immediately
+                            // starts SDP after CONNECTION_OPENED (state → W2_SEND_SDP_QUERY),
+                            // and hid_host_send_report() fails with COMMAND_DISALLOWED
+                            // until SDP + SET_PROTOCOL complete. Deferring ensures the
+                            // driver's init subcommands (SET_INPUT_MODE etc.) succeed.
                             wiimote_conn.hid_host_ready = true;
                             wiimote_conn.state = WIIMOTE_STATE_CONNECTED;
                             btstack_host_stop_scan();
                             scan_timeout_end = 0;
-                            printf("[BTSTACK_HOST] Wiimote: calling bt_on_hid_ready(%d) via HID Host\n", conn_index);
-                            bt_on_hid_ready(conn_index);
+                            printf("[BTSTACK_HOST] Wiimote: HID Host ready, deferring bt_on_hid_ready to DESCRIPTOR_AVAILABLE\n");
                         } else if (wiimote_conn.control_cid != 0 && wiimote_conn.interrupt_cid != 0) {
                             printf("[BTSTACK_HOST] Wiimote: calling bt_on_hid_ready(%d) via direct L2CAP\n", conn_index);
                             bt_on_hid_ready(conn_index);
@@ -3338,23 +3844,12 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
                                conn->vendor_id, conn->profile->name);
                     }
 
-                    // For non-Wiimote devices, query SDP for VID/PID if we don't have it
-                    if (conn->vendor_id == 0 && conn->product_id == 0) {
-                        // Store pending info for SDP callback
-                        memcpy(classic_state.pending_addr, conn->addr, 6);
-                        classic_state.pending_vid = 0;
-                        classic_state.pending_pid = 0;
-
-                        // Query VID/PID via SDP (PnP Information service)
-                        sdp_client_query_uuid16(&sdp_query_vid_pid_callback, conn->addr,
-                                                BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
-
-                        // Also request remote name if we don't have it
-                        if (conn->name[0] == '\0') {
-                            gap_remote_name_request(conn->addr, 0, 0);
-                        }
-                    }
                     // Non-Wiimote: wait for HID_SUBEVENT_DESCRIPTOR_AVAILABLE
+                    // NOTE: Do NOT issue SDP queries here — BTstack HID Host starts its
+                    // own SDP query (for HID descriptor) immediately after CONNECTION_OPENED.
+                    // sdp_client only handles one query at a time, so issuing ours here
+                    // would block BTstack's, preventing DESCRIPTOR_AVAILABLE from firing.
+                    // VID/PID SDP query is deferred to DESCRIPTOR_AVAILABLE instead.
                 }
             }
             break;
@@ -3366,19 +3861,35 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
 
             printf("[BTSTACK_HOST] HID descriptor available, cid=0x%04X status=0x%02X\n", hid_cid, status);
 
-            // Skip for Wiimotes - they already called bt_on_hid_ready from CONNECTION_OPENED
-            if (wiimote_conn.active && wiimote_conn.hid_host_cid == hid_cid) {
-                printf("[BTSTACK_HOST] Skipping bt_on_hid_ready for Wiimote (already initialized)\n");
-                break;
-            }
-
-            // Notify bthid layer that device is ready (non-Wiimote devices)
+            // Notify bthid layer that device is ready
+            // This fires after SDP + SET_PROTOCOL complete, so BTstack's state
+            // is CONNECTION_ESTABLISHED and hid_host_send_report() will succeed.
             int conn_index = get_classic_conn_index(hid_cid);
             if (conn_index >= 0) {
+                // Pass HID descriptor to bthid for generic gamepad parsing
+                const uint8_t* hid_desc = hid_descriptor_storage_get_descriptor_data(hid_cid);
+                uint16_t hid_desc_len = hid_descriptor_storage_get_descriptor_len(hid_cid);
+                if (hid_desc && hid_desc_len > 0) {
+                    printf("[BTSTACK_HOST] Classic HID descriptor: %d bytes\n", hid_desc_len);
+                    bthid_set_hid_descriptor(conn_index, hid_desc, hid_desc_len);
+                }
+
                 btstack_host_stop_scan();
                 scan_timeout_end = 0;
                 printf("[BTSTACK_HOST] Calling bt_on_hid_ready(%d)\n", conn_index);
                 bt_on_hid_ready(conn_index);
+
+                // Query VID/PID via SDP if not yet known (deferred from CONNECTION_OPENED
+                // to avoid conflicting with BTstack's internal HID descriptor SDP query)
+                classic_connection_t* desc_conn = find_classic_connection_by_cid(hid_cid);
+                if (desc_conn && desc_conn->vendor_id == 0 && desc_conn->product_id == 0) {
+                    memcpy(classic_state.pending_addr, desc_conn->addr, 6);
+                    classic_state.pending_vid = 0;
+                    classic_state.pending_pid = 0;
+                    printf("[BTSTACK_HOST] Querying VID/PID via SDP (deferred)\n");
+                    sdp_client_query_uuid16(&sdp_query_vid_pid_callback, desc_conn->addr,
+                                            BLUETOOTH_SERVICE_CLASS_PNP_INFORMATION);
+                }
             }
             break;
         }
@@ -3389,7 +3900,6 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
             uint16_t report_len = hid_subevent_report_get_report_len(packet);
 
             // Debug: show raw BTstack report
-            static bool btstack_report_debug_done = false;
             if (!btstack_report_debug_done && report_len >= 4) {
                 printf("[BTSTACK_HOST] Raw report len=%d: %02X %02X %02X %02X\n",
                        report_len, report[0], report[1], report[2], report[3]);
@@ -3408,6 +3918,9 @@ static void hid_host_packet_handler(uint8_t packet_type, uint16_t channel, uint8
         case HID_SUBEVENT_CONNECTION_CLOSED: {
             uint16_t hid_cid = hid_subevent_connection_closed_get_hid_cid(packet);
             printf("[BTSTACK_HOST] HID connection closed, cid=0x%04X\n", hid_cid);
+
+            // Reset debug flag so reconnections produce debug output
+            btstack_report_debug_done = false;
 
             // Notify bthid layer
             int conn_index = get_classic_conn_index(hid_cid);
@@ -3601,6 +4114,26 @@ bool btstack_classic_send_set_report_type(uint8_t conn_index, uint8_t report_typ
     classic_connection_t* conn = &classic_state.connections[conn_index];
     if (!conn->active || !conn->hid_ready) return false;
 
+    // Check if this is a Wiimote/direct L2CAP connection (marked with hid_cid = 0xFFFF)
+    if (conn->hid_cid == 0xFFFF && wiimote_conn.active &&
+        wiimote_conn.conn_index == conn_index &&
+        wiimote_conn.state == WIIMOTE_STATE_CONNECTED) {
+        // Send SET_REPORT on control channel via raw L2CAP
+        // HID transaction format: [SET_REPORT | report_type] [report_id] [data...]
+        static uint8_t wiimote_setreport_buf[80];
+        uint16_t total = len + 2;
+        if (total > sizeof(wiimote_setreport_buf)) return false;
+        wiimote_setreport_buf[0] = 0x50 | (report_type & 0x03);  // SET_REPORT | type
+        wiimote_setreport_buf[1] = report_id;
+        if (len > 0) memcpy(wiimote_setreport_buf + 2, data, len);
+        uint8_t status = l2cap_send(wiimote_conn.control_cid, wiimote_setreport_buf, total);
+        if (status != ERROR_CODE_SUCCESS) {
+            printf("[BTSTACK_HOST] wiimote send_set_report failed: type=%d id=0x%02X status=%d\n",
+                   report_type, report_id, status);
+        }
+        return status == ERROR_CODE_SUCCESS;
+    }
+
     // Map report type to BTstack enum
     hid_report_type_t hid_type;
     switch (report_type) {
@@ -3610,7 +4143,13 @@ bool btstack_classic_send_set_report_type(uint8_t conn_index, uint8_t report_typ
         default: hid_type = HID_REPORT_TYPE_OUTPUT; break;
     }
 
-    uint8_t status = hid_host_send_set_report(conn->hid_cid, hid_type, report_id, data, len);
+    // hid_host_send_set_report stores a pointer to the data and sends asynchronously.
+    // Copy into static buffer so the data persists until the actual L2CAP send completes.
+    static uint8_t hid_host_set_report_buf[80];
+    if (len > sizeof(hid_host_set_report_buf)) return false;
+    if (len > 0) memcpy(hid_host_set_report_buf, data, len);
+
+    uint8_t status = hid_host_send_set_report(conn->hid_cid, hid_type, report_id, hid_host_set_report_buf, len);
     if (status != ERROR_CODE_SUCCESS) {
         printf("[BTSTACK_HOST] send_set_report failed: type=%d id=0x%02X status=%d\n",
                report_type, report_id, status);
@@ -3634,7 +4173,7 @@ bool btstack_classic_send_report(uint8_t conn_index, uint8_t report_id,
         uint8_t ble_index = conn_index - BLE_CONN_INDEX_OFFSET;
         if (ble_index >= MAX_BLE_CONNECTIONS) return false;
         ble_connection_t* conn = &hid_state.connections[ble_index];
-        if (conn->handle == 0 || !conn->hid_ready) return false;
+        if (conn->handle == HCI_CON_HANDLE_INVALID || !conn->hid_ready) return false;
         if (hid_state.hids_cid == 0) return false;
         uint8_t status = hids_client_send_write_report(hid_state.hids_cid, report_id,
                                                         HID_REPORT_TYPE_OUTPUT,
@@ -3656,7 +4195,8 @@ bool btstack_classic_send_report(uint8_t conn_index, uint8_t report_id,
         wiimote_conn.conn_index == conn_index &&
         wiimote_conn.state == WIIMOTE_STATE_CONNECTED) {
         // Build HID packet: 0xA2 (DATA|OUTPUT) + report_id + data
-        static uint8_t wiimote_send_buf[64];
+        // Buffer must fit DS5 BT output (79 bytes: 0xA2 + 78-byte report with CRC)
+        static uint8_t wiimote_send_buf[80];
         if (len + 2 > sizeof(wiimote_send_buf)) return false;
         wiimote_send_buf[0] = 0xA2;  // DATA | OUTPUT
         wiimote_send_buf[1] = report_id;
@@ -3664,7 +4204,13 @@ bool btstack_classic_send_report(uint8_t conn_index, uint8_t report_id,
         return l2cap_send(wiimote_conn.interrupt_cid, wiimote_send_buf, len + 2) == ERROR_CODE_SUCCESS;
     }
 
-    return hid_host_send_report(conn->hid_cid, report_id, data, len) == ERROR_CODE_SUCCESS;
+    // hid_host_send_report stores a pointer to the data and sends asynchronously.
+    // Copy into static buffer so the data persists until the actual L2CAP send completes.
+    static uint8_t hid_host_report_buf[80];
+    if (len > sizeof(hid_host_report_buf)) return false;
+    if (len > 0) memcpy(hid_host_report_buf, data, len);
+
+    return hid_host_send_report(conn->hid_cid, report_id, hid_host_report_buf, len) == ERROR_CODE_SUCCESS;
 }
 
 // Check if a connection is a Wiimote (using direct L2CAP)
@@ -3707,7 +4253,7 @@ bool btstack_wiimote_send_raw(uint8_t conn_index, const uint8_t* data, uint16_t 
         printf("[BTSTACK_HOST] wiimote_send_raw: no active connection\n");
         return false;
     }
-    if (len == 0 || len > 64) {
+    if (len == 0 || len > 80) {
         printf("[BTSTACK_HOST] wiimote_send_raw: bad len=%d\n", len);
         return false;
     }
@@ -3735,9 +4281,14 @@ bool btstack_wiimote_send_raw(uint8_t conn_index, const uint8_t* data, uint16_t 
         // Data format: first byte is 0xA2, second is report ID, rest is data
         if (len < 2) return false;
         uint8_t report_id = data[1];
+        uint16_t payload_len = len - 2;
+        // hid_host_send_report stores a pointer — copy to static buffer for async send
+        static uint8_t wiimote_hid_report_buf[80];
+        if (payload_len > sizeof(wiimote_hid_report_buf)) return false;
+        if (payload_len > 0) memcpy(wiimote_hid_report_buf, &data[2], payload_len);
         printf("[BTSTACK_HOST] wiimote_send_raw via HID Host: cid=0x%04X report=0x%02X len=%d\n",
-               wiimote_conn.hid_host_cid, report_id, len - 2);
-        uint8_t status = hid_host_send_report(wiimote_conn.hid_host_cid, report_id, &data[2], len - 2);
+               wiimote_conn.hid_host_cid, report_id, payload_len);
+        uint8_t status = hid_host_send_report(wiimote_conn.hid_host_cid, report_id, wiimote_hid_report_buf, payload_len);
         if (status == ERROR_CODE_SUCCESS) {
             printf("[BTSTACK_HOST] wiimote_send_raw: sent %d bytes via HID Host\n", len);
         } else {
@@ -3794,8 +4345,13 @@ bool btstack_wiimote_send_control(uint8_t conn_index, const uint8_t* data, uint1
         // Data format: first byte is 0x52 (SET_REPORT), second is report type+ID
         if (len < 2) return false;
         uint8_t report_id = data[1];
+        uint16_t payload_len = len - 2;
+        // hid_host_send_set_report stores a pointer — copy to static buffer for async send
+        static uint8_t wiimote_hid_setreport_buf[80];
+        if (payload_len > sizeof(wiimote_hid_setreport_buf)) return false;
+        if (payload_len > 0) memcpy(wiimote_hid_setreport_buf, &data[2], payload_len);
         uint8_t status = hid_host_send_set_report(wiimote_conn.hid_host_cid, HID_REPORT_TYPE_OUTPUT,
-                                                   report_id, &data[2], len - 2);
+                                                   report_id, wiimote_hid_setreport_buf, payload_len);
         if (status == ERROR_CODE_SUCCESS) {
             printf("[BTSTACK_HOST] wiimote_send_control: sent %d bytes via HID Host\n", len);
         }
@@ -3817,7 +4373,7 @@ bool btstack_classic_get_connection(uint8_t conn_index, btstack_classic_conn_inf
         if (ble_index >= MAX_BLE_CONNECTIONS) return false;
 
         ble_connection_t* conn = &hid_state.connections[ble_index];
-        if (conn->handle == 0) return false;
+        if (conn->handle == HCI_CON_HANDLE_INVALID) return false;
 
         info->active = true;
         memcpy(info->bd_addr, conn->addr, 6);
@@ -3863,7 +4419,7 @@ uint8_t btstack_classic_get_connection_count(void)
         }
     }
     for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
-        if (hid_state.connections[i].handle != 0) {
+        if (hid_state.connections[i].handle != HCI_CON_HANDLE_INVALID) {
             count++;
         }
     }
@@ -3879,12 +4435,24 @@ void btstack_host_disconnect_all_devices(void)
     printf("[BTSTACK_HOST] Disconnecting all devices...\n");
 
     for (int i = 0; i < MAX_CLASSIC_CONNECTIONS; i++) {
-        if (classic_state.connections[i].active && classic_state.connections[i].hid_cid) {
-            hid_host_disconnect(classic_state.connections[i].hid_cid);
+        classic_connection_t* c = &classic_state.connections[i];
+        if (!c->active || !c->hid_cid) continue;
+        // Drop the underlying ACL link, not just the HID profile. Closing
+        // only HID (hid_host_disconnect) leaves the ACL up and some pads
+        // (notably the DS4) hold their "connected to host" state past the
+        // HID drop -- lightbar stays solid blue and the controller never
+        // sleeps. Disconnecting the ACL via gap_disconnect() forces the
+        // pad into its post-disconnect state where idle-sleep kicks in.
+        hci_connection_t* hci_conn = hci_connection_for_bd_addr_and_type(
+            c->addr, BD_ADDR_TYPE_ACL);
+        if (hci_conn) {
+            gap_disconnect(hci_conn->con_handle);
+        } else {
+            hid_host_disconnect(c->hid_cid);  // fallback
         }
     }
     for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
-        if (hid_state.connections[i].handle != 0) {
+        if (hid_state.connections[i].handle != HCI_CON_HANDLE_INVALID) {
             gap_disconnect(hid_state.connections[i].handle);
         }
     }
@@ -3902,7 +4470,7 @@ void btstack_host_delete_all_bonds(void)
 {
     printf("[BTSTACK_HOST] Deleting all Bluetooth bonds...\n");
 
-#ifndef BTSTACK_USE_CYW43
+#if !defined(BTSTACK_USE_CYW43) && !defined(BTSTACK_USE_ESP32) && !defined(BTSTACK_USE_NRF)
     // Erase BTstack flash banks to force clean re-initialization
     // This is more reliable than using BTstack's delete APIs when flash was corrupted
     btstack_erase_flash_banks();
@@ -3913,7 +4481,7 @@ void btstack_host_delete_all_bonds(void)
                                           flash_bank, NULL);
     printf("[BTSTACK_HOST] TLV re-initialized with clean flash banks\n");
 #else
-    // For CYW43, use BTstack's standard APIs
+    // For CYW43/ESP32, use BTstack's standard APIs
     gap_delete_all_link_keys();
     printf("[BTSTACK_HOST] Classic BT link keys deleted\n");
 
@@ -3923,4 +4491,63 @@ void btstack_host_delete_all_bonds(void)
 #endif
 
     printf("[BTSTACK_HOST] All bonds cleared. Devices will need to re-pair.\n");
+}
+
+bool btstack_host_get_last_connected(uint8_t bd_addr_out[6], char name_out[48])
+{
+    if (!hid_state.has_last_connected) return false;
+    bool nonzero = false;
+    for (int i = 0; i < 6; i++) if (hid_state.last_connected_addr[i]) { nonzero = true; break; }
+    if (!nonzero) return false;
+    memcpy(bd_addr_out, hid_state.last_connected_addr, 6);
+    strncpy(name_out, hid_state.last_connected_name, 47);
+    name_out[47] = '\0';
+    return true;
+}
+
+void btstack_host_forget_device(const uint8_t bd_addr[6])
+{
+    if (!hid_state.initialized) return;
+
+    bd_addr_t addr;
+    memcpy(addr, bd_addr, 6);
+
+    printf("[BTSTACK_HOST] Forgetting device %02X:%02X:%02X:%02X:%02X:%02X\n",
+           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+
+    // Disconnect if currently connected
+    for (int i = 0; i < MAX_BLE_CONNECTIONS; i++) {
+        if (hid_state.connections[i].handle != HCI_CON_HANDLE_INVALID &&
+            memcmp(hid_state.connections[i].addr, addr, 6) == 0) {
+            gap_disconnect(hid_state.connections[i].handle);
+        }
+    }
+
+    // Remove BLE bond
+    int bond_count = le_device_db_count();
+    for (int i = 0; i < bond_count; i++) {
+        int addr_type;
+        bd_addr_t bond_addr;
+        sm_key_t irk;
+        le_device_db_info(i, &addr_type, bond_addr, irk);
+        if (addr_type < 0) continue;
+        if (memcmp(bond_addr, addr, 6) == 0) {
+            le_device_db_remove(i);
+            printf("[BTSTACK_HOST] Removed BLE bond at index %d\n", i);
+            break;
+        }
+    }
+
+    // Remove Classic link key
+#ifdef ENABLE_CLASSIC
+    gap_drop_link_key_for_bd_addr(addr);
+#endif
+
+    // Clear last-connected if it matches
+    if (hid_state.has_last_connected &&
+        memcmp(hid_state.last_connected_addr, addr, 6) == 0) {
+        memset(hid_state.last_connected_addr, 0, 6);
+        hid_state.has_last_connected = false;
+        btstack_host_save_last_connected();  // Save the cleared state
+    }
 }

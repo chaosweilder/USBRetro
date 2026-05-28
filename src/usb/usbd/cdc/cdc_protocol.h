@@ -24,7 +24,7 @@ extern "C" {
 // ============================================================================
 
 #define CDC_SYNC_BYTE       0xAA
-#define CDC_MAX_PAYLOAD     512     // Max payload size (JSON commands)
+#define CDC_MAX_PAYLOAD     1024    // Max payload size (JSON commands)
 #define CDC_HEADER_SIZE     5       // sync(1) + len(2) + type(1) + seq(1)
 #define CDC_CRC_SIZE        2
 #define CDC_MAX_PACKET      (CDC_HEADER_SIZE + CDC_MAX_PAYLOAD + CDC_CRC_SIZE)
@@ -88,13 +88,18 @@ typedef struct {
 // Callback for received packets
 typedef void (*cdc_packet_handler_t)(const cdc_packet_t* packet);
 
+// Transport write function: sends raw bytes over the underlying transport
+typedef uint32_t (*cdc_transport_write_t)(const uint8_t* data, uint16_t len);
+
 typedef struct {
     cdc_receiver_t rx;
     uint8_t tx_seq;             // Next TX sequence number (for EVT)
     uint8_t cmd_seq;            // Last received CMD sequence (for RSP)
     cdc_packet_handler_t handler;
+    cdc_transport_write_t write; // Transport write function (NULL = USB CDC default)
     bool input_streaming;       // Input event streaming enabled
     bool log_streaming;         // Debug log streaming enabled
+    bool ble_transport;         // True if transport is BLE NUS (slower throttle)
 } cdc_protocol_t;
 
 // ============================================================================

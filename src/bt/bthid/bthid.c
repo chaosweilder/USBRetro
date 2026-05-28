@@ -2,6 +2,7 @@
 // Handles Bluetooth HID devices and routes reports to device-specific drivers
 
 #include "bthid.h"
+#include "core/input_event.h"
 #include "bt/transport/bt_transport.h"
 #include "devices/generic/bthid_gamepad.h"
 #include "devices/vendors/sony/ds3_bt.h"
@@ -32,6 +33,13 @@
 static bthid_device_t devices[BTHID_MAX_DEVICES];
 static const bthid_driver_t* drivers[BTHID_MAX_DRIVERS];
 static uint8_t driver_count = 0;
+
+// HID descriptor cache — stored when a vendor driver is active so the generic
+// driver can use it if a fallback is triggered later
+#define BTHID_MAX_DESC_LEN 512
+static uint8_t cached_hid_desc[BTHID_MAX_DESC_LEN];
+static uint16_t cached_hid_desc_len = 0;
+static uint8_t cached_hid_desc_conn = 0xFF;  // conn_index of cached descriptor
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -74,6 +82,7 @@ void bthid_register_driver(const bthid_driver_t* driver)
 // ============================================================================
 
 static bool bthid_task_debug_done = false;
+static bool bt_on_hid_report_debug_done = false;
 
 void bthid_task(void)
 {
@@ -181,23 +190,39 @@ void bthid_update_device_info(uint8_t conn_index, const char* name,
     if (vendor_id) device->vendor_id = vendor_id;
     if (product_id) device->product_id = product_id;
 
-    // Re-evaluate the driver if currently using generic gamepad.
-    // This handles late-arriving info: name from remote name request,
-    // VID/PID from SDP query, or both.
+    // Re-evaluate driver when new info arrives.
+    // Two cases:
+    // 1. Generic driver → try to find a better vendor-specific match
+    // 2. Vendor driver no longer matches (e.g., PID exclusion) → find correct driver
     const bthid_driver_t* current = (const bthid_driver_t*)device->driver;
-    if (current == &bthid_gamepad_driver) {
-        const bt_connection_t* conn = bt_get_connection(conn_index);
-        const uint8_t* cod = conn ? conn->class_of_device : NULL;
+    const bt_connection_t* conn = bt_get_connection(conn_index);
+    const uint8_t* cod = conn ? conn->class_of_device : NULL;
 
+    bool needs_reval = (current == &bthid_gamepad_driver);
+
+    // Check if current vendor driver still matches with updated info
+    if (!needs_reval && current && current->match) {
+        if (!current->match(device->name, cod, device->vendor_id,
+                            device->product_id, device->is_ble)) {
+            needs_reval = true;
+        }
+    }
+
+    if (needs_reval) {
         const bthid_driver_t* new_driver = NULL;
         for (int i = 0; i < driver_count; i++) {
-            if (drivers[i] != &bthid_gamepad_driver &&
+            if (drivers[i] != current &&
                 drivers[i]->match && drivers[i]->match(device->name, cod,
                                                         device->vendor_id, device->product_id,
                                                         device->is_ble)) {
                 new_driver = drivers[i];
                 break;
             }
+        }
+
+        // If no vendor driver matches, fall back to generic
+        if (!new_driver && current != &bthid_gamepad_driver) {
+            new_driver = &bthid_gamepad_driver;
         }
 
         if (new_driver) {
@@ -213,6 +238,15 @@ void bthid_update_device_info(uint8_t conn_index, const char* name,
             if (new_driver->init) {
                 new_driver->init(device);
             }
+
+            // Pass cached HID descriptor if switching to generic
+            if (new_driver == &bthid_gamepad_driver &&
+                cached_hid_desc_len > 0 && cached_hid_desc_conn == conn_index) {
+                bthid_gamepad_set_descriptor(device, cached_hid_desc, cached_hid_desc_len);
+            }
+        } else if (current == &bthid_gamepad_driver) {
+            // Still generic but VID/PID changed — update VID-dependent flags
+            bthid_gamepad_update_vid(device);
         }
     }
 }
@@ -375,6 +409,12 @@ void bt_on_hid_ready(uint8_t conn_index)
         }
     }
 
+    // Pass cached HID descriptor if available (often arrives before device creation)
+    if ((const bthid_driver_t*)device->driver == &bthid_gamepad_driver &&
+        cached_hid_desc_len > 0 && cached_hid_desc_conn == conn_index) {
+        bthid_gamepad_set_descriptor(device, cached_hid_desc, cached_hid_desc_len);
+    }
+
     // Debug: confirm device state directly from array
     printf("[BTHID] Setup complete: devices[0].active=%d, devices[0].driver=%p\n",
            devices[0].active, devices[0].driver);
@@ -383,13 +423,19 @@ void bt_on_hid_ready(uint8_t conn_index)
 void bt_on_disconnect(uint8_t conn_index)
 {
     printf("[BTHID] Disconnect on connection %d\n", conn_index);
+    if (cached_hid_desc_conn == conn_index) {
+        cached_hid_desc_len = 0;
+        cached_hid_desc_conn = 0xFF;
+    }
     remove_device(conn_index);
+
+    // Reset one-shot debug flags so reconnections produce debug output
+    bt_on_hid_report_debug_done = false;
+    bthid_task_debug_done = false;
 
     // Check if we have pending flash writes now that BT may be idle
     flash_on_bt_disconnect();
 }
-
-static bool bt_on_hid_report_debug_done = false;
 
 void bt_on_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len)
 {
@@ -399,11 +445,15 @@ void bt_on_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len)
 
     bthid_device_t* device = bthid_get_device(conn_index);
     if (!device) {
-        printf("[BTHID] Report for unknown device on conn %d\n", conn_index);
+        static uint8_t unknown_report_count = 0;
+        if (unknown_report_count < 3) {
+            printf("[BTHID] Report for unknown device on conn %d (len=%d)\n", conn_index, len);
+            unknown_report_count++;
+        }
         return;
     }
 
-    // Debug first report
+    // Debug first report after (re)connection
     if (!bt_on_hid_report_debug_done) {
         printf("[BTHID] First report: conn=%d, len=%d, data[0]=0x%02X\n",
                conn_index, len, data[0]);
@@ -457,6 +507,78 @@ void bt_on_hid_report(uint8_t conn_index, const uint8_t* data, uint16_t len)
         default:
             printf("[BTHID] Unhandled transaction: 0x%02X\n", trans_type);
             break;
+    }
+}
+
+// ============================================================================
+// HID DESCRIPTOR
+// ============================================================================
+
+void bthid_set_hid_descriptor(uint8_t conn_index, const uint8_t* desc, uint16_t desc_len)
+{
+    // Always cache — descriptor often arrives before device is created (Classic BT)
+    if (desc_len <= BTHID_MAX_DESC_LEN) {
+        memcpy(cached_hid_desc, desc, desc_len);
+        cached_hid_desc_len = desc_len;
+        cached_hid_desc_conn = conn_index;
+    }
+
+    bthid_device_t* device = bthid_get_device(conn_index);
+    if (!device || !device->driver) return;
+
+    // Pass to generic gamepad driver for parsing
+    if ((const bthid_driver_t*)device->driver == &bthid_gamepad_driver) {
+        bthid_gamepad_set_descriptor(device, desc, desc_len);
+    }
+}
+
+void bthid_fallback_to_generic(uint8_t conn_index)
+{
+    bthid_device_t* device = bthid_get_device(conn_index);
+    if (!device || !device->driver) return;
+
+    const bthid_driver_t* current = (const bthid_driver_t*)device->driver;
+    if (current == &bthid_gamepad_driver) return;  // Already generic
+
+    printf("[BTHID] Fallback to generic: %s -> %s (name=%s)\n",
+           current->name, bthid_gamepad_driver.name, device->name);
+
+    // Disconnect current vendor driver
+    if (current->disconnect) {
+        current->disconnect(device);
+    }
+    device->driver_data = NULL;
+
+    // Switch to generic
+    device->driver = &bthid_gamepad_driver;
+    if (bthid_gamepad_driver.init) {
+        bthid_gamepad_driver.init(device);
+    }
+
+    // Pass cached HID descriptor if available for this device
+    if (cached_hid_desc_len > 0 && cached_hid_desc_conn == conn_index) {
+        bthid_gamepad_set_descriptor(device, cached_hid_desc, cached_hid_desc_len);
+    }
+}
+
+// ============================================================================
+// BATTERY
+// ============================================================================
+
+void bthid_set_battery_level(uint8_t conn_index, uint8_t level)
+{
+    bthid_device_t* device = bthid_get_device(conn_index);
+    if (!device || !device->driver_data) {
+        return;
+    }
+
+    // All driver data structs have input_event_t as their first field
+    input_event_t* event = (input_event_t*)device->driver_data;
+
+    // Only set if driver hasn't already provided battery from HID reports
+    if (event->battery_level == 0 && level > 0) {
+        event->battery_level = level;
+        printf("[BTHID] BAS battery: %d%% (conn %d)\n", level, conn_index);
     }
 }
 

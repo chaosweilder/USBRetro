@@ -36,12 +36,21 @@ typedef enum {
     INPUT_SOURCE_USB_HOST,
     INPUT_SOURCE_BLE_CENTRAL,
     INPUT_SOURCE_WIFI,              // WiFi JOCP input
+    INPUT_SOURCE_NATIVE_NES,
     INPUT_SOURCE_NATIVE_SNES,
     INPUT_SOURCE_NATIVE_N64,
     INPUT_SOURCE_NATIVE_GC,
     INPUT_SOURCE_NATIVE_3DO,
+    INPUT_SOURCE_NATIVE_ARCADE,
+    INPUT_SOURCE_NATIVE_JVS,
+    INPUT_SOURCE_NATIVE_LODGENET,
+    INPUT_SOURCE_NATIVE_NUON,
+    INPUT_SOURCE_NATIVE_WII,
+    INPUT_SOURCE_NATIVE_PSX,        // PS1/PS2 controller (bit-bang SIO)
     INPUT_SOURCE_GPIO,
     INPUT_SOURCE_SENSORS,
+    INPUT_SOURCE_I2C_PEER,
+    INPUT_SOURCE_UART_PEER,         // Inter-MCU UART link (dual-RP2040 boards)
 } input_source_t;
 
 typedef enum {
@@ -53,10 +62,13 @@ typedef enum {
     OUTPUT_TARGET_XBOXONE,
     OUTPUT_TARGET_LOOPY,
     OUTPUT_TARGET_DREAMCAST,
+    OUTPUT_TARGET_N64,
     OUTPUT_TARGET_GPIO,
     OUTPUT_TARGET_USB_DEVICE,
     OUTPUT_TARGET_BLE_PERIPHERAL,
     OUTPUT_TARGET_UART,             // UART bridge to ESP32/other MCU
+    OUTPUT_TARGET_WII_EXTENSION,              // Wii extension I2C slave (bt2wiiex apps)
+    OUTPUT_TARGET_AMIGA,
     OUTPUT_TARGET_COUNT             // Must be last — used to size arrays
 } output_target_t;
 
@@ -127,6 +139,32 @@ void router_init(const router_config_t* config);
 // NOTE: This is the ONLY function input drivers should call!
 void router_submit_input(const input_event_t* event);
 
+// Host-side synthetic input "press overlay" — buttons set via INPUT.INJECT
+// are OR'd into every real input event as it passes through the router.
+// Works in any routing mode (SIMPLE, MERGE, BROADCAST). Pass 0 to release.
+// Lets joypad-live chat-driven button presses merge with the streamer's
+// real controller regardless of how the app is configured for player slots.
+void router_set_inject_buttons(uint32_t buttons);
+uint32_t router_get_inject_buttons(void);
+
+// Set global d-pad mode (applies to all inputs in router)
+// 0=d-pad, 1=left stick, 2=right stick
+void router_set_dpad_mode(uint8_t mode);
+
+// Set global shoulder swap (L1<->L2, R1<->R2) applied to all inputs.
+void router_set_shoulder_swap(bool on);
+
+// Set button combo hotkeys (up to ROUTER_COMBO_MAX)
+// input_mask: buttons that must all be held (0 = disabled)
+// output_mask: upper byte = action, lower 22 bits = output buttons
+#define ROUTER_COMBO_MAX 8
+void router_set_combo(uint8_t index, uint32_t input_mask, uint32_t output_mask);
+// Restrict a combo to events from a specific controller layout
+// (controller_layout_t cast to uint8_t). 0 = LAYOUT_UNKNOWN = match any.
+// Lets one app give different controllers different hotkey modifiers
+// (e.g. GameCube uses S2+dpad, GBA uses S1+dpad).
+void router_set_combo_layout(uint8_t index, uint8_t required_layout);
+
 // ============================================================================
 // OUTPUT RETRIEVAL (Core 1 - Poll or Event Driven)
 // ============================================================================
@@ -140,6 +178,9 @@ bool router_has_updates(output_target_t output);
 
 // Get player count for this output
 uint8_t router_get_player_count(output_target_t output);
+
+// Get max-player capacity configured for this output (router_config.max_players_per_output)
+uint8_t router_get_max_players(output_target_t output);
 
 // ============================================================================
 // ROUTING TABLES (Phase 6)

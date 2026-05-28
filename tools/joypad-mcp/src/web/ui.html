@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>joypad-mcp</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.4 -apple-system, BlinkMacSystemFont, ui-sans-serif, sans-serif; background: #111; color: #eee; }
+  header { padding: 10px 14px; background: #181818; border-bottom: 1px solid #2a2a2a; display: flex; gap: 14px; align-items: baseline; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  header .meta { color: #888; font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(0, 2fr) 360px; gap: 14px; padding: 14px; }
+  .stage { position: relative; background: #000; border: 1px solid #2a2a2a; border-radius: 6px; overflow: hidden; }
+  .stage img { display: block; width: 100%; height: auto; }
+  .stage .empty { padding: 60px 14px; text-align: center; color: #666; font: 12px ui-monospace, Menlo, monospace; }
+  aside { display: flex; flex-direction: column; gap: 12px; }
+  .panel { background: #181818; border: 1px solid #2a2a2a; border-radius: 6px; padding: 12px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #aaa; margin: 0 0 8px; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 0 0 auto; }
+  button { background: #2a2a2a; color: #eee; border: 1px solid #3a3a3a; border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  button:hover { background: #353535; }
+  button.primary { background: #2c5; color: #000; border-color: #2c5; font-weight: 600; }
+  button.primary:hover { background: #3d6; }
+  button.danger { background: #c33; color: #fff; border-color: #c33; }
+  button.danger:hover { background: #d44; }
+  pre { background: #0c0c0c; padding: 10px; border-radius: 4px; font: 11.5px/1.5 ui-monospace, Menlo, monospace; max-height: 240px; overflow: auto; margin: 0; }
+  /* Manual gamepad controls */
+  .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .pad-col { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .pad-row { display: flex; gap: 6px; justify-content: center; }
+  .pad-btn { width: 38px; height: 38px; padding: 0; font: 600 11px ui-monospace, Menlo, monospace; border-radius: 6px; background: #2a2a2a; color: #eee; border: 1px solid #3a3a3a; cursor: pointer; transition: transform 0.05s, background 0.1s; }
+  .pad-btn:hover { background: #353535; }
+  .pad-btn:active, .pad-btn.flash { background: #46c; color: #fff; transform: scale(0.92); }
+  .pad-btn.face { width: 42px; height: 42px; border-radius: 50%; }
+  .pad-btn.face.b1 { background: #2c5; color: #000; border-color: #2c5; }
+  .pad-btn.face.b2 { background: #c33; color: #fff; border-color: #c33; }
+  .pad-btn.face.b3 { background: #46c; color: #fff; border-color: #46c; }
+  .pad-btn.face.b4 { background: #fa3; color: #000; border-color: #fa3; }
+  .pad-btn.dpad { width: 36px; height: 36px; }
+  .pad-btn.shoulder { width: 64px; height: 26px; }
+  .pad-btn.center { width: 30px; height: 22px; font-size: 9px; padding: 0; }
+  .pad-spacer { width: 36px; height: 36px; }
+  .pad-shoulders { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .pad-center { display: flex; gap: 6px; justify-content: center; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>joypad-mcp</h1>
+  <span class="meta" id="meta">…</span>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <img id="frame" alt="webcam frame" style="display:none" />
+    <div class="empty" id="empty">no camera selected — pick one →</div>
+  </div>
+
+  <aside>
+    <div class="panel">
+      <h2>Camera</h2>
+      <div class="row">
+        <select id="cam-select" style="flex:1;background:#0c0c0c;color:#eee;border:1px solid #3a3a3a;padding:5px;border-radius:4px;"></select>
+        <button id="cam-refresh" title="Refresh device list">↻</button>
+        <button id="cam-toggle" title="Pause / resume the webcam stream (releases the camera)">⏸</button>
+      </div>
+      <div class="meta" id="cam-info" style="color:#888;font-size:11px;margin-top:6px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Joypad adapter</h2>
+      <div id="jp-status" class="meta" style="color:#888;font-size:12px;margin-bottom:8px">checking…</div>
+      <div class="row">
+        <select id="jp-port-select" style="flex:1;background:#0c0c0c;color:#eee;border:1px solid #3a3a3a;padding:5px;border-radius:4px;"></select>
+        <button id="jp-port-refresh" title="Refresh adapter list">↻</button>
+        <button id="jp-connect" class="primary">Connect</button>
+        <button id="jp-disconnect" class="danger">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Manual controls</h2>
+      <div class="pad-shoulders">
+        <button class="pad-btn shoulder" data-btn="L1" title="LB">LB / L1</button>
+        <button class="pad-btn shoulder" data-btn="R1" title="RB">RB / R1</button>
+      </div>
+      <div class="pad-shoulders" style="margin-bottom:10px">
+        <button class="pad-btn shoulder" data-btn="L2" title="LT">LT / L2</button>
+        <button class="pad-btn shoulder" data-btn="R2" title="RT">RT / R2</button>
+      </div>
+      <div class="pad-center">
+        <button class="pad-btn center" data-btn="S1" title="Back / View / Select">VIEW</button>
+        <button class="pad-btn center" data-btn="A1" title="Guide / Home">⨯BOX</button>
+        <button class="pad-btn center" data-btn="S2" title="Start / Menu">MENU</button>
+      </div>
+      <div class="pad">
+        <div class="pad-col">
+          <button class="pad-btn dpad" data-btn="DU">▲</button>
+          <div class="pad-row">
+            <button class="pad-btn dpad" data-btn="DL">◀</button>
+            <div class="pad-spacer"></div>
+            <button class="pad-btn dpad" data-btn="DR">▶</button>
+          </div>
+          <button class="pad-btn dpad" data-btn="DD">▼</button>
+          <button class="pad-btn dpad" data-btn="L3" style="margin-top:6px;width:50px">L3</button>
+        </div>
+        <div class="pad-col">
+          <button class="pad-btn face b4" data-btn="B4" title="Y">Y</button>
+          <div class="pad-row">
+            <button class="pad-btn face b3" data-btn="B3" title="X">X</button>
+            <div class="pad-spacer"></div>
+            <button class="pad-btn face b2" data-btn="B2" title="B">B</button>
+          </div>
+          <button class="pad-btn face b1" data-btn="B1" title="A">A</button>
+          <button class="pad-btn dpad" data-btn="R3" style="margin-top:6px;width:50px">R3</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;align-items:center">
+        <label style="color:#888;font-size:11px">tap</label>
+        <input id="pad-duration" type="range" min="50" max="800" step="10" value="100" style="flex:1" />
+        <span id="pad-duration-val" style="color:#aaa;font:11px ui-monospace,monospace;min-width:50px;text-align:right">100ms</span>
+      </div>
+      <div class="meta" id="pad-status" style="color:#888;font-size:11px;margin-top:4px;min-height:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>UART log</h2>
+      <div class="row" style="margin-bottom:6px">
+        <input id="log-grep" placeholder="grep (regex)" style="flex:1;background:#0c0c0c;color:#eee;border:1px solid #3a3a3a;padding:4px 6px;border-radius:4px;font:11px ui-monospace,monospace" />
+        <button id="log-clear" title="Clear panel (firmware ring buffer keeps history)">⌫</button>
+        <button id="log-pause" title="Pause / resume tail">⏸</button>
+      </div>
+      <pre id="log" style="max-height:340px">connect joypad…</pre>
+    </div>
+
+    <div class="panel">
+      <h2>Raw state</h2>
+      <pre id="state">loading…</pre>
+    </div>
+  </aside>
+</main>
+
+<script type="module">
+const $ = (sel) => document.querySelector(sel);
+const frame = $("#frame");
+const emptyEl = $("#empty");
+const stateEl = $("#state");
+const meta = $("#meta");
+
+let cameraOpen = false;
+function refreshFrame() {
+  if (!cameraOpen) return;
+  // Cache-bust each tick. Browser keeps the last <img> visible during reload.
+  frame.src = `/api/frame.jpg?t=${Date.now()}`;
+}
+
+frame.addEventListener("load", () => {
+  frame.style.display = "block";
+  emptyEl.style.display = "none";
+});
+frame.addEventListener("error", () => {
+  frame.style.display = "none";
+  emptyEl.style.display = "block";
+  emptyEl.textContent = cameraOpen ? "no frame yet…" : "camera paused";
+});
+
+async function loadCameras() {
+  const r = await fetch("/api/cameras");
+  const data = await r.json();
+  const sel = $("#cam-select");
+  const currentDevice = (await (await fetch("/api/state")).json()).camera?.device ?? -1;
+  sel.innerHTML = "";
+  for (const d of data.devices ?? []) {
+    const opt = document.createElement("option");
+    opt.value = d.index;
+    opt.textContent = `[${d.index}] ${d.name}`;
+    if (d.index === currentDevice) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  $("#cam-info").textContent = `${data.devices?.length ?? 0} devices`;
+}
+$("#cam-refresh").addEventListener("click", loadCameras);
+$("#cam-select").addEventListener("change", async (e) => {
+  await fetch("/api/camera", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device: parseInt(e.target.value, 10) }),
+  });
+  refreshState();
+});
+
+async function loadAdapters() {
+  const r = await fetch("/api/joypad/adapters");
+  const data = await r.json();
+  const sel = $("#jp-port-select");
+  const currentPort = (await (await fetch("/api/state")).json()).joypad?.port ?? "";
+  sel.innerHTML = "";
+  for (const a of data.adapters ?? []) {
+    const opt = document.createElement("option");
+    opt.value = a.path;
+    opt.textContent = `${a.path}${a.manufacturer ? " (" + a.manufacturer + ")" : ""}`;
+    if (a.path === currentPort) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (!sel.options.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no adapters detected";
+    sel.appendChild(opt);
+  }
+}
+$("#jp-port-refresh").addEventListener("click", loadAdapters);
+$("#jp-connect").addEventListener("click", async () => {
+  const port = $("#jp-port-select").value;
+  if (!port) return;
+  const r = await fetch("/api/joypad/connect", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ port }),
+  });
+  const data = await r.json();
+  if (!r.ok) padStatus.textContent = "connect: " + (data.error ?? "error");
+  refreshState();
+});
+$("#jp-disconnect").addEventListener("click", async () => {
+  await fetch("/api/joypad/disconnect", { method: "POST" });
+  refreshState();
+});
+
+$("#cam-toggle").addEventListener("click", async () => {
+  const r = await fetch("/api/state");
+  const s = await r.json();
+  const open = s.camera?.open;
+  const url = open ? "/api/camera/pause" : "/api/camera/resume";
+  await fetch(url, { method: "POST" });
+  refreshState();
+});
+
+const padDur = $("#pad-duration");
+const padDurVal = $("#pad-duration-val");
+const padStatus = $("#pad-status");
+padDur.addEventListener("input", () => { padDurVal.textContent = padDur.value + "ms"; });
+
+document.querySelectorAll(".pad-btn[data-btn]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const name = btn.dataset.btn;
+    const dur = parseInt(padDur.value, 10);
+    btn.classList.add("flash");
+    setTimeout(() => btn.classList.remove("flash"), Math.min(dur, 250));
+    try {
+      const r = await fetch("/api/press", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ buttons: name, duration_ms: dur }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        padStatus.textContent = `${name}: ${data.error ?? "error"}`;
+        padStatus.style.color = "#f55";
+      } else {
+        padStatus.textContent = `${name} · ${dur}ms`;
+        padStatus.style.color = "#888";
+      }
+    } catch (e) {
+      padStatus.textContent = `${name}: ${e.message}`;
+      padStatus.style.color = "#f55";
+    }
+  });
+});
+
+async function refreshState() {
+  try {
+    const r = await fetch("/api/state");
+    const s = await r.json();
+    stateEl.textContent = JSON.stringify(s, null, 2);
+
+    cameraOpen = !!s.camera?.open;
+    const camToggle = $("#cam-toggle");
+    if (camToggle) {
+      camToggle.textContent = cameraOpen ? "⏸" : "▶";
+      camToggle.title = cameraOpen
+        ? "Pause webcam stream (releases the camera)"
+        : "Resume webcam stream";
+    }
+
+    const camStatus = cameraOpen
+      ? `cam ${s.camera?.frames ?? 0}f · last frame ${s.camera?.last_frame_ms_ago ?? "—"}ms`
+      : '<span style="color:#fa3">cam paused</span>';
+
+    const jpStatus = $("#jp-status");
+    if (jpStatus) {
+      if (s.joypad?.connected) {
+        const lastMs = s.joypad.last_command_ms_ago;
+        const lastTxt = lastMs == null ? "no commands sent" : `last cmd ${lastMs}ms ago`;
+        jpStatus.innerHTML = `<span style="color:#2c5">●</span> connected · <code>${s.joypad.port ?? "?"}</code> · ${lastTxt}`;
+      } else {
+        jpStatus.innerHTML = `<span style="color:#888">○</span> not connected`;
+      }
+    }
+
+    const jpHeader = s.joypad?.connected ? '<span style="color:#2c5">joypad ●</span>' : '<span style="color:#888">joypad ○</span>';
+    meta.innerHTML = `${camStatus} · ${jpHeader}`;
+
+    if (!cameraOpen) {
+      frame.style.display = "none";
+      emptyEl.style.display = "block";
+      emptyEl.textContent = "camera paused — click ▶ to resume";
+    }
+  } catch (e) {
+    stateEl.textContent = `state fetch failed: ${e.message}`;
+  }
+}
+
+const logEl = $("#log");
+const logGrep = $("#log-grep");
+let logPaused = false;
+let lastSeenLines = new Set();
+$("#log-clear").addEventListener("click", () => { logEl.textContent = ""; lastSeenLines.clear(); });
+$("#log-pause").addEventListener("click", (e) => {
+  logPaused = !logPaused;
+  e.target.textContent = logPaused ? "▶" : "⏸";
+});
+async function refreshLog() {
+  if (logPaused) return;
+  try {
+    const grep = logGrep.value.trim();
+    const qs = new URLSearchParams({ since_ms: "60000" });
+    if (grep) qs.set("grep", grep);
+    const r = await fetch("/api/joypad/log?" + qs);
+    if (r.status === 503) {
+      logEl.textContent = "joypad not connected";
+      lastSeenLines.clear();
+      return;
+    }
+    const data = await r.json();
+    const lines = data.lines ?? [];
+    // De-dupe — append only lines we haven't shown yet. Keys are (line, index)
+    // because identical content can repeat (e.g. periodic status prints).
+    const newKey = lines.map((l, i) => `${i}:${l}`);
+    const newSet = new Set(newKey);
+    const toAppend = newKey.filter((k) => !lastSeenLines.has(k));
+    lastSeenLines = newSet;
+    if (logEl.textContent === "joypad not connected" || logEl.textContent === "connect joypad…") {
+      logEl.textContent = lines.join("\n");
+    } else if (toAppend.length > 0) {
+      const justLines = toAppend.map((k) => k.slice(k.indexOf(":") + 1));
+      logEl.textContent += (logEl.textContent ? "\n" : "") + justLines.join("\n");
+      // Trim panel content if it grows huge
+      const all = logEl.textContent.split("\n");
+      if (all.length > 200) logEl.textContent = all.slice(-200).join("\n");
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  } catch {}
+}
+logGrep.addEventListener("input", () => { lastSeenLines.clear(); logEl.textContent = ""; });
+
+setInterval(refreshFrame, 200);
+setInterval(refreshState, 500);
+setInterval(refreshLog, 500);
+refreshFrame();
+refreshState();
+refreshLog();
+loadCameras();
+loadAdapters();
+</script>
+</body>
+</html>

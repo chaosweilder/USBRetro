@@ -23,6 +23,7 @@
 #include "pico/multicore.h"
 #include "pico/flash.h"
 
+#include "core/app_registry.h"
 #include "core/input_interface.h"
 #include "core/output_interface.h"
 #include "core/services/players/manager.h"
@@ -44,6 +45,11 @@ static uint8_t input_count = 0;
 // Active/primary output interface (accessible from other modules)
 const OutputInterface* active_output = NULL;
 
+// Native console output (e.g. gamecube_output_interface). Apps with a
+// native console output set this so the web config can configure pins/modes
+// even when running in CDC config mode (no console plugged in).
+const OutputInterface* native_output = NULL;
+
 // Store core1 task for wrapper - can be set after Core 1 launch
 static volatile void (*core1_actual_task)(void) = NULL;
 static volatile bool core1_task_ready = false;
@@ -52,7 +58,11 @@ static volatile bool core1_task_ready = false;
 static void core1_wrapper(void) {
   // Initialize multicore lockout for flash_safe_execute to work
   // This allows Core 0 to safely write to flash while Core 1 is running
+  // NOTE: Skip for timing-critical output protocols (Nuon polyface, etc.)
+  // The lockout interrupt can pause Core 1 mid-protocol and break communication.
+#ifndef CONFIG_NO_FLASH_LOCKOUT
   flash_safe_execute_core_init();
+#endif
 
   // Wait for Core 0 to assign a task (or signal no task needed)
   while (!core1_task_ready) {
@@ -109,24 +119,71 @@ static void __not_in_flash_func(core0_main)(void)
 
 int main(void)
 {
-  stdio_init_all();
+#ifdef BOARD_LED_PIN
+  // Early boot indicator — toggle LED before any PIO init
+  gpio_init(BOARD_LED_PIN);
+  gpio_set_dir(BOARD_LED_PIN, GPIO_OUT);
+  gpio_put(BOARD_LED_PIN, 1);
+#endif
 
-  printf("\n[joypad] Starting...\n");
+  // ========================================================================
+  // PHASE 1: Time-critical — get Core 1 listening ASAP (before stdio/printf)
+  // Console probes happen ~100-500ms after power-on. Every ms counts.
+  // ========================================================================
 
-  sleep_ms(250);  // Brief pause for stability
-
-  // Launch Core 1 early for flash_safe_execute support
-  // Core 1 will init flash safety and wait for task assignment
-  printf("[joypad] Launching core1 for flash safety...\n");
+  // Launch Core 1 for flash_safe_execute support
   multicore_launch_core1(core1_wrapper);
-  sleep_ms(10);  // Brief delay to let Core 1 initialize
 
+  // PIO/joybus init — no dependency on stdio, flash, or profiles
+  outputs = app_get_output_interfaces(&output_count);
+  if (output_count > 0 && outputs[0]) {
+    active_output = outputs[0];
+  }
+  // Auto-discover native console output if any active output has the
+  // get/set_native_config callbacks. Apps that hide their console output
+  // in CDC config mode override this directly in app_init().
+  for (uint8_t i = 0; i < output_count; i++) {
+    if (outputs[i] && (outputs[i]->get_native_config || outputs[i]->set_native_config)) {
+      native_output = outputs[i];
+      break;
+    }
+  }
+  for (uint8_t i = 0; i < output_count; i++) {
+    if (outputs[i] && outputs[i]->init) {
+      outputs[i]->init();
+    }
+  }
+
+  // Signal Core 1 to start listening
+  for (uint8_t i = 0; i < output_count; i++) {
+    if (outputs[i] && outputs[i]->core1_task) {
+      core1_actual_task = outputs[i]->core1_task;
+      break;
+    }
+  }
+  core1_task_ready = true;
+  __sev();
+
+  // ========================================================================
+  // PHASE 2: Non-critical init — Core 1 is already listening
+  // ========================================================================
+
+  stdio_init_all();
+  printf("\n[joypad] Output: %s, Core1: %s\n",
+         output_count > 0 ? outputs[0]->name : "none",
+         core1_actual_task ? "active" : "idle");
+
+  // Now initialize core services and app (slower — BT, USB host, etc.)
+  // Core 1 is already listening for console probes while this runs.
   leds_init();
   storage_init();
   players_init();
   app_init();
 
-  // Get and initialize input interfaces from app
+  // Render one LED frame before input init (which may block for seconds on MAX3421E)
+  leds_task();
+
+  // Get and initialize input interfaces
   inputs = app_get_input_interfaces(&input_count);
   for (uint8_t i = 0; i < input_count; i++) {
     if (inputs[i] && inputs[i]->init) {
@@ -135,34 +192,8 @@ int main(void)
     }
   }
 
-  // Get and initialize output interfaces from app
-  outputs = app_get_output_interfaces(&output_count);
-  if (output_count > 0 && outputs[0]) {
-    active_output = outputs[0];  // Set primary output for other modules
-  }
-  for (uint8_t i = 0; i < output_count; i++) {
-    if (outputs[i] && outputs[i]->init) {
-      printf("[joypad] Initializing output: %s\n", outputs[i]->name);
-      outputs[i]->init();
-    }
-  }
-
-  // Find core1 task from first output that has one
-  // Note: Only one output can use core1 (RP2040 has 2 cores)
-  for (uint8_t i = 0; i < output_count; i++) {
-    if (outputs[i] && outputs[i]->core1_task) {
-      printf("[joypad] Core1 task from: %s\n", outputs[i]->name);
-      core1_actual_task = outputs[i]->core1_task;
-      break;  // Only one core1 task possible
-    }
-  }
-
-  // Signal Core 1 that task assignment is complete
-  // Core 1 was launched early for flash safety, now it can run its actual task
-  printf("[joypad] Signaling core1 (task: %s)\n",
-         core1_actual_task ? "yes" : "idle");
-  core1_task_ready = true;
-  __sev();  // Send event to wake Core 1 from __wfe()
+  // Publish active interfaces so shared code (CDC, router) can introspect.
+  app_registry_set(inputs, input_count, outputs, output_count);
 
   core0_main();
 

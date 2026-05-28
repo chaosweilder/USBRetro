@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024 Robert Dale Smith
 //
-// SH1106 128x64 OLED display driver over SPI.
-// Used on MacroPad RP2040.
+// SH1106/SH1107 128x64 OLED display driver.
+// Supports SPI (MacroPad) and I2C (FeatherWing) transports.
 
 #ifndef DISPLAY_H
 #define DISPLAY_H
@@ -15,7 +15,7 @@
 #define DISPLAY_WIDTH  128
 #define DISPLAY_HEIGHT 64
 
-// Display pin configuration
+// SPI display pin configuration (SH1106, MacroPad)
 typedef struct {
     uint8_t spi_inst;   // SPI instance (0 or 1)
     uint8_t pin_sck;    // SPI clock
@@ -25,8 +25,22 @@ typedef struct {
     uint8_t pin_rst;    // Reset
 } display_config_t;
 
-// Initialize display with pin configuration
+// I2C display configuration (SH1107, FeatherWing)
+typedef struct {
+    uint8_t i2c_inst;   // I2C instance (0 or 1)
+    uint8_t pin_sda;    // I2C data
+    uint8_t pin_scl;    // I2C clock
+    uint8_t addr;       // I2C address (typically 0x3C)
+} display_i2c_config_t;
+
+// Initialize display over SPI (SH1106)
 void display_init(const display_config_t* config);
+
+// Initialize display over I2C (SH1107)
+void display_init_i2c(const display_i2c_config_t* config);
+
+// Initialize display over I2C (SSD1306)
+void display_init_ssd1306_i2c(const display_i2c_config_t* config);
 
 // Clear display
 void display_clear(void);
@@ -58,8 +72,30 @@ void display_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool on);
 // Draw progress bar (for rumble visualization)
 void display_progress_bar(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t percent);
 
+// Draw circle outline (Bresenham midpoint algorithm)
+void display_circle(uint8_t cx, uint8_t cy, uint8_t r, bool on);
+
+// Draw filled circle
+void display_fill_circle(uint8_t cx, uint8_t cy, uint8_t r, bool on);
+
+// Blit a 1-bit bitmap (column-major, LSB=top, like framebuffer page format)
+void display_bitmap(uint8_t x, uint8_t y, const uint8_t* bitmap, uint8_t w, uint8_t h);
+
 // Check if display is initialized
 bool display_is_initialized(void);
+
+// Async display mode: display_update() marks dirty and returns immediately.
+// A platform thread calls display_flush() to do the actual I2C/SPI transfer.
+void display_set_async(bool async);
+void display_flush(void);
+bool display_is_dirty(void);
+
+// Incremental flush: send ONE page per call instead of the whole frame.
+// Returns true while a flush is in progress (more pages remain), false
+// when nothing to send. Lets a single-core app spread the flush work
+// across many main-loop iterations so no single iteration blocks for
+// the full ~57ms it takes to push 1KB over 400kHz I2C.
+bool display_flush_step(void);
 
 // Invert display colors
 void display_invert(bool invert);

@@ -31,6 +31,8 @@ typedef enum {
     USB_OUTPUT_MODE_KEYBOARD_MOUSE,     // Keyboard + Mouse composite HID
     USB_OUTPUT_MODE_GC_ADAPTER,         // GameCube Adapter for Wii U/Switch
     USB_OUTPUT_MODE_PCEMINI,            // PC Engine Mini (TurboGrafx-16 Mini)
+    USB_OUTPUT_MODE_CDC,                // CDC-only (serial config, no HID)
+    USB_OUTPUT_MODE_GBA_LINK,           // GBA Link Cable bridge for Dolphin (USB vendor)
     USB_OUTPUT_MODE_COUNT
 } usb_output_mode_t;
 
@@ -56,6 +58,13 @@ typedef enum {
 #define USB_XOG_VID            0x045E  // Microsoft
 #define USB_XOG_PID            0x0289  // Xbox Controller S
 #define USB_XOG_BCD            0x0121  // v1.21
+
+// CDC-Only Mode (serial configuration)
+#define USB_CDC_VID            0x2E8A  // Raspberry Pi
+#define USB_CDC_PID            0x10C7  // Joypad Config
+#define USB_CDC_BCD            0x0100  // v1.0
+#define USB_CDC_MANUFACTURER   "Joypad"
+#define USB_CDC_PRODUCT        "Joypad Config"
 
 // Legacy defines for backward compatibility
 #define USB_DEVICE_VENDOR_ID   USB_HID_VID
@@ -114,6 +123,14 @@ void usbd_task(void);
 
 // Send gamepad report for a player
 bool usbd_send_report(uint8_t player_index);
+
+// App-overridable callback fired when the host (currently: PS3) issues a
+// "turn off controller" command to the USB device. Default impl in usbd.c
+// is a no-op; bt2usb overrides it to disconnect the bridged BT controller
+// so a real DS3/DS4 etc. auto-sleeps after losing its host. Apps that
+// bridge a wired controller (psx2usb / native-host adapters) generally
+// don't need an override -- the wired pad can't be told to power off.
+void app_on_console_shutdown(void);
 
 // ============================================================================
 // MODE SELECTION API

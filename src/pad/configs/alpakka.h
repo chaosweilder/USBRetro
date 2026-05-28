@@ -54,15 +54,37 @@ static const pad_device_config_t pad_config_alpakka = {
 
     // Stick clicks
     .l3 = 112,              // Left stick click (expander 0)
-    .r3 = PAD_PIN_DISABLED, // No right stick
+    .r3 = 204,              // Right stick click (expander 1, PIN_R3)
 
     // Home (direct GPIO)
     .a1 = 20,               // Home / Guide (PIN_HOME)
-    .a2 = PAD_PIN_DISABLED,
+    .a2 = 113,              // Select 2 (expander 0, PIN_SELECT_2)
+    .a3 = 201,              // Start 2 (expander 1, PIN_START_2)
+    .a4 = PAD_PIN_DISABLED,
 
     // Extra paddles
     .l4 = 109,              // Left paddle (expander 0, PIN_L4)
     .r4 = 207,              // Right paddle (expander 1, PIN_R4)
+
+    // Function keys (disabled — use web config to assign if needed)
+    .f1 = PAD_PIN_DISABLED,
+    .f2 = PAD_PIN_DISABLED,
+
+    // Capacitive touch sensor → F1 (grip touch pad)
+    .touch_out = 6,         // PIN_TOUCH_OUT
+    .touch_in  = 7,         // PIN_TOUCH_IN
+
+    // Right hat → right analog stick (D-hat on expander 1)
+    .rhat_up    = 206,      // PIN_DHAT_UP
+    .rhat_down  = 202,      // PIN_DHAT_DOWN
+    .rhat_left  = 203,      // PIN_DHAT_LEFT
+    .rhat_right = 205,      // PIN_DHAT_RIGHT
+
+    // No toggle switch (dpad always digital)
+    .toggle = { 
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, 
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false }, 
+    },
 
     // Left analog stick on ADC
     // Alpakka has single thumbstick on left side
@@ -70,6 +92,8 @@ static const pad_device_config_t pad_config_alpakka = {
     .adc_ly = 0,            // ADC channel 0 (GPIO 26, PIN_TY)
     .adc_rx = PAD_PIN_DISABLED,
     .adc_ry = PAD_PIN_DISABLED,
+    .adc_lt = PAD_PIN_DISABLED,
+    .adc_rt = PAD_PIN_DISABLED,
 
     .invert_lx = false,
     .invert_ly = false,
@@ -80,6 +104,16 @@ static const pad_device_config_t pad_config_alpakka = {
     // No NeoPixel on standard Alpakka (uses OLED + LEDs on GPIO 2-5)
     .led_pin = PAD_PIN_DISABLED,
     .led_count = 0,
+
+    // No QWIIC/UART link
+    .qwiic_tx = PAD_PIN_DISABLED,
+    .qwiic_rx = PAD_PIN_DISABLED,
+    .qwiic_i2c_inst = PAD_PIN_DISABLED,
+    .usb_host_dp = PAD_PIN_DISABLED,
+    .joywing = { 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+    },
 };
 
 #endif // PAD_CONFIG_ALPAKKA_H

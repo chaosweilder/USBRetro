@@ -73,4 +73,11 @@
 #define JP_BUTTON_L4 (1 << 20)  // P1        -         -          -
 #define JP_BUTTON_R4 (1 << 21)  // P2        -         -          -
 
+// Function keys (internal only — never output to host, only used in hotkey combos)
+#define JP_BUTTON_F1 (1 << 22)
+#define JP_BUTTON_F2 (1 << 23)
+
+// Mask of all function keys (suppressed from output)
+#define JP_BUTTON_FN_MASK (JP_BUTTON_F1 | JP_BUTTON_F2)
+
 #endif // BUTTONS_H

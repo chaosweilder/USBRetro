@@ -1,4 +1,4 @@
-site_name: Joypad OS
+site_name: Joypad OS Docs
 site_url: https://docs.joypad.ai
 site_description: Universal controller firmware for adapters, controllers, and input systems
 repo_url: https://github.com/joypad-ai/joypad-os
@@ -27,39 +27,132 @@ theme:
     - search.suggest
     - content.code.copy
   logo: images/logo_solid.svg
-  favicon: images/logo_solid.svg
+  favicon: images/favicon.svg
 
 nav:
   - Home: index.md
   - Getting Started:
-    - Installation: INSTALLATION.md
-    - Building: BUILD.md
-    - Hardware Compatibility: HARDWARE.md
-  - Firmware Apps:
-    - USB2USB: apps/USB2USB.md
-    - BT2USB: apps/BT2USB.md
-    - USB2GC (GameCube / Wii): apps/USB2GC.md
-    - USB23DO (3DO): apps/USB23DO.md
-    - USB2DC (Dreamcast): apps/USB2DC.md
-    - USB2Neo (Neo Geo): apps/USB2NEO.md
-    - USB2Nuon (Nuon): apps/USB2NUON.md
-    - USB2PCE (PC Engine): apps/USB2PCE.md
-    - USB2Loopy (Casio Loopy): apps/USB2LOOPY.md
-  - Features:
-    - SNES Rumble: features/SNES_RUMBLE.md
+    - Installation: getting-started/installation.md
+    - Building from Source: getting-started/building.md
+  - Overview:
+    - Architecture: overview/architecture.md
+    - Data Flow: overview/data-flow.md
+    - Glossary: overview/glossary.md
+  - Input Interfaces:
+    - Overview: input/index.md
+    - USB HID: input/usb-hid.md
+    - XInput: input/xinput.md
+    - Bluetooth: input/bluetooth.md
+    - WiFi (JOCP): input/wifi-jocp.md
+    - SNES: input/snes.md
+    - N64: input/n64.md
+    - PSX/PS2: input/psx.md
+    - GameCube: input/gamecube.md
+    - LodgeNet: input/lodgenet.md
+    - NES: input/nes.md
+    - Neo Geo: input/neogeo.md
+    - Wii Extension: input/wii.md
+    - GPIO: input/gpio.md
+    - UART: input/uart.md
+  - Output Interfaces:
+    - Overview: output/index.md
+    - GameCube: output/gamecube.md
+    - PCEngine: output/pcengine.md
+    - Dreamcast: output/dreamcast.md
+    - Nuon: output/nuon.md
+    - 3DO: output/3do.md
+    - N64: output/n64.md
+    - Neo Geo: output/neogeo.md
+    - Casio Loopy: output/loopy.md
+    - USB Device: output/usb-device.md
+    - UART: output/uart.md
+  - Joypad Core:
+    - Overview: core/index.md
+    - Router: core/router.md
+    - Buttons: core/buttons.md
+    - Profiles: core/profiles.md
+    - Players: core/players.md
+    - Storage: core/storage.md
+    - LEDs: core/leds.md
+    - Platform HAL: core/platform-hal.md
+    - Web Config: core/web-config.md
+  - Apps:
+    - Overview: apps/index.md
+    - Console Adapters:
+      - usb2gc (GameCube): apps/usb2gc.md
+      - usb2pce (PCEngine): apps/usb2pce.md
+      - usb2dc (Dreamcast): apps/usb2dc.md
+      - usb2nuon (Nuon): apps/usb2nuon.md
+      - usb23do (3DO): apps/usb23do.md
+      - usb2loopy (Loopy): apps/usb2loopy.md
+      - usb2neogeo (Neo Geo): apps/usb2neogeo.md
+    - BT Console Adapters:
+      - bt2gc (GameCube): apps/bt2gc.md
+      - bt2n64 (N64): apps/bt2n64.md
+      - bt2nuon (Nuon): apps/bt2nuon.md
+    - USB Output:
+      - usb2usb: apps/usb2usb.md
+      - bt2usb: apps/bt2usb.md
+      - wifi2usb: apps/wifi2usb.md
+    - Native to USB:
+      - snes2usb: apps/snes2usb.md
+      - n642usb: apps/n642usb.md
+      - gc2usb: apps/gc2usb.md
+      - nes2usb: apps/nes2usb.md
+      - neogeo2usb: apps/neogeo2usb.md
+      - lodgenet2usb: apps/lodgenet2usb.md
+      - wii2usb: apps/wii2usb.md
+      - psx2usb: apps/psx2usb.md
+    - Wii Adapters:
+      - wii2gc (GameCube): apps/wii2gc.md
+      - wii2n64 (N64): apps/wii2n64.md
+    - Cross-Console Bridges:
+      - n642dc: apps/n642dc.md
+      - snes23do: apps/snes23do.md
+      - n642nuon: apps/n642nuon.md
+      - lodgenet2n64: apps/lodgenet2n64.md
+      - lodgenet2gc: apps/lodgenet2gc.md
+    - Utility:
+      - usb2uart: apps/usb2uart.md
+      - Custom Controllers: apps/controllers.md
+  - Hardware:
+    - Supported Boards: hardware/boards.md
+    - Supported Controllers: hardware/controllers.md
+    - Wiring Guide: hardware/wiring.md
+    - DIY Builds: hardware/diy.md
+    - Build Guides:
+      - USB2GC (KB2040 / Pi Pico / RP2040-Zero): hardware/builds/usb2gc.md
+      - BT2USB (Pico W): hardware/builds/bt2usb-pico-w.md
+      - LodgeNet2USB (Pico): hardware/builds/lodgenet2usb-pico.md
+      - SNES2USB (KB2040): hardware/builds/snes2usb-kb2040.md
+      - N642DC (KB2040): hardware/builds/n642dc-kb2040.md
+      - PSX2USB (QT Py / KB2040 / Pi Pico): hardware/builds/psx2usb-qtpy.md
+  - Platforms:
+    - Overview: platforms/index.md
+    - Pico SDK (RP2040/RP2350): platforms/pico-sdk.md
+    - ESP-IDF (ESP32-S3): platforms/esp32.md
+    - nRF Connect SDK (nRF52840): platforms/nrf52840.md
   - Protocol Reference:
-    - Overview: protocols/README.md
     - 3DO PBus: protocols/3DO_PBUS.md
     - GameCube Joybus: protocols/GAMECUBE_JOYBUS.md
     - Nuon Polyface: protocols/NUON_POLYFACE.md
     - PC Engine: protocols/PCENGINE.md
+    - LodgeNet: protocols/lodgenet.md
+    - SInput HID: protocols/sinput.md
+  - Development:
+    - Contributing: development/index.md
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true

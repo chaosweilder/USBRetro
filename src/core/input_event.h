@@ -34,6 +34,9 @@ typedef enum {
     INPUT_TRANSPORT_BT_CLASSIC, // Bluetooth Classic (HID)
     INPUT_TRANSPORT_BT_BLE,     // Bluetooth Low Energy (HOGP)
     INPUT_TRANSPORT_NATIVE,     // Native protocol (3DO, SNES, etc.)
+    INPUT_TRANSPORT_I2C,        // I2C peer (STEMMA QT / QWIIC)
+    INPUT_TRANSPORT_GPIO,       // Direct GPIO buttons/analog (pad input)
+    INPUT_TRANSPORT_UART,       // UART peer (inter-MCU link, dual-RP2040 boards)
 } input_transport_t;
 
 // ============================================================================
@@ -56,10 +59,31 @@ typedef enum {
 typedef enum {
     LAYOUT_UNKNOWN = 0,         // Unknown or default (4-face button modern gamepad)
     LAYOUT_MODERN_4FACE,        // SNES/PlayStation style (no 6-button row)
+    LAYOUT_NINTENDO_4FACE,      // Nintendo SNES: BAYX face style
+    LAYOUT_NINTENDO_N64,        // Nintendo N64: A/B + C-buttons + Z
+    LAYOUT_GAMECUBE,            // GameCube: AXBY face style
     LAYOUT_SEGA_6BUTTON,        // Genesis/Saturn: Bottom [A][B][C], Top [X][Y][Z]
     LAYOUT_PCE_6BUTTON,         // PCEngine Avenue Pad: Bottom [III][II][I], Top [IV][V][VI]
     LAYOUT_ASTROCITY,           // Astrocity: Bottom [D][E][F], Top [A][B][C]
     LAYOUT_3DO_3BUTTON,         // 3DO: Single row [A][B][C] (maps to bottom row only)
+    LAYOUT_WII_NUNCHUCK,        // Wii Nunchuck: C/Z + stick + accel
+    LAYOUT_WII_CLASSIC,         // Wii Classic: SNES-like faces + 2 sticks + analog L/R
+    LAYOUT_WII_CLASSIC_PRO,     // Wii Classic Pro: same as Classic but digital L/R only
+    LAYOUT_WII_GUITAR,          // Guitar Hero 3 / World Tour guitar
+    LAYOUT_WII_DRUMS,           // Rock Band / Guitar Hero drums
+    LAYOUT_WII_TURNTABLE,       // DJ Hero turntable
+    LAYOUT_WII_TAIKO,           // Taiko no Tatsujin TaTaCon
+    LAYOUT_WII_UDRAW,           // THQ uDraw tablet
+    LAYOUT_WII_MOTIONPLUS,      // MotionPlus standalone (gyro only)
+    LAYOUT_WII_DUAL_NUNCHUCK,   // Two nunchucks: left C/Z+stick, right C/Z+stick
+    LAYOUT_PSX_DIGITAL,         // PS1 digital pad (ID 0x41): Sony faces, no sticks
+    LAYOUT_PSX_DUALSHOCK,       // PS1/PS2 analog DualShock (ID 0x73)
+    LAYOUT_PSX_DUALSHOCK2,      // PS2 DualShock 2 (ID 0x79): pressure-sensitive
+    LAYOUT_PSX_NEGCON,          // Namco neGcon (ID 0x23): twist + analog I/II/L
+    LAYOUT_PSX_FLIGHTSTICK,     // Analog Joystick / Dual Analog flight mode (ID 0x53)
+    LAYOUT_PSX_GUNCON,          // Namco GunCon light gun (ID 0x63): aim on right stick
+    LAYOUT_PSX_JOGCON,          // Namco JogCon (ID 0xE3): paddle wheel on left stick X
+    LAYOUT_PSX_MOUSE,           // PlayStation Mouse (ID 0x12): 2 buttons + dx/dy
 } controller_layout_t;
 
 // ============================================================================
@@ -104,7 +128,14 @@ typedef struct {
 
     // Digital inputs
     uint32_t buttons;           // Button bitmap (JP_BUTTON_* defines from globals.h)
-    uint32_t keys;              // Keyboard keys (modifier + scancodes)
+    uint32_t keys;              // Keyboard keys (modifier + scancodes, lossy gamepad-mapping encoding)
+
+    // Raw USB HID keyboard state (preserved for output paths that need
+    // full keyboard fidelity — e.g. 3DO PS/2 emulation). The legacy
+    // `keys` field above is shaped for gamepad mapping and is too lossy
+    // for general keyboard work.
+    uint8_t kb_modifier;        // HID modifier mask (LCTRL=0x01, LSHIFT=0x02, ..., RGUI=0x80)
+    uint8_t kb_keys[6];         // Up to 6 simultaneously pressed HID usage IDs (Page 0x07)
 
     // Absolute analog inputs (0-255, centered at 128 for sticks, 0 for triggers)
     // All values are normalized regardless of device type
@@ -151,6 +182,14 @@ typedef struct {
     // Order: up, right, down, left, l2, r2, l1, r1, triangle, circle, cross, square
     uint8_t pressure[12];       // 0x00 = released, 0xFF = fully pressed
     bool has_pressure;          // Pressure data is valid
+
+    // Touchpad (DS4/DualSense: 2-finger capacitive, 0-1919 x 0-942)
+    struct {
+        uint16_t x;
+        uint16_t y;
+        bool active;
+    } touch[2];
+    bool has_touch;             // Touch data is valid
 
     // Battery level
     uint8_t battery_level;      // 0-100 percent (0 = unknown/not reported)
@@ -209,6 +248,9 @@ static inline void init_input_event(input_event_t* event) {
     for (int i = 0; i < 12; i++) {
         event->pressure[i] = 0;
     }
+
+    // Clear touch data
+    event->has_touch = false;
 }
 
 // Convert old post_globals() parameters to input_event_t (for migration)

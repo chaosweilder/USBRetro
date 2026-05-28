@@ -16,11 +16,15 @@
 #include "core/services/players/manager.h"
 #include "core/services/codes/codes.h"
 #include "core/router/router.h"
+#include "platform/platform.h"
 
 // Declaration of global variables
 GamecubeConsole gc;
 gc_report_t gc_report;
 PIO pio = pio0;
+
+// Config mode flag - set by app when GC 3.3V not detected
+bool gc_config_mode = false;
 
 // GameCube-specific state for USB device output
 static uint8_t gc_rumble = 0;
@@ -71,6 +75,7 @@ static struct {
     .button_mode = BUTTON_MODE_3  // Default to gamepad mode
 };
 
+// Externs for functions in GamecubeConsole.c (some not yet in header)
 extern void GamecubeConsole_init(GamecubeConsole* console, uint pin, PIO pio, int sm, int offset);
 extern bool GamecubeConsole_WaitForPoll(GamecubeConsole* console);
 extern void GamecubeConsole_SendReport(GamecubeConsole* console, gc_report_t *report);
@@ -187,9 +192,11 @@ void ngc_init()
   // over clock CPU for correct timing with GC
   set_sys_clock_khz(130000, true);
 
-  // Configure custom UART pins (12=TX, 13=RX)
+  #ifdef UART_TX_PIN
+  // Configure custom UART pins (KB2040: 12=TX, 13=RX)
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
   gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+  #endif
 
   // corrects UART serial output after overclock
   stdio_init_all();
@@ -200,7 +207,8 @@ void ngc_init()
   // Profile system is initialized by app - just set up callbacks
   profile_set_player_count_callback(gc_get_player_count_for_profile);
 
-  // Ground gpio attatched to sheilding
+  #ifdef CONFIG_NGC
+  // KB2040-specific hardware: ground shield GPIOs, BOOTSEL button, 3V3 detect
   gpio_init(SHIELD_PIN_L);
   gpio_set_dir(SHIELD_PIN_L, GPIO_OUT);
   gpio_init(SHIELD_PIN_L+1);
@@ -215,23 +223,25 @@ void ngc_init()
   gpio_put(SHIELD_PIN_R, 0);
   gpio_put(SHIELD_PIN_R+1, 0);
 
-  // Initialize the BOOTSEL_PIN as input
   gpio_init(BOOTSEL_PIN);
   gpio_set_dir(BOOTSEL_PIN, GPIO_IN);
   gpio_pull_up(BOOTSEL_PIN);
-
-  // Reboot into bootsel mode if GC 3.3V not detected.
-  gpio_init(GC_3V3_PIN);
-  gpio_set_dir(GC_3V3_PIN, GPIO_IN);
-  gpio_pull_down(GC_3V3_PIN);
-
-  sleep_ms(200);
-  if (!gpio_get(GC_3V3_PIN)) reset_usb_boot(0, 0);
+  #endif
 
   int sm = -1;
   int offset = -1;
   gc_kb_key_lookup_init();
-  GamecubeConsole_init(&gc, GC_DATA_PIN, pio, sm, offset);
+
+  // Allow runtime override of GC_DATA pin from flash settings (web config).
+  // 0 = "use compile-time default" (also matches blank/legacy reserved bytes).
+  uint8_t data_pin = GC_DATA_PIN;
+  flash_t* settings = flash_get_settings();
+  if (settings && settings->joybus_data_pin > 0 && settings->joybus_data_pin <= 28) {
+    data_pin = settings->joybus_data_pin;
+  }
+  printf("[gc] joybus DATA pin: GPIO %d%s\n", data_pin,
+         (data_pin != GC_DATA_PIN) ? " (override)" : "");
+  GamecubeConsole_init(&gc, data_pin, pio, sm, offset);
   gc_report = default_gc_report;
 
   const profile_t* profile = profile_get_active(OUTPUT_TARGET_GAMECUBE);
@@ -430,11 +440,17 @@ void __not_in_flash_func(update_output)(void)
   }
   else
   {
-    // Keyboard mode
-    uint8_t gc_key = gc_kb_key_lookup(event->keys);
-    new_report.keyboard.keypress[0] = gc_key;
-    new_report.keyboard.keypress[1] = GC_KEY_NOT_FOUND;
-    new_report.keyboard.keypress[2] = GC_KEY_NOT_FOUND;
+    // Keyboard mode. event->keys packs up to 3 simultaneous USB HID
+    // keycodes (low byte = keycode[0], next byte = keycode[1], etc. — see
+    // process_hid_keyboard in hid_keyboard.c). Translate each independently
+    // and fill all three GC keypress slots so the report supports the
+    // protocol's 3-key rollover instead of just the first key.
+    uint8_t k0 = (uint8_t)((event->keys >>  0) & 0xFF);
+    uint8_t k1 = (uint8_t)((event->keys >>  8) & 0xFF);
+    uint8_t k2 = (uint8_t)((event->keys >> 16) & 0xFF);
+    new_report.keyboard.keypress[0] = gc_kb_key_lookup(k0);
+    new_report.keyboard.keypress[1] = gc_kb_key_lookup(k1);
+    new_report.keyboard.keypress[2] = gc_kb_key_lookup(k2);
     new_report.keyboard.checksum = new_report.keyboard.keypress[0] ^
                                   new_report.keyboard.keypress[1] ^
                                   new_report.keyboard.keypress[2] ^ gc_kb_counter;
@@ -445,6 +461,67 @@ void __not_in_flash_func(update_output)(void)
 
   // Atomically update global report
   gc_report = new_report;
+}
+
+// ============================================================================
+// NATIVE OUTPUT CONFIG (web config: Output > Joybus page)
+// ============================================================================
+
+// Minimal JSON int extractor — kept inline to avoid pulling in cdc_commands' static helpers.
+static bool gc_json_get_int(const char* json, const char* key, int* out_val) {
+    char search[32];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char* start = strstr(json, search);
+    if (!start) return false;
+    start += strlen(search);
+    while (*start == ' ' || *start == '\t') start++;
+    if (*start == '-' || (*start >= '0' && *start <= '9')) {
+        *out_val = atoi(start);
+        return true;
+    }
+    return false;
+}
+
+static uint16_t gc_get_native_config(char* buf, uint16_t buf_size) {
+    flash_t* settings = flash_get_settings();
+    int current_pin = GC_DATA_PIN;
+    if (settings && settings->joybus_data_pin > 0 && settings->joybus_data_pin <= 28) {
+        current_pin = settings->joybus_data_pin;
+    }
+    int n = snprintf(buf, buf_size,
+        "\"type\":\"joybus\","
+        "\"modes\":[\"gamecube\"],"
+        "\"current_mode\":\"gamecube\","
+        "\"pins\":{"
+            "\"data\":{\"label\":\"Data\",\"value\":%d,\"min\":0,\"max\":28,\"default\":%d}"
+        "}",
+        current_pin, GC_DATA_PIN);
+    return (n > 0 && n < buf_size) ? (uint16_t)n : 0;
+}
+
+static bool gc_set_native_config(const char* json, char* response_buf, uint16_t response_size) {
+    int pin = -1;
+    if (!gc_json_get_int(json, "data", &pin)) {
+        snprintf(response_buf, response_size, "{\"ok\":false,\"err\":\"missing pins.data\"}");
+        return false;
+    }
+    if (pin < 0 || pin > 28) {
+        snprintf(response_buf, response_size, "{\"ok\":false,\"err\":\"pin out of range\"}");
+        return false;
+    }
+    flash_t* settings = flash_get_settings();
+    if (!settings) {
+        snprintf(response_buf, response_size, "{\"ok\":false,\"err\":\"flash not initialized\"}");
+        return false;
+    }
+    settings->joybus_data_pin = (uint8_t)pin;
+    flash_save_force(settings);
+    snprintf(response_buf, response_size, "{\"ok\":true,\"reboot\":true}");
+
+    // Schedule reboot after the response has had a chance to send.
+    sleep_ms(150);
+    platform_reboot();
+    return true;
 }
 
 // ============================================================================
@@ -466,4 +543,6 @@ const OutputInterface gamecube_output_interface = {
     .set_active_profile = gc_set_active_profile,
     .get_profile_name = gc_get_profile_name,
     .get_trigger_threshold = gc_get_trigger_threshold,
+    .get_native_config = gc_get_native_config,
+    .set_native_config = gc_set_native_config,
 };

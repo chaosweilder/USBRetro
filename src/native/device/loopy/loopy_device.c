@@ -26,9 +26,11 @@ void loopy_init()
   // Initialize chosen UART
   uart_init(UART_ID, BAUD_RATE);
 
+  #ifdef UART_TX_PIN
   // Set the GPIO function for the UART pins
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
   gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+  #endif
 
   // Initialize stdio (redirects printf to UART)
   stdio_uart_init();

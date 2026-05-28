@@ -68,11 +68,6 @@ typedef enum {
     UART_PKT_PROFILE        = 0x42,     // Profile response
     UART_PKT_SET_MODE       = 0x43,     // Set output mode
 
-    // AI/Injection (0x50-0x5F) - For ESP32 AI use case
-    UART_PKT_AI_INJECT      = 0x50,     // Inject AI input
-    UART_PKT_AI_BLEND_MODE  = 0x51,     // Set blend mode
-    UART_PKT_AI_OBSERVE     = 0x52,     // Request observation mode
-
 } uart_packet_type_t;
 
 // ============================================================================
@@ -152,33 +147,7 @@ typedef struct __attribute__((packed)) {
 // Status flags
 #define UART_STATUS_USB_CONNECTED   0x01
 #define UART_STATUS_OUTPUT_ACTIVE   0x02
-#define UART_STATUS_AI_ENABLED      0x04
 #define UART_STATUS_ERROR           0x80
-
-// ============================================================================
-// AI INJECTION PACKETS
-// ============================================================================
-
-typedef enum {
-    UART_BLEND_OFF          = 0,    // AI disabled
-    UART_BLEND_OBSERVE      = 1,    // Observe only
-    UART_BLEND_ASSIST       = 2,    // OR with player input
-    UART_BLEND_OVERRIDE     = 3,    // AI can override
-    UART_BLEND_TAKEOVER     = 4,    // AI full control
-} uart_blend_mode_t;
-
-typedef struct __attribute__((packed)) {
-    uint8_t  player_index;      // Target player
-    uint8_t  blend_mode;        // uart_blend_mode_t
-    uint32_t buttons;           // Buttons to inject
-    uint8_t  analog[6];         // Analog values
-    uint8_t  duration_frames;   // Duration (0 = single frame)
-} uart_ai_inject_t;
-
-typedef struct __attribute__((packed)) {
-    uint8_t  player_index;      // Target player
-    uint8_t  blend_mode;        // uart_blend_mode_t
-} uart_blend_mode_cmd_t;
 
 // ============================================================================
 // VERSION PACKET
@@ -203,7 +172,6 @@ typedef struct __attribute__((packed)) {
 #define UART_FEATURE_BLE        0x0008
 #define UART_FEATURE_DISPLAY    0x0010
 #define UART_FEATURE_AUDIO      0x0020
-#define UART_FEATURE_AI         0x0040
 
 // ============================================================================
 // CRC-8 CALCULATION

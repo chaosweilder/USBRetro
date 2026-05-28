@@ -48,6 +48,10 @@ void btstack_host_stop_scan(void);
 // Start scanning with a timeout (auto-stops after timeout_ms)
 void btstack_host_start_timed_scan(uint32_t timeout_ms);
 
+// Suppress/unsuppress automatic scan restart (e.g. when USB device connected).
+// Explicit start_timed_scan clears suppression.
+void btstack_host_suppress_scan(bool suppress);
+
 // Connect to a BLE device
 void btstack_host_connect_ble(bd_addr_t addr, bd_addr_type_t addr_type);
 
@@ -83,7 +87,7 @@ bool btstack_host_is_scanning(void);
 typedef struct {
     bool active;
     uint8_t bd_addr[6];
-    char name[32];
+    char name[48];
     uint8_t class_of_device[3];
     uint16_t vendor_id;
     uint16_t product_id;
@@ -93,6 +97,9 @@ typedef struct {
 
 bool btstack_classic_get_connection(uint8_t conn_index, btstack_classic_conn_info_t* info);
 uint8_t btstack_classic_get_connection_count(void);
+
+// Get last-connected bonded device (returns false if none stored)
+bool btstack_host_get_last_connected(uint8_t bd_addr_out[6], char name_out[48]);
 
 // Classic BT output (for bthid drivers)
 bool btstack_classic_send_set_report_type(uint8_t conn_index, uint8_t report_type,
@@ -118,6 +125,9 @@ void btstack_host_disconnect_all_devices(void);
 // Delete all stored BT bonds (Classic and BLE)
 // Devices will need to re-pair after this
 void btstack_host_delete_all_bonds(void);
+
+// Forget a specific device by address — disconnects if connected, removes bond
+void btstack_host_forget_device(const uint8_t bd_addr[6]);
 
 #ifdef __cplusplus
 }

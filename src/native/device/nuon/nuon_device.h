@@ -16,8 +16,10 @@
 #undef MAX_PLAYERS
 #define MAX_PLAYERS       4
 
-// Nuon GPIO pins
+// Nuon GPIO pins (overridable via compile definitions)
+#ifndef DATAIO_PIN
 #define DATAIO_PIN        2
+#endif
 #define CLKIN_PIN         DATAIO_PIN + 1  // Note - in pins must be a consecutive 'in' group
 
 // for internal in-game reset

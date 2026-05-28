@@ -8,30 +8,14 @@
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
+#include "ws2812.h"        // shared WS2812_PIN / WS2812_NUM_PIXELS defaults
 #include "ws2812.pio.h"
 #include "app_config.h"
 
 // Number of NeoPixels (can be overridden in CMakeLists.txt)
-#ifndef WS2812_NUM_PIXELS
-#define WS2812_NUM_PIXELS 1
-#endif
+// WS2812_PIN / WS2812_NUM_PIXELS are resolved in ws2812.h so the web
+// config layer reports the same defaults the driver uses.
 #define NUM_PIXELS WS2812_NUM_PIXELS
-
-// NeoPixel power control and pin configuration (board-specific)
-// WS2812_PIN can be overridden via compile definition
-#ifndef WS2812_PIN
-  #ifdef ADAFRUIT_FEATHER_RP2040_USB_HOST
-    #define WS2812_PIN 21
-    #define WS2812_POWER_PIN 20
-  #elif defined(ADAFRUIT_MACROPAD_RP2040)
-    #define WS2812_PIN 19
-  #elif defined(PICO_DEFAULT_WS2812_PIN)
-    #define WS2812_PIN PICO_DEFAULT_WS2812_PIN
-  #else
-    // default to pin 2 if the board doesn't have a default WS2812 pin defined
-    #define WS2812_PIN 2
-  #endif
-#endif
 
 #ifndef IS_RGBW
   #ifdef ADAFRUIT_MACROPAD_RP2040
@@ -46,6 +30,7 @@
 static PIO pio;
 static uint sm;
 
+static bool neopixel_disabled = false;
 static absolute_time_t init_time;
 static absolute_time_t current_time;
 static absolute_time_t loop_time;
@@ -71,6 +56,12 @@ static absolute_time_t state_change_time;
 static uint8_t custom_led_colors[16][3];  // [led_index][R, G, B]
 static bool use_custom_colors = false;
 
+// Per-LED pulse mask for breathing animation
+static uint16_t led_pulse_mask = 0;
+
+// Per-LED press mask (pressed keys show bright white)
+static uint16_t led_press_mask = 0;
+
 // Override color for mode indication (set via neopixel_set_override_color)
 static uint8_t override_r = 0, override_g = 0, override_b = 0;
 static bool has_override_color = false;
@@ -81,7 +72,7 @@ static bool has_override_color = false;
 #define BLINK_ON_TIME_US 100000   // 100ms LED on (brief flash between OFF blinks)
 
 static inline void put_pixel(uint32_t pixel_grb) {
-    pio_sm_put(pio, sm, pixel_grb << 8u);
+    pio_sm_put_blocking(pio, sm, pixel_grb << 8u);
 }
 
 static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
@@ -286,12 +277,37 @@ void pattern_brgpy(uint len, uint t) {
     }
 }
 
+// Breathing brightness scale (0-255) from phase within cycle
+// Smooth ramp up/down with quadratic easing, ~3s cycle
+static inline uint8_t breathing_scale(uint t) {
+    int phase = t % 300;  // ~3s cycle at 10ms per tic
+    // Triangle wave 0→150→0
+    int ramp = phase < 150 ? phase : (300 - phase);
+    // Quadratic easing: slow at extremes, fast in middle
+    // Range: 8 (dim glow) to 255 (full bright)
+    return 8 + (uint8_t)((uint32_t)ramp * ramp * 247 / 22500);
+}
+
 // Custom colors pattern - uses colors set via neopixel_set_custom_colors()
+// Priority: pressed (white) > breathing pulse > solid color
 void pattern_custom(uint len, uint t) {
     for (uint i = 0; i < len && i < 16; ++i) {
-        put_pixel(urgb_u32(custom_led_colors[i][0],
-                          custom_led_colors[i][1],
-                          custom_led_colors[i][2]));
+        if (led_press_mask & (1 << i)) {
+            // Pressed: white (capped to limit current draw on USB-powered boards)
+            put_pixel(urgb_u32(128, 128, 128));
+        } else if (led_pulse_mask & (1 << i)) {
+            // Breathing pulse
+            uint8_t s = breathing_scale(t);
+            put_pixel(urgb_u32(
+                (custom_led_colors[i][0] * s) / 255,
+                (custom_led_colors[i][1] * s) / 255,
+                (custom_led_colors[i][2] * s) / 255));
+        } else {
+            // Solid
+            put_pixel(urgb_u32(custom_led_colors[i][0],
+                              custom_led_colors[i][1],
+                              custom_led_colors[i][2]));
+        }
     }
 }
 
@@ -313,6 +329,16 @@ void neopixel_set_custom_colors(const uint8_t colors[][3], uint8_t count) {
 // Check if custom colors are active
 bool neopixel_has_custom_colors(void) {
     return use_custom_colors;
+}
+
+// Set bitmask of LEDs that pulse with breathing animation
+void neopixel_set_pulse_mask(uint16_t mask) {
+    led_pulse_mask = mask;
+}
+
+// Set bitmask of currently pressed LEDs (shown as bright white)
+void neopixel_set_press_mask(uint16_t mask) {
+    led_press_mask = mask;
 }
 
 // Set override color for mode indication
@@ -345,6 +371,15 @@ const struct {
         {pattern_brgpy,   "B R G P Y"},  // 5 controllers alt
 };
 
+void neopixel_set_pin(int8_t pin) {
+    (void)pin; // RP2040: PIO pin set at compile time via WS2812_PIN
+}
+
+void neopixel_disable(void) {
+    neopixel_disabled = true;
+    printf("[ws2812] NeoPixel disabled\n");
+}
+
 void neopixel_init()
 {
 #ifdef CONFIG_NO_NEOPIXEL
@@ -361,10 +396,13 @@ void neopixel_init()
 
     // PIO selection:
     // - CONFIG_DC: Use PIO1 SM3 (share with maple_rx which uses SM0/1/2)
+    // - CONFIG_NEOPIXEL_USE_PIO1: Use PIO1 SM3 to leave PIO0 for PIO-USB
+    //   (pico-pio-usb hardcodes PIO0 SM 0/1/2). Only safe when nothing else
+    //   on the build claims PIO1 (e.g. no CYW43 / no maple).
     // - Others: Use PIO0
-#if defined(CONFIG_DC)
-    pio = pio1;  // Share PIO1 with maple_rx (10 instructions + 4 = 14, fits in 32)
-    sm = 3;      // maple_rx uses SM 0,1,2, so we must use SM 3
+#if defined(CONFIG_DC) || defined(CONFIG_NEOPIXEL_USE_PIO1)
+    pio = pio1;
+    sm = 3;
     pio_sm_claim(pio, sm);
 #else
     pio = pio0;
@@ -403,6 +441,7 @@ void neopixel_task(int pat)
 #ifdef CONFIG_NO_NEOPIXEL
     return;
 #endif
+    if (neopixel_disabled) return;
 
     current_time = get_absolute_time();
 
@@ -413,8 +452,11 @@ void neopixel_task(int pat)
         switch (neopixel_state) {
             case NEOPIXEL_BLINK_OFF:
                 // Turn all LEDs off (this is what we count)
-                for (uint i = 0; i < NUM_PIXELS; ++i) {
-                    put_pixel(urgb_u32(0x00, 0x00, 0x00));
+                if (absolute_time_diff_us(init_time, current_time) > reset_period) {
+                    for (uint i = 0; i < NUM_PIXELS; ++i) {
+                        put_pixel(urgb_u32(0x00, 0x00, 0x00));
+                    }
+                    init_time = current_time;
                 }
                 if (time_in_state >= BLINK_OFF_TIME_US) {
                     blinks_remaining--;
@@ -432,10 +474,13 @@ void neopixel_task(int pat)
 
             case NEOPIXEL_BLINK_ON:
                 // Show LED using custom colors or pattern based on stored player count
-                if (use_custom_colors) {
-                    pattern_custom(NUM_PIXELS, tic);
-                } else {
-                    pattern_table[stored_pattern].pat(NUM_PIXELS, tic);
+                if (absolute_time_diff_us(init_time, current_time) > reset_period) {
+                    if (use_custom_colors) {
+                        pattern_custom(NUM_PIXELS, tic);
+                    } else {
+                        pattern_table[stored_pattern].pat(NUM_PIXELS, tic);
+                    }
+                    init_time = current_time;
                 }
                 if (time_in_state >= BLINK_ON_TIME_US) {
                     // Back to OFF for the next blink
@@ -472,8 +517,8 @@ void neopixel_task(int pat)
             if (pat == 0) {
                 // Pulse: triangle wave brightness (tic cycles 0-199)
                 int phase = tic % 200;
-                int bright = phase < 100 ? (30 + phase * 2) : (30 + (200 - phase) * 2);
-                // bright ranges 30-230, scale override color
+                int bright = phase < 100 ? (100 + phase) : (100 + (200 - phase));
+                // bright ranges 100-200, visible on 3.3V NeoPixels
                 for (uint i = 0; i < NUM_PIXELS; ++i) {
                     put_pixel(urgb_u32(
                         (override_r * bright) / 255,

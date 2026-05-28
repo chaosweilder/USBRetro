@@ -6,28 +6,27 @@
 // Each registered config creates a controller input source.
 
 #include "pad_input.h"
+#include "pad_config_flash.h"
 #include "core/buttons.h"
 #include "core/input_event.h"
 #include "core/router/router.h"
-#include "pico/stdlib.h"
-#include "hardware/gpio.h"
-#include "hardware/adc.h"
-#include "hardware/i2c.h"
+#include "platform/platform_gpio.h"
 #include <stdio.h>
 #include <string.h>
 
+// I2C expander support (RP2040-only — uses pico-sdk I2C directly)
+#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF)
+#include "pico/stdlib.h"
+#include "hardware/i2c.h"
+#define HAS_I2C_EXPANDER 1
+#endif
+
+#ifdef SENSOR_JOYWING
+#include "drivers/joywing/joywing_input.h"
+#endif
+
 // ============================================================================
 // I2C I/O EXPANDER REGISTERS (PCA9555/TCA9555 compatible)
-// ============================================================================
-
-#define I2C_IO_REG_INPUT     0x00  // Input port register
-#define I2C_IO_REG_OUTPUT    0x02  // Output port register
-#define I2C_IO_REG_POLARITY  0x04  // Polarity inversion register
-#define I2C_IO_REG_CONFIG    0x06  // Configuration register
-#define I2C_IO_REG_PULLUP    0x46  // Pull-up resistor register (TCA9555 only)
-
-#define I2C_FREQ 400000  // 400kHz
-
 // ============================================================================
 // INTERNAL STATE
 // ============================================================================
@@ -42,12 +41,35 @@ static input_event_t pad_events[PAD_MAX_DEVICES];
 // Debounce state (simple: require 2 consecutive reads)
 static uint32_t pad_prev_buttons[PAD_MAX_DEVICES];
 
+// D-pad mode (software, set via S1+S2+direction hotkeys)
+typedef enum {
+    DPAD_MODE_DPAD,        // D-pad → d-pad buttons (default)
+    DPAD_MODE_LEFT_STICK,  // D-pad → left analog stick
+    DPAD_MODE_RIGHT_STICK, // D-pad → right analog stick
+} dpad_mode_t;
+
+static dpad_mode_t dpad_mode = DPAD_MODE_DPAD;
+
+// S1+S2 combo state
+static bool prev_s1s2_held = false;
+static bool combo_used = false;
+
+// Per-combo action trigger state (prevent re-fire while held)
+static bool combo_fired[PAD_COMBO_MAX] = {false};
+
 // ADC initialized flag
 static bool adc_initialized = false;
 
-// I2C initialized flag
-static bool i2c_initialized = false;
+#ifdef HAS_I2C_EXPANDER
+// I2C I/O expander registers and state
+#define I2C_IO_REG_INPUT     0x00
+#define I2C_IO_REG_OUTPUT    0x02
+#define I2C_IO_REG_POLARITY  0x04
+#define I2C_IO_REG_CONFIG    0x06
+#define I2C_IO_REG_PULLUP    0x46
+#define I2C_FREQ 400000
 
+static bool i2c_initialized = false;
 // I2C expander cached state (16 bits per expander)
 static uint16_t i2c_expander_cache[2] = {0, 0};
 
@@ -105,50 +127,147 @@ static void i2c_expander_update_cache(void) {
     i2c_expander_cache[0] = i2c_expander_read(PAD_I2C_EXPANDER_ADDR_0);
     i2c_expander_cache[1] = i2c_expander_read(PAD_I2C_EXPANDER_ADDR_1);
 }
+#endif // HAS_I2C_EXPANDER
+
+// ============================================================================
+// CAPACITIVE TOUCH SENSOR
+// ============================================================================
+// Charge-timing capacitive touch: drive touch_out, measure microseconds for
+// touch_in to follow. Finger on the sensor pad adds capacitance → longer
+// charge time. Based on Input Labs Alpakka firmware (Apache-2.0).
+
+#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF)
+#define TOUCH_TIMEOUT_US   200   // Max measurement time (µs)
+#define TOUCH_THRESHOLD_US  15   // Default threshold (µs) — touched if elapsed > this
+#define TOUCH_DEBOUNCE_MS   50   // Debounce release events
+
+static int8_t touch_out_pin = -1;
+static int8_t touch_in_pin = -1;
+static bool touch_initialized = false;
+static bool touch_prev = false;
+static uint32_t touch_last_release_us = 0;
+
+static void touch_init(int8_t out, int8_t in) {
+    if (out < 0 || in < 0) return;
+    gpio_init(out);
+    gpio_set_dir(out, GPIO_OUT);
+    gpio_init(in);
+    gpio_set_dir(in, GPIO_IN);
+    gpio_set_pulls(in, false, false);  // No pull-up/down — float for capacitive sensing
+    touch_out_pin = out;
+    touch_in_pin = in;
+    touch_initialized = true;
+}
+
+static uint32_t touch_elapsed = 0;  // Last measurement for debug
+
+static bool touch_read(void) {
+    if (!touch_initialized) return false;
+
+    // Match Alpakka firmware sequence (polarity_mode=0):
+    // 1. Settle: drive out LOW, wait for in to go LOW
+    gpio_put(touch_out_pin, 0);
+    uint32_t t0 = time_us_32();
+    while (gpio_get(touch_in_pin) != 0) {
+        if (time_us_32() - t0 > TOUCH_TIMEOUT_US) return touch_prev;
+    }
+
+    // 2. Measure: drive out HIGH, time how long in takes to go HIGH
+    uint32_t t_settled = time_us_32();
+    gpio_put(touch_out_pin, 1);
+    bool timedout = false;
+    while (gpio_get(touch_in_pin) == 0) {
+        if (time_us_32() - t0 > TOUCH_TIMEOUT_US) {
+            timedout = true;
+            break;
+        }
+    }
+
+    // 3. Reset for next cycle
+    gpio_put(touch_out_pin, 0);
+
+    uint32_t elapsed = timedout ? TOUCH_TIMEOUT_US : (time_us_32() - t_settled);
+    touch_elapsed = elapsed;
+
+    bool touched = elapsed > TOUCH_THRESHOLD_US;
+
+    // Debounce release
+    uint32_t now = time_us_32();
+    if (!touched && touch_prev) {
+        if (now - touch_last_release_us < TOUCH_DEBOUNCE_MS * 1000) {
+            return true;  // Suppress brief release
+        }
+        touch_last_release_us = now;
+    }
+    touch_prev = touched;
+    return touched;
+}
+#endif // !ESP32/NRF
 
 // ============================================================================
 // GPIO HELPERS
 // ============================================================================
 
+// Returns true if `pin` is reserved by another firmware feature and must
+// not be claimed by the pad subsystem (would otherwise kill that feature).
+// Currently guards the UART host RX/TX pair so a saved pad config that
+// happens to map a button onto GPIO 0 / 1 can't disable joypad-mcp's
+// synthetic-input bridge by reconfiguring those pins as digital inputs.
+static bool pad_pin_is_reserved(int16_t pin) {
+#if defined(CONFIG_UART_HOST) && defined(CONFIG_UART_HOST_TX_PIN) && defined(CONFIG_UART_HOST_RX_PIN)
+    if (pin == CONFIG_UART_HOST_TX_PIN || pin == CONFIG_UART_HOST_RX_PIN) {
+        static int8_t warned_pin = -1;
+        if (warned_pin != pin) {
+            printf("[pad] WARNING: pin GP%d is reserved for UART host (joypad-mcp) — ignoring config\n", pin);
+            warned_pin = pin;
+        }
+        return true;
+    }
+#endif
+    return false;
+}
+
 // Initialize a single GPIO pin as input with appropriate pull
 static void pad_init_button_pin(int16_t pin, bool active_high) {
-    // Only initialize direct GPIO pins (0-29)
-    if (pin < 0 || pin > 29) return;
-
-    gpio_init(pin);
-    gpio_set_dir(pin, GPIO_IN);
+    // Only initialize direct GPIO pins (0-29 on RP2040, 0-48 on ESP32)
+    if (pin < 0 || pin > 48) return;
+    // I2C expander pins (100+) are not direct GPIO
+    if (pin >= 100) return;
+    if (pad_pin_is_reserved(pin)) return;
 
     // Pull opposite to active state
-    if (active_high) {
-        gpio_pull_down(pin);  // Active high: pull down, button connects to VCC
-    } else {
-        gpio_pull_up(pin);    // Active low: pull up, button connects to GND
-    }
+    platform_gpio_init_input(pin, !active_high);
 }
 
 // Read a button pin and return true if pressed
 // Supports direct GPIO (0-29) and I2C expanders (100-115, 200-215)
 static bool pad_read_button(int16_t pin, bool active_high) {
     if (pin < 0) return false;
+    if (pin < 100 && pad_pin_is_reserved(pin)) return false;
 
     bool state;
 
     if (pin < 100) {
-        // Direct GPIO
-        state = gpio_get(pin);
-    } else if (pin < 200) {
+        // Direct GPIO — apply active_high/low inversion
+        state = platform_gpio_get(pin);
+        return active_high ? state : !state;
+    }
+#ifdef HAS_I2C_EXPANDER
+    else if (pin < 200) {
         // I2C expander 0 (pins 100-115)
+        // Polarity inversion register already handles active-low → 1=pressed
         uint8_t bit = pin - PAD_I2C_EXPANDER_0_BASE;
         if (bit > 15) return false;
-        state = (i2c_expander_cache[0] >> bit) & 1;
+        return (i2c_expander_cache[0] >> bit) & 1;
     } else {
         // I2C expander 1 (pins 200-215)
         uint8_t bit = pin - PAD_I2C_EXPANDER_1_BASE;
         if (bit > 15) return false;
-        state = (i2c_expander_cache[1] >> bit) & 1;
+        return (i2c_expander_cache[1] >> bit) & 1;
     }
-
-    return active_high ? state : !state;
+#else
+    else { return false; }
+#endif
 }
 
 // Read ADC channel and return 0-255 value with proper scaling
@@ -161,8 +280,7 @@ static bool pad_read_button(int16_t pin, bool active_high) {
 static uint8_t pad_read_adc(int8_t channel, bool invert) {
     if (channel < 0 || channel > 3) return 128;  // Centered
 
-    adc_select_input(channel);
-    uint16_t raw = adc_read();  // 12-bit: 0-4095
+    uint16_t raw = platform_adc_read(channel);  // 12-bit: 0-4095
 
     // Scale from joystick's actual range to full 0-255
     // Clamp to expected range first
@@ -191,6 +309,7 @@ static uint8_t apply_deadzone(uint8_t value, uint8_t deadzone) {
     return value;
 }
 
+#ifdef HAS_I2C_EXPANDER
 // Check if config uses I2C expanders
 static bool config_uses_i2c(const pad_device_config_t* config) {
     return (config->dpad_up >= 100 || config->dpad_down >= 100 ||
@@ -204,6 +323,7 @@ static bool config_uses_i2c(const pad_device_config_t* config) {
             config->a1 >= 100 || config->a2 >= 100 ||
             config->l4 >= 100 || config->r4 >= 100);
 }
+#endif // HAS_I2C_EXPANDER
 
 // Initialize GPIO pins for a device config
 static void pad_init_device_pins(const pad_device_config_t* config) {
@@ -212,9 +332,11 @@ static void pad_init_device_pins(const pad_device_config_t* config) {
     bool ah = config->active_high;
 
     // Initialize I2C if this config uses expanders
+#ifdef HAS_I2C_EXPANDER
     if (config_uses_i2c(config)) {
         i2c_expander_init(config->i2c_sda, config->i2c_scl);
     }
+#endif
 
     // Initialize direct GPIO button pins (I2C pins are handled by expander init)
     pad_init_button_pin(config->dpad_up, ah);
@@ -240,41 +362,53 @@ static void pad_init_device_pins(const pad_device_config_t* config) {
     pad_init_button_pin(config->a2, ah);
     pad_init_button_pin(config->l4, ah);
     pad_init_button_pin(config->r4, ah);
+    pad_init_button_pin(config->f1, ah);
+    pad_init_button_pin(config->f2, ah);
 
-    // Initialize toggle switch pin (always active high - switch to VCC when on)
-    if (config->dpad_toggle >= 0 && config->dpad_toggle <= 29) {
-        gpio_init(config->dpad_toggle);
-        gpio_set_dir(config->dpad_toggle, GPIO_IN);
-        gpio_pull_down(config->dpad_toggle);  // Pull down, switch connects to VCC when on
-        printf("[pad] D-pad toggle switch on GPIO %d\n", config->dpad_toggle);
+    // Initialize capacitive touch sensor → F1
+#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF)
+    if (config->touch_out >= 0 && config->touch_in >= 0) {
+        touch_init(config->touch_out, config->touch_in);
+        printf("[pad] Touch sensor: out=GP%d, in=GP%d → F1\n",
+               config->touch_out, config->touch_in);
+    }
+#endif
+
+    // Initialize toggle switch pins
+    for (int t = 0; t < 2; t++) {
+        int16_t pin = config->toggle[t].pin;
+        if (pin >= 0 && pin <= 48 && !pad_pin_is_reserved(pin)) {
+            platform_gpio_init_input(pin, config->toggle[t].invert);
+            printf("[pad] Toggle %d on GPIO %d (func=%d%s)\n",
+                   t, pin, config->toggle[t].function,
+                   config->toggle[t].invert ? ", inverted" : "");
+        }
     }
 
     // Initialize ADC if any analog inputs are used
     bool has_analog = (config->adc_lx >= 0 || config->adc_ly >= 0 ||
-                       config->adc_rx >= 0 || config->adc_ry >= 0);
+                       config->adc_rx >= 0 || config->adc_ry >= 0 ||
+                       config->adc_lt >= 0 || config->adc_rt >= 0);
 
     if (has_analog && !adc_initialized) {
-        adc_init();
+        platform_adc_init();
         adc_initialized = true;
     }
 
-    // Initialize ADC pins (GPIO 26-29 are ADC0-3)
-    if (config->adc_lx >= 0 && config->adc_lx <= 3) {
-        adc_gpio_init(26 + config->adc_lx);
-    }
-    if (config->adc_ly >= 0 && config->adc_ly <= 3) {
-        adc_gpio_init(26 + config->adc_ly);
-    }
-    if (config->adc_rx >= 0 && config->adc_rx <= 3) {
-        adc_gpio_init(26 + config->adc_rx);
-    }
-    if (config->adc_ry >= 0 && config->adc_ry <= 3) {
-        adc_gpio_init(26 + config->adc_ry);
-    }
+    // Initialize ADC channels
+    if (config->adc_lx >= 0 && config->adc_lx <= 3) platform_adc_init_channel(config->adc_lx);
+    if (config->adc_ly >= 0 && config->adc_ly <= 3) platform_adc_init_channel(config->adc_ly);
+    if (config->adc_rx >= 0 && config->adc_rx <= 3) platform_adc_init_channel(config->adc_rx);
+    if (config->adc_ry >= 0 && config->adc_ry <= 3) platform_adc_init_channel(config->adc_ry);
+    if (config->adc_lt >= 0 && config->adc_lt <= 3) platform_adc_init_channel(config->adc_lt);
+    if (config->adc_rt >= 0 && config->adc_rt <= 3) platform_adc_init_channel(config->adc_rt);
 
     printf("[pad] Initialized device: %s (active_%s%s)\n",
            config->name, ah ? "high" : "low",
-           config_uses_i2c(config) ? ", I2C" : "");
+#ifdef HAS_I2C_EXPANDER
+           config_uses_i2c(config) ? ", I2C" :
+#endif
+           "");
 }
 
 // Poll a single device and update its input event
@@ -288,39 +422,11 @@ static void pad_poll_device(uint8_t device_index) {
     // Read buttons into bitmap
     uint32_t buttons = 0;
 
-    // Check toggle switch state (LOW = D-pad mode, HIGH = right analog mode)
-    bool dpad_mode = true;  // Default to D-pad mode
-    if (config->dpad_toggle >= 0 && config->dpad_toggle <= 29) {
-        dpad_mode = !gpio_get(config->dpad_toggle);  // Inverted: LOW = D-pad, HIGH = analog
-    }
-
-    // Read D-pad buttons
-    bool dpad_up = pad_read_button(config->dpad_up, ah);
-    bool dpad_down = pad_read_button(config->dpad_down, ah);
-    bool dpad_left = pad_read_button(config->dpad_left, ah);
-    bool dpad_right = pad_read_button(config->dpad_right, ah);
-
-    if (dpad_mode) {
-        // D-pad mode: output as digital buttons
-        if (dpad_up)    buttons |= JP_BUTTON_DU;
-        if (dpad_down)  buttons |= JP_BUTTON_DD;
-        if (dpad_left)  buttons |= JP_BUTTON_DL;
-        if (dpad_right) buttons |= JP_BUTTON_DR;
-    } else {
-        // Analog mode: output D-pad as right stick
-        // X axis: left = 0, center = 128, right = 255
-        // Y axis: up = 255, center = 128, down = 0
-        uint8_t rx = 128, ry = 128;
-
-        if (dpad_left && !dpad_right) rx = 0;
-        else if (dpad_right && !dpad_left) rx = 255;
-
-        if (dpad_up && !dpad_down) ry = 255;
-        else if (dpad_down && !dpad_up) ry = 0;
-
-        event->analog[ANALOG_RX] = rx;   // Right stick X
-        event->analog[ANALOG_RY] = ry;  // Right stick Y
-    }
+    // Always read D-pad as digital buttons first
+    if (pad_read_button(config->dpad_up, ah))    buttons |= JP_BUTTON_DU;
+    if (pad_read_button(config->dpad_down, ah))  buttons |= JP_BUTTON_DD;
+    if (pad_read_button(config->dpad_left, ah))  buttons |= JP_BUTTON_DL;
+    if (pad_read_button(config->dpad_right, ah)) buttons |= JP_BUTTON_DR;
 
     // Face buttons
     if (pad_read_button(config->b1, ah)) buttons |= JP_BUTTON_B1;
@@ -341,9 +447,21 @@ static void pad_poll_device(uint8_t device_index) {
     if (pad_read_button(config->r3, ah)) buttons |= JP_BUTTON_R3;
     if (pad_read_button(config->a1, ah)) buttons |= JP_BUTTON_A1;
     if (pad_read_button(config->a2, ah)) buttons |= JP_BUTTON_A2;
+    if (pad_read_button(config->a3, ah)) buttons |= JP_BUTTON_A3;
+    if (pad_read_button(config->a4, ah)) buttons |= JP_BUTTON_A4;
 
-    // Extra buttons (L4/R4 mapped to L2/R2 digital for now)
-    // TODO: Add proper L4/R4 button defines if needed
+    if (pad_read_button(config->l4, ah)) buttons |= JP_BUTTON_L4;
+    if (pad_read_button(config->r4, ah)) buttons |= JP_BUTTON_R4;
+
+    // Function keys (internal only — for hotkey combos)
+    if (pad_read_button(config->f1, ah)) buttons |= JP_BUTTON_F1;
+    if (pad_read_button(config->f2, ah)) buttons |= JP_BUTTON_F2;
+#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF)
+    // Capacitive touch sensor → maps to configurable button
+    if (touch_initialized) {
+        if (touch_read()) buttons |= JP_BUTTON_F1;
+    }
+#endif
 
     // Simple debounce: only update if same as previous read
     // (This filters out single-sample glitches)
@@ -352,7 +470,110 @@ static void pad_poll_device(uint8_t device_index) {
     }
     pad_prev_buttons[device_index] = buttons;
 
-    // Read analog sticks
+    // =================================================================
+    // S1+S2 combo detection (Home button + d-pad mode switching)
+    // S1+S2 alone: inject A1 (Home) continuously
+    // S1+S2 + Down:  d-pad mode (default)
+    // S1+S2 + Left:  d-pad → left analog stick
+    // S1+S2 + Right: d-pad → right analog stick
+    // =================================================================
+    bool s1s2_held = (event->buttons & (JP_BUTTON_S1 | JP_BUTTON_S2)) == (JP_BUTTON_S1 | JP_BUTTON_S2);
+
+    if (s1s2_held) {
+        if (!prev_s1s2_held) {
+            combo_used = false;
+        }
+
+        uint32_t dpad_bits = event->buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+        uint32_t other_bits = event->buttons & ~(JP_BUTTON_S1 | JP_BUTTON_S2 | JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+
+        // Check for d-pad mode switch (only fire once per hold)
+        if (!combo_used && dpad_bits) {
+            if (dpad_bits == JP_BUTTON_DD) {
+                dpad_mode = DPAD_MODE_DPAD;
+                printf("[pad] D-pad mode: D-PAD (default)\n");
+                combo_used = true;
+            } else if (dpad_bits == JP_BUTTON_DL) {
+                dpad_mode = DPAD_MODE_LEFT_STICK;
+                printf("[pad] D-pad mode: LEFT STICK\n");
+                combo_used = true;
+            } else if (dpad_bits == JP_BUTTON_DR) {
+                dpad_mode = DPAD_MODE_RIGHT_STICK;
+                printf("[pad] D-pad mode: RIGHT STICK\n");
+                combo_used = true;
+            }
+        }
+
+        prev_s1s2_held = true;
+
+        if (!combo_used && !other_bits) {
+            // S1+S2 alone → inject Home
+            event->buttons = JP_BUTTON_A1;
+        } else {
+            // Direction combo or other buttons — suppress all output
+            event->buttons = 0;
+        }
+    } else if (prev_s1s2_held) {
+        prev_s1s2_held = false;
+    }
+
+    // =================================================================
+    // Apply d-pad mode (remap d-pad to analog stick if needed)
+    // Physical toggle switches can override the software d-pad mode
+    // =================================================================
+    dpad_mode_t effective_mode = dpad_mode;
+
+    // Check toggle switches for d-pad remap functions
+    for (int t = 0; t < 2; t++) {
+        int16_t pin = config->toggle[t].pin;
+        if (pin < 0 || pin > 48) continue;
+        if (config->toggle[t].function == 0) continue;  // No function assigned
+
+        bool toggle_state = platform_gpio_get(pin);
+        if (config->toggle[t].invert) toggle_state = !toggle_state;
+        if (!toggle_state) continue;  // Toggle not active
+
+        switch (config->toggle[t].function) {
+            case PAD_TOGGLE_FUNC_DPAD_LSTICK:
+                effective_mode = DPAD_MODE_LEFT_STICK;
+                break;
+            case PAD_TOGGLE_FUNC_DPAD_RSTICK:
+                effective_mode = DPAD_MODE_RIGHT_STICK;
+                break;
+        }
+    }
+
+    static dpad_mode_t prev_effective_mode = DPAD_MODE_DPAD;
+    if (effective_mode != DPAD_MODE_DPAD) {
+        uint32_t dpad_bits = event->buttons & (JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+        event->buttons &= ~(JP_BUTTON_DU | JP_BUTTON_DD | JP_BUTTON_DL | JP_BUTTON_DR);
+
+        uint8_t ax = 128, ay = 128;
+        if (dpad_bits & JP_BUTTON_DL) ax = 0;
+        else if (dpad_bits & JP_BUTTON_DR) ax = 255;
+        if (dpad_bits & JP_BUTTON_DU) ay = 0;
+        else if (dpad_bits & JP_BUTTON_DD) ay = 255;
+
+        if (effective_mode == DPAD_MODE_LEFT_STICK) {
+            event->analog[ANALOG_LX] = ax;
+            event->analog[ANALOG_LY] = ay;
+        } else {
+            event->analog[ANALOG_RX] = ax;
+            event->analog[ANALOG_RY] = ay;
+        }
+    } else if (prev_effective_mode != DPAD_MODE_DPAD) {
+        // Switched back to d-pad mode — reset analog axes to center
+        if (prev_effective_mode == DPAD_MODE_LEFT_STICK) {
+            event->analog[ANALOG_LX] = 128;
+            event->analog[ANALOG_LY] = 128;
+        } else {
+            event->analog[ANALOG_RX] = 128;
+            event->analog[ANALOG_RY] = 128;
+        }
+    }
+    prev_effective_mode = effective_mode;
+
+    // Read analog sticks (ADC overrides dpad-to-stick if both present)
     uint8_t dz = config->deadzone;
 
     if (config->adc_lx >= 0) {
@@ -370,6 +591,40 @@ static void pad_poll_device(uint8_t device_index) {
     if (config->adc_ry >= 0) {
         event->analog[ANALOG_RY] = apply_deadzone(
             pad_read_adc(config->adc_ry, config->invert_ry), dz);
+    }
+
+    // Read analog triggers (no deadzone — 0=released, 255=full)
+    if (config->adc_lt >= 0) {
+        event->analog[ANALOG_L2] = pad_read_adc(config->adc_lt, false);
+    }
+    if (config->adc_rt >= 0) {
+        event->analog[ANALOG_R2] = pad_read_adc(config->adc_rt, false);
+    }
+
+    // Right hat → right analog stick (digital 4-direction → 0/128/255)
+    // Used by Alpakka and similar controllers with a directional hat for the right stick.
+    if (config->rhat_up > 0 || config->rhat_down > 0 ||
+        config->rhat_left > 0 || config->rhat_right > 0) {
+        bool ah = config->active_high;
+        bool up    = (config->rhat_up > 0)    && pad_read_button(config->rhat_up, ah);
+        bool down  = (config->rhat_down > 0)  && pad_read_button(config->rhat_down, ah);
+        bool left  = (config->rhat_left > 0)  && pad_read_button(config->rhat_left, ah);
+        bool right = (config->rhat_right > 0) && pad_read_button(config->rhat_right, ah);
+
+        if (left)       event->analog[ANALOG_RX] = 0;
+        else if (right) event->analog[ANALOG_RX] = 255;
+        else            event->analog[ANALOG_RX] = 128;
+
+        if (up)         event->analog[ANALOG_RY] = 0;
+        else if (down)  event->analog[ANALOG_RY] = 255;
+        else            event->analog[ANALOG_RY] = 128;
+
+        // Suppress R3 when any hat direction is active — the hat's center
+        // click shares the same contact, so directional presses also trigger
+        // the R3 pin. Only count R3 when no direction is held.
+        if (up || down || left || right) {
+            event->buttons &= ~JP_BUTTON_R3;
+        }
     }
 }
 
@@ -390,6 +645,7 @@ int pad_input_add_device(const pad_device_config_t* config) {
     pad_events[index].dev_addr = 0xF0 + index;  // Virtual address for pad devices
     pad_events[index].instance = index;
     pad_events[index].type = INPUT_TYPE_GAMEPAD;
+    pad_events[index].transport = INPUT_TRANSPORT_GPIO;
 
     pad_prev_buttons[index] = 0;
 
@@ -403,8 +659,24 @@ void pad_input_clear_devices(void) {
     memset(pad_devices, 0, sizeof(pad_devices));
 }
 
+void pad_input_set_dpad_mode(uint8_t mode) {
+    if (mode <= DPAD_MODE_RIGHT_STICK) {
+        dpad_mode = (dpad_mode_t)mode;
+    }
+}
+
 uint8_t pad_input_get_device_count(void) {
     return pad_device_count;
+}
+
+const input_event_t* pad_input_get_event(uint8_t device_index) {
+    if (device_index >= pad_device_count) return NULL;
+    return &pad_events[device_index];
+}
+
+const pad_device_config_t* pad_input_get_config(uint8_t device_index) {
+    if (device_index >= pad_device_count) return NULL;
+    return pad_devices[device_index];
 }
 
 // ============================================================================
@@ -424,15 +696,34 @@ static void pad_input_init(void) {
 
 static void pad_input_task(void) {
     // Update I2C expander cache once per cycle (more efficient than per-button)
+#ifdef HAS_I2C_EXPANDER
     if (i2c_initialized) {
         i2c_expander_update_cache();
     }
+#endif
 
     // Poll all registered devices
     for (uint8_t i = 0; i < pad_device_count; i++) {
         pad_poll_device(i);
 
-        // Submit to router
+#ifdef SENSOR_JOYWING
+        // Merge JoyWing data into pad event (combined custom controller)
+        const input_event_t* jw = joywing_get_event();
+        if (jw) {
+            pad_events[i].buttons |= jw->buttons;
+            // JoyWing analog overwrites pad analog (JoyWing has priority for sticks)
+            if (jw->analog[ANALOG_LX] != 128 || jw->analog[ANALOG_LY] != 128) {
+                pad_events[i].analog[ANALOG_LX] = jw->analog[ANALOG_LX];
+                pad_events[i].analog[ANALOG_LY] = jw->analog[ANALOG_LY];
+            }
+            if (jw->analog[ANALOG_RX] != 128 || jw->analog[ANALOG_RY] != 128) {
+                pad_events[i].analog[ANALOG_RX] = jw->analog[ANALOG_RX];
+                pad_events[i].analog[ANALOG_RY] = jw->analog[ANALOG_RY];
+            }
+        }
+#endif
+
+        // Submit to router (combo hotkeys applied there for all input sources)
         router_submit_input(&pad_events[i]);
     }
 }

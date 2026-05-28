@@ -1,4 +1,3 @@
-import './style.css';
 import { JoypadConfigApp } from './app.js';
 
 // Initialize app when DOM is ready

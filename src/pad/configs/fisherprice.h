@@ -11,13 +11,13 @@
 #include "../pad_input.h"
 
 // ============================================================================
-// FISHER PRICE - BUTTON ONLY (Original mod)
+// FISHER PRICE V1 - BUTTON ONLY (Original mod)
 // ============================================================================
 // KB2040 pin mapping for Fisher Price controller button mod.
 // Active high buttons (pressed = GPIO high, button connects to 3.3V)
 
-static const pad_device_config_t pad_config_fisherprice = {
-    .name = "Fisher Price",
+static const pad_device_config_t pad_config_fisherprice_v1 = {
+    .name = "Fisher Price V1",
     .active_high = true,
 
     // No I2C expanders
@@ -53,19 +53,28 @@ static const pad_device_config_t pad_config_fisherprice = {
     // Home/Capture
     .a1 = PAD_PIN_DISABLED,
     .a2 = PAD_PIN_DISABLED,
+    .a3 = PAD_PIN_DISABLED,
+    .a4 = PAD_PIN_DISABLED,
 
     // Extra paddles
     .l4 = PAD_PIN_DISABLED,
     .r4 = PAD_PIN_DISABLED,
 
-    // Toggle switch: HIGH = D-pad mode, LOW = analog stick mode
-    .dpad_toggle = 6,
+    .f1 = PAD_PIN_DISABLED,
+    .f2 = PAD_PIN_DISABLED,
+
+    .toggle = {
+        { .pin = 6, .function = PAD_TOGGLE_FUNC_DPAD_LSTICK, .invert = true },
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false },
+    },
 
     // No analog sticks
     .adc_lx = PAD_PIN_DISABLED,
     .adc_ly = PAD_PIN_DISABLED,
     .adc_rx = PAD_PIN_DISABLED,
     .adc_ry = PAD_PIN_DISABLED,
+    .adc_lt = PAD_PIN_DISABLED,
+    .adc_rt = PAD_PIN_DISABLED,
 
     .invert_lx = false,
     .invert_ly = false,
@@ -76,17 +85,27 @@ static const pad_device_config_t pad_config_fisherprice = {
     // NeoPixel on GPIO 17
     .led_pin = 17,
     .led_count = 1,
+
+    // No QWIIC/UART link
+    .qwiic_tx = PAD_PIN_DISABLED,
+    .qwiic_rx = PAD_PIN_DISABLED,
+    .qwiic_i2c_inst = PAD_PIN_DISABLED,
+    .usb_host_dp = PAD_PIN_DISABLED,
+    .joywing = { 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+    },
 };
 
 // ============================================================================
-// FISHER PRICE ANALOG (Advanced mod with analog stick)
+// FISHER PRICE V2 - ANALOG (Advanced mod with analog stick + shoulders)
 // ============================================================================
 // KB2040 pin mapping with analog stick on ADC.
 // D-pad buttons directly wired, analog stick on ADC pins 26-27.
-// Based on GP2040-CE kb2040-fisher-price-analog branch.
+// Based on GP2040-CE kb2040-fisher-price-v2 branch.
 
-static const pad_device_config_t pad_config_fisherprice_analog = {
-    .name = "Fisher Price Analog",
+static const pad_device_config_t pad_config_fisherprice_v2 = {
+    .name = "Fisher Price V2",
     .active_high = true,
 
     // No I2C expanders
@@ -122,24 +141,31 @@ static const pad_device_config_t pad_config_fisherprice_analog = {
     // Home/Capture
     .a1 = PAD_PIN_DISABLED,
     .a2 = PAD_PIN_DISABLED,
+    .a3 = PAD_PIN_DISABLED,
+    .a4 = PAD_PIN_DISABLED,
 
     // Extra paddles
     .l4 = PAD_PIN_DISABLED,
     .r4 = PAD_PIN_DISABLED,
 
-    // Toggle switch for D-pad mode (slider)
-    // HIGH = D-pad outputs as digital D-pad
-    // LOW = D-pad outputs as left analog stick
-    .dpad_toggle = 6,
+    .f1 = PAD_PIN_DISABLED,
+    .f2 = PAD_PIN_DISABLED,
+
+    .toggle = {
+        { .pin = 6, .function = PAD_TOGGLE_FUNC_DPAD_RSTICK, .invert = false },
+        { .pin = PAD_PIN_DISABLED, .function = 0, .invert = false },
+    },
 
     // Left analog stick on ADC (GPIO 26-27)
     .adc_lx = 0,    // ADC channel 0 (GPIO 26)
     .adc_ly = 1,    // ADC channel 1 (GPIO 27)
     .adc_rx = PAD_PIN_DISABLED,
     .adc_ry = PAD_PIN_DISABLED,
+    .adc_lt = PAD_PIN_DISABLED,
+    .adc_rt = PAD_PIN_DISABLED,
 
     .invert_lx = false,
-    .invert_ly = false,
+    .invert_ly = true,
     .invert_rx = false,
     .invert_ry = false,
     .deadzone = 10,
@@ -147,6 +173,16 @@ static const pad_device_config_t pad_config_fisherprice_analog = {
     // NeoPixel on GPIO 17
     .led_pin = 17,
     .led_count = 1,
+
+    // No QWIIC/UART link
+    .qwiic_tx = PAD_PIN_DISABLED,
+    .qwiic_rx = PAD_PIN_DISABLED,
+    .qwiic_i2c_inst = PAD_PIN_DISABLED,
+    .usb_host_dp = PAD_PIN_DISABLED,
+    .joywing = { 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+        { .i2c_bus = 0, .sda = PAD_PIN_DISABLED, .scl = PAD_PIN_DISABLED, .addr = 0x49 }, 
+    },
 };
 
 #endif // PAD_CONFIG_FISHERPRICE_H

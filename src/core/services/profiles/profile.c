@@ -4,8 +4,9 @@
 // Supports per-output-target profile sets with shared fallback.
 
 #include "profile.h"
-#include "pico/stdlib.h"
+#include "platform/platform.h"
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
 // External dependencies (feedback and visual indication)
@@ -188,11 +189,25 @@ const char* profile_get_name(output_target_t output, uint8_t index)
     return set->profiles[index].name;
 }
 
+const profile_t* profile_get_by_index(output_target_t output, uint8_t index)
+{
+    const profile_set_t* set = get_profile_set(output);
+    if (!set || index >= set->profile_count) {
+        return NULL;
+    }
+    return &set->profiles[index];
+}
+
 // ============================================================================
 // PROFILE SWITCHING
 // ============================================================================
 
-void profile_set_active(output_target_t output, uint8_t index)
+// Shared core for the persistent (profile_set_active) and ephemeral
+// (profile_select_active) variants. persist=true writes the new index to
+// flash; persist=false updates RAM and triggers feedback only. The latter
+// is for joypad-live / crowd-control flows where flash writes per switch
+// would burn out the chip over thousands of changes per session.
+static void profile_set_active_internal(output_target_t output, uint8_t index, bool persist)
 {
     const profile_set_t* set = get_profile_set(output);
     if (!set || set->profile_count == 0 || index >= set->profile_count) {
@@ -214,11 +229,26 @@ void profile_set_active(output_target_t output, uint8_t index)
     uint8_t player_count = get_player_count ? get_player_count() : 0;
     profile_indicator_trigger(index, player_count);
 
-    // Save to flash
-    profile_save_to_flash(output);
+    if (persist) {
+        profile_save_to_flash(output);
+    }
 
     const char* name = profile_get_name(output, index);
-    printf("[profile] Switched to: %s (output=%d)\n", name ? name : "(unknown)", output);
+    printf("[profile] %s: %s (output=%d)\n",
+           persist ? "Switched" : "Selected (RAM only)",
+           name ? name : "(unknown)", output);
+}
+
+void profile_set_active(output_target_t output, uint8_t index)
+{
+    profile_set_active_internal(output, index, /*persist=*/true);
+}
+
+// Ephemeral variant: same effect for the current session, no flash write.
+// On reboot, the previously-persisted selection comes back.
+void profile_select_active(output_target_t output, uint8_t index)
+{
+    profile_set_active_internal(output, index, /*persist=*/false);
 }
 
 void profile_cycle_next(output_target_t output)
@@ -403,7 +433,7 @@ void profile_check_player_switch_combo(uint8_t player_index, uint32_t buttons)
     }
 
     // Select is held
-    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+    uint32_t current_time = platform_time_ms();
 
     if (!combo->p_select_was_held) {
         combo->p_select_hold_start = current_time;
@@ -505,7 +535,7 @@ void profile_check_switch_combo(uint32_t buttons)
     }
 
     // Select is held
-    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+    uint32_t current_time = platform_time_ms();
 
     if (!select_was_held) {
         // Select just pressed - start timer
@@ -804,8 +834,8 @@ void profile_apply(const profile_t* profile,
         input_buttons &= ~JP_BUTTON_DR;   // D-pad Right
     }
 
-    // Initialize output with passthrough values
-    memset(output, 0, sizeof(profile_output_t));
+    // Zero output fields only — autofire_start_ms at the end is preserved across calls.
+    memset(output, 0, offsetof(profile_output_t, autofire_start_ms));
     output->buttons = input_buttons;  // Start with passthrough
     output->left_x = lx;
     output->left_y = ly;
@@ -815,24 +845,41 @@ void profile_apply(const profile_t* profile,
     output->r2_analog = r2;
     output->rz_analog = rz;
 
-    // Set L2/R2 digital buttons based on analog threshold (if threshold > 0)
-    // When threshold is set, it OVERRIDES input L2/R2 (e.g. DualSense's early digital)
-    // Threshold of 0 means passthrough (use input driver's L2/R2 as-is)
-    if (profile) {
-        if (profile->l2_threshold > 0) {
-            // Clear input L2, use only threshold-based activation
-            output->buttons &= ~JP_BUTTON_L2;
-            if (l2 >= profile->l2_threshold) {
-                output->buttons |= JP_BUTTON_L2;
-            }
-        }
-        if (profile->r2_threshold > 0) {
-            // Clear input R2, use only threshold-based activation
-            output->buttons &= ~JP_BUTTON_R2;
-            if (r2 >= profile->r2_threshold) {
-                output->buttons |= JP_BUTTON_R2;
-            }
-        }
+    // Normalize: digital-only triggers (fight sticks, arcade pads) report
+    // digital L2/R2 with no analog data. Synthesize full analog press so
+    // threshold logic works uniformly across all controller types.
+    if ((input_buttons & JP_BUTTON_L2) && l2 == 0) {
+        l2 = 255;
+        output->l2_analog = 255;
+    }
+    if ((input_buttons & JP_BUTTON_R2) && r2 == 0) {
+        r2 = 255;
+        output->r2_analog = 255;
+    }
+
+    // Optional analog→digital trigger threshold (profile-driven).
+    // When a built-in console profile sets l2_threshold > 0 it OVERRIDES
+    // the input L2/R2 button bits — useful for consoles whose button
+    // layout needs deliberate half/full-press semantics (e.g. avoiding
+    // DualSense's hair-trigger digital firing on a SNES output).
+    //
+    // When no profile is active (apps like usb2usb / gc2usb that pass
+    // through to a USB HID gamepad descriptor with both digital and
+    // analog), DO NOTHING here — let the driver's reported L2/R2 button
+    // bits + analog values flow through unchanged. The output mode is
+    // responsible for any per-output trigger interpretation. Defaulting
+    // to a synthesised threshold (previously 1, then briefly 128) caused
+    // false trigger fires on controllers whose analog l/r reading is
+    // non-zero at rest (e.g. GameCube — buttons 13/14 stuck on in gc2usb).
+    // Custom profiles may still override this post-hoc (see usbd/ble
+    // output paths) using their own per-profile threshold fields.
+    if (profile && profile->l2_threshold > 0) {
+        output->buttons &= ~JP_BUTTON_L2;
+        if (l2 >= profile->l2_threshold) output->buttons |= JP_BUTTON_L2;
+    }
+    if (profile && profile->r2_threshold > 0) {
+        output->buttons &= ~JP_BUTTON_R2;
+        if (r2 >= profile->r2_threshold) output->buttons |= JP_BUTTON_R2;
     }
 
     // Process button combos first (before individual mappings)
@@ -887,6 +934,23 @@ void profile_apply(const profile_t* profile,
 
         // Check if input button is pressed (includes threshold-based L2/R2)
         bool pressed = ((buttons_with_triggers & entry->input) != 0);
+
+        if (entry->autofire_period_ms > 0) {
+            uint8_t bit = __builtin_ctz(entry->input);
+            if (bit < AUTOFIRE_BUTTON_COUNT) {
+                if (pressed) {
+                    if (output->autofire_start_ms[bit] == 0)
+                        output->autofire_start_ms[bit] = platform_time_ms();
+                    uint32_t elapsed = platform_time_ms() - output->autofire_start_ms[bit];
+                    // Time within the current cycle = elapsed % period (ms).
+                    // Button ON for the first half, OFF for the second half.
+                    // e.g. 30 Hz (period=33ms): 0-16ms ON, 17-32ms OFF, 33ms new cycle ...
+                    pressed = (elapsed % entry->autofire_period_ms) < (entry->autofire_period_ms / 2);
+                } else {
+                    output->autofire_start_ms[bit] = 0;
+                }
+            }
+        }
 
         if (pressed) {
             // Set output button(s)
@@ -1030,6 +1094,16 @@ void profile_apply(const profile_t* profile,
                 // Already set above
                 break;
         }
+    }
+
+    // Digital-only trigger fallback: if analog is 0 but digital button is pressed,
+    // synthesize full-press analog value. Handles controllers that report L2/R2 as
+    // buttons only (e.g. 8BitDo Pro2 via generic BT driver).
+    if (output->l2_analog == 0 && (output->buttons & JP_BUTTON_L2)) {
+        output->l2_analog = 255;
+    }
+    if (output->r2_analog == 0 && (output->buttons & JP_BUTTON_R2)) {
+        output->r2_analog = 255;
     }
 }
 

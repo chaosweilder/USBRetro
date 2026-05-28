@@ -2,7 +2,7 @@ name: Deploy Web Config
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       - 'tools/web-config/**'
   workflow_dispatch:
@@ -13,12 +13,16 @@ jobs:
     environment:
       name: Web Config
       url: https://config.joypad.ai
+    env:
+      # Opt JavaScript actions into Node 24 ahead of GitHub forcing it
+      # in June 2026; silences the Node 20 deprecation warning.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install dependencies
         run: cd tools/web-config && npm install
@@ -26,11 +30,27 @@ jobs:
       - name: Build
         run: cd tools/web-config && npm run build
 
+      # Vercel modern CLI flow — no .vercel/ directory or amondnet action.
+      # The CLI honours VERCEL_ORG_ID + VERCEL_PROJECT_ID env vars on its
+      # own when invoked directly (the older amondnet/vercel-action@v25
+      # wrapper around CLI v25 doesn't, hence the previous failures).
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
       - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: ./
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

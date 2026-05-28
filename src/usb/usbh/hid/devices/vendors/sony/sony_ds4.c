@@ -5,7 +5,7 @@
 #include "core/input_event.h"
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
-#include "pico/time.h"
+#include "platform/platform.h"
 #include "app_config.h"
 #include <string.h>
 
@@ -111,6 +111,7 @@ bool is_sony_ds4(uint16_t vid, uint16_t pid) {
     || (vid == 0x20d6 && pid == 0x792a) // PowerA FUSION Wired FightPad (6-button layout)
     || (vid == 0x1f4f && pid == 0x1002) // ASW Guilty Gear xrd Controller (Collector's Edition)
     || (vid == 0x04d8 && pid == 0x1529) // Universal PCB Project (UPCB Open Source)
+    || (vid == 0x0e6f && pid == 0x020a) // Victrix Pro FS for PS4
   );
 }
 
@@ -184,8 +185,8 @@ void input_sony_ds4(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
 
       uint16_t tx = (((ds4_report.tpad_f1_pos[1] & 0x0f) << 8)) | ((ds4_report.tpad_f1_pos[0] & 0xff) << 0);
       uint16_t ty = (((ds4_report.tpad_f1_pos[1] & 0xf0) >> 4)) | ((ds4_report.tpad_f1_pos[2] & 0xff) << 4);
-      // TU_LOG1(" (tx, ty) = (%u, %u)\r\n", tx, ty);
-      // TU_LOG1("\r\n");
+      uint16_t tx2 = (((ds4_report.tpad_f2_pos[1] & 0x0f) << 8)) | ((ds4_report.tpad_f2_pos[0] & 0xff) << 0);
+      uint16_t ty2 = (((ds4_report.tpad_f2_pos[1] & 0xf0) >> 4)) | ((ds4_report.tpad_f2_pos[2] & 0xff) << 4);
 
       bool dpad_up    = (ds4_report.dpad == 0 || ds4_report.dpad == 1 || ds4_report.dpad == 7);
       bool dpad_right = ((ds4_report.dpad >= 1 && ds4_report.dpad <= 3));
@@ -250,22 +251,57 @@ void input_sony_ds4(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
       // keep analog within range [1-255]
       ensureAllNonZero(&analog_1x, &analog_1y, &analog_2x, &analog_2y);
 
-      // adds deadzone
-      uint8_t deadzone = 40;
-      if (analog_1x > (128-(deadzone/2)) && analog_1x < (128+(deadzone/2))) analog_1x = 128;
-      if (analog_1y > (128-(deadzone/2)) && analog_1y < (128+(deadzone/2))) analog_1y = 128;
-      if (analog_2x > (128-(deadzone/2)) && analog_2x < (128+(deadzone/2))) analog_2x = 128;
-      if (analog_2y > (128-(deadzone/2)) && analog_2y < (128+(deadzone/2))) analog_2y = 128;
+      // Radial dead zone: only snap to center if the stick is inside a
+      // circle of `dz_radius` around (128,128). The previous per-axis
+      // rectangular dead zone caused magnetic-snap-to-cardinals — a
+      // diagonal tilt got one axis zeroed while the other passed through,
+      // turning smooth motion into pure N/S/E/W. The DS4 itself filters
+      // residual analog noise, so this only needs to be a small circle.
+      const int dz_radius = 6;  // ~5% of half-range
+      const int dz_radius_sq = dz_radius * dz_radius;
+      int dx1 = (int)analog_1x - 128, dy1 = (int)analog_1y - 128;
+      if (dx1*dx1 + dy1*dy1 < dz_radius_sq) { analog_1x = 128; analog_1y = 128; }
+      int dx2 = (int)analog_2x - 128, dy2 = (int)analog_2y - 128;
+      if (dx2*dx2 + dy2*dy2 < dz_radius_sq) { analog_2x = 128; analog_2y = 128; }
 
       // add to accumulator and post to the state machine
       // if a scan from the host machine is ongoing, wait
+      // Battery: status[0] at report[29] — bits 0-3 = level, bit 4 = cable connected
+      // Level interpretation differs based on cable state (per Linux kernel hid-playstation.c)
+      uint8_t bat_level = 0;
+      bool bat_charging = false;
+      if (len >= 30) {
+        uint8_t raw = report[29];
+        uint8_t battery_data = (raw & 0x0F);
+        bool cable_connected = (raw & 0x10) != 0;
+
+        if (cable_connected) {
+            if (battery_data < 10) {
+                bat_level = battery_data * 10 + 5;
+                bat_charging = true;
+            } else if (battery_data == 10) {
+                bat_level = 100;
+                bat_charging = true;
+            } else if (battery_data == 11) {
+                bat_level = 100;
+                bat_charging = false;  // Full
+            } else {
+                bat_level = 0;  // Error (14=voltage/temp, 15=charge)
+                bat_charging = false;
+            }
+        } else {
+            if (battery_data < 10)
+                bat_level = battery_data * 10 + 5;
+            else
+                bat_level = 100;
+            bat_charging = false;
+        }
+      }
+
       input_event_t event = {
         .dev_addr = dev_addr,
         .instance = instance,
         .type = INPUT_TYPE_GAMEPAD,
-        .transport = INPUT_TRANSPORT_USB,
-        .transport = INPUT_TRANSPORT_USB,
-        .transport = INPUT_TRANSPORT_USB,
         .transport = INPUT_TRANSPORT_USB,
         .buttons = buttons,
         .button_count = 10,  // PS4: Cross, Circle, Square, Triangle, L1, R1, L2, R2, L3, R3
@@ -276,6 +312,14 @@ void input_sony_ds4(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u
         .has_motion = true,
         .accel = {ds4_report.accel[0], ds4_report.accel[1], ds4_report.accel[2]},
         .gyro = {ds4_report.gyro[0], ds4_report.gyro[1], ds4_report.gyro[2]},
+        .battery_level = bat_level,
+        .battery_charging = bat_charging,
+        // Touchpad (2-finger capacitive)
+        .has_touch = true,
+        .touch = {
+          { .x = tx,  .y = ty,  .active = !ds4_report.tpad_f1_down },
+          { .x = tx2, .y = ty2, .active = !ds4_report.tpad_f2_down },
+        },
       };
       router_submit_input(&event);
 
@@ -348,7 +392,7 @@ void task_sony_ds4(uint8_t dev_addr, uint8_t instance, device_output_config_t* c
   const uint32_t interval_ms = 20;
   static uint32_t start_ms = 0;
 
-  uint32_t current_time_ms = to_ms_since_boot(get_absolute_time());
+  uint32_t current_time_ms = platform_time_ms();
   if (current_time_ms - start_ms >= interval_ms) {
     start_ms = current_time_ms;
     output_sony_ds4(dev_addr, instance, config);

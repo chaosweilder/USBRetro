@@ -3,333 +3,204 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Joypad Config</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 398 338' fill='%23e94560'><path d='m357.4 336.3c-33.3 7.6-58.6-12.8-64.8-41.9-4.5-21-20.1-34.4-41.6-34.6-35.8-.3-71.6-.5-107.5.2-16.8.3-28.8 9.4-35.3 25.1-2.1 5-3.1 10.5-4.7 15.7C92.5 338.1 48.2 350.4 19.5 324c-17.1-15.7-22.8-34.9-17.7-57.5C13.1 217.5 24.3 168.4 35.8 119.4 41.7 94.1 65.2 76.1 91.3 76.1c70.8 0 141.6 0 212.4 0 29.5 0 52.6 17.4 59.3 46 11.5 49 22.1 98.2 33.5 147.3 7 30-12.5 58.9-39.1 66.9M153.8 149.7c-6.5-.8-13-.5-19.5-.3-3.4.1-4.9-1.2-4.7-4.7.2-4.7.1-9.3 0-14-.1-9.5-6.7-16.2-15.9-16.3-9.4-.1-15.5 5.8-15.8 15.5-.1 5-.2 10 0 15 .1 3.5-1.4 4.7-4.8 4.6-5.8-.1-11.6 0-17.5 0-3.7.1-6.7 1.6-9.3 4.2-4.8 5-5.6 11-3.3 17.1 2.6 6.8 8.4 9.7 15.4 10.1 5 .3 10 .2 15 0 3.5-.1 4.8 1.4 4.7 4.7-.1 4.8-.1 9.7 0 14.5.3 8.3 6.9 14.7 15.1 14.7 8.7 0 16.1-6.7 16.3-15 .1-4.3.3-8.7 0-13-.3-4.4 1.1-6.4 5.8-6.1 5 .3 10 .3 15 0 8.3-.5 15.3-6.2 16.2-13 1.2-8.7-2.8-14.8-12.8-18.2m28.2 70.2c15.4 9.1 33 5.5 42-8.8 3.8-6 4.2-10.5 1.2-13.1-3.2-2.8-6.8-1.8-12.4 3.5-8.3 7.7-17.4 8.2-26.6 1.5-1.3-1-2.6-2.1-3.9-3.1-2.6-1.7-5.3-2.8-8.2-.6-3 2.3-3.3 5.2-2.2 8.5 1.8 5.1 5.4 8.7 10.2 12.2M313.7 180.2c8.5 2.1 16.8-1.3 20.4-8.3 3.3-6.4 1.6-14.6-3.8-19-5.6-4.6-16.4-4.9-21.9-.6-11.3 8.8-6 24.5 5.3 27.9m-39.4-62.1c-1 1.1-2.2 2.1-3 3.3-4.8 7.1-3.7 16.7 2.5 22.3 5.8 5.2 15.1 5.1 21.6-.2 5-4.1 6.3-15.6 2.5-21.7-4.5-7.2-14.3-9-23.6-3.7m-40.2 52.3c.7 1.3 1.3 2.7 2.1 3.9 3.6 5.1 10.7 7.8 16.7 6.4 6.5-1.6 11.1-5.5 12.5-12.1 1.4-6.7-.4-12.5-6.2-16.7-4.7-3.3-14.7-3.6-19.5-.3-6.5 4.5-7.7 10.8-5.7 18.8m51 11.5c-9 .7-14.9 5.5-16.6 13.7-1.6 7.5 3.4 15.9 10.6 18.1 8.3 2.5 17.8-1.3 19.7-9 2.6-10.6 1.8-19.1-13.7-22.9z'/><path d='m210.5 2.6c13.4 7.6 18.8 21.5 13.3 33.9-5.5 12.5-19.6 19-32.7 15.1-13.8-4.1-22-19-18-32.7 3.8-13.4 19.2-21.8 32.8-18 1.4.4 2.8 1 4.6 1.6z'/></svg>">
+    <link rel="stylesheet" href="./style.css">
+    <title>Joypad OS Config</title>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Joypad Config</h1>
-            <div class="status">
-                <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">Disconnected</span>
-                <button id="connectBtn">Connect</button>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <svg class="sidebar-logo" viewBox="0 0 398 338" fill="currentColor"><path d="m357.4 336.3c-33.3 7.6-58.6-12.8-64.8-41.9-4.5-21-20.1-34.4-41.6-34.6-35.8-.3-71.6-.5-107.5.2-16.8.3-28.8 9.4-35.3 25.1-2.1 5-3.1 10.5-4.7 15.7C92.5 338.1 48.2 350.4 19.5 324c-17.1-15.7-22.8-34.9-17.7-57.5C13.1 217.5 24.3 168.4 35.8 119.4 41.7 94.1 65.2 76.1 91.3 76.1c70.8 0 141.6 0 212.4 0 29.5 0 52.6 17.4 59.3 46 11.5 49 22.1 98.2 33.5 147.3 7 30-12.5 58.9-39.1 66.9M153.8 149.7c-6.5-.8-13-.5-19.5-.3-3.4.1-4.9-1.2-4.7-4.7.2-4.7.1-9.3 0-14-.1-9.5-6.7-16.2-15.9-16.3-9.4-.1-15.5 5.8-15.8 15.5-.1 5-.2 10 0 15 .1 3.5-1.4 4.7-4.8 4.6-5.8-.1-11.6 0-17.5 0-3.7.1-6.7 1.6-9.3 4.2-4.8 5-5.6 11-3.3 17.1 2.6 6.8 8.4 9.7 15.4 10.1 5 .3 10 .2 15 0 3.5-.1 4.8 1.4 4.7 4.7-.1 4.8-.1 9.7 0 14.5.3 8.3 6.9 14.7 15.1 14.7 8.7 0 16.1-6.7 16.3-15 .1-4.3.3-8.7 0-13-.3-4.4 1.1-6.4 5.8-6.1 5 .3 10 .3 15 0 8.3-.5 15.3-6.2 16.2-13 1.2-8.7-2.8-14.8-12.8-18.2m28.2 70.2c15.4 9.1 33 5.5 42-8.8 3.8-6 4.2-10.5 1.2-13.1-3.2-2.8-6.8-1.8-12.4 3.5-8.3 7.7-17.4 8.2-26.6 1.5-1.3-1-2.6-2.1-3.9-3.1-2.6-1.7-5.3-2.8-8.2-.6-3 2.3-3.3 5.2-2.2 8.5 1.8 5.1 5.4 8.7 10.2 12.2M313.7 180.2c8.5 2.1 16.8-1.3 20.4-8.3 3.3-6.4 1.6-14.6-3.8-19-5.6-4.6-16.4-4.9-21.9-.6-11.3 8.8-6 24.5 5.3 27.9m-39.4-62.1c-1 1.1-2.2 2.1-3 3.3-4.8 7.1-3.7 16.7 2.5 22.3 5.8 5.2 15.1 5.1 21.6-.2 5-4.1 6.3-15.6 2.5-21.7-4.5-7.2-14.3-9-23.6-3.7m-40.2 52.3c.7 1.3 1.3 2.7 2.1 3.9 3.6 5.1 10.7 7.8 16.7 6.4 6.5-1.6 11.1-5.5 12.5-12.1 1.4-6.7-.4-12.5-6.2-16.7-4.7-3.3-14.7-3.6-19.5-.3-6.5 4.5-7.7 10.8-5.7 18.8m51 11.5c-9 .7-14.9 5.5-16.6 13.7-1.6 7.5 3.4 15.9 10.6 18.1 8.3 2.5 17.8-1.3 19.7-9 2.6-10.6 1.8-19.1-13.7-22.9z"/><path d="m210.5 2.6c13.4 7.6 18.8 21.5 13.3 33.9-5.5 12.5-19.6 19-32.7 15.1-13.8-4.1-22-19-18-32.7 3.8-13.4 19.2-21.8 32.8-18 1.4.4 2.8 1 4.6 1.6z"/></svg>
+                <div class="sidebar-title">JoypadOS Config</div>
             </div>
-        </header>
+            <nav class="sidebar-nav" id="sidebarNav">
+                <div class="nav-group">
+                    <div class="nav-group-label">Core</div>
+                    <a class="nav-link active" data-page="device-info" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.399l-.502.002.064-.347 2.358-.357zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/></svg>
+                        Device Info
+                    </a>
+                    <a class="nav-link" data-page="router" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5m14-7a.5.5 0 0 1-.5.5H2.707l3.147 3.146a.5.5 0 1 1-.708.708l-4-4a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 4H14.5a.5.5 0 0 1 .5.5"/></svg>
+                        Router
+                    </a>
+                    <a class="nav-link" data-page="profiles" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
+                        Profiles
+                    </a>
+                    <a class="nav-link" data-page="hotkeys" id="navHotkeys" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h12zM2 4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H2z"/><path d="M13 10.25a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm0-2a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm-5 0A.25.25 0 0 1 8.25 8h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 8 8.75v-.5zm2 0a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm1 2a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm-5-2A.25.25 0 0 1 6.25 8h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 6 8.75v-.5zm-2 0A.25.25 0 0 1 4.25 8h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 4 8.75v-.5zm-2 0A.25.25 0 0 1 2.25 8h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 2 8.75v-.5zm11-2a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm-2 0a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm-2 0A.25.25 0 0 1 9.25 6h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 9 6.75v-.5zm-2 0A.25.25 0 0 1 7.25 6h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 7 6.75v-.5zm-2 0A.25.25 0 0 1 5.25 6h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5A.25.25 0 0 1 5 6.75v-.5zm-3 0A.25.25 0 0 1 2.25 6h1.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-1.5A.25.25 0 0 1 2 6.75v-.5zm0 4a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5zm2 0a.25.25 0 0 1 .25-.25h5.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-5.5a.25.25 0 0 1-.25-.25v-.5zm7 0a.25.25 0 0 1 .25-.25h.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-.5a.25.25 0 0 1-.25-.25v-.5z"/></svg>
+                        Hotkeys
+                    </a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">Input</div>
+                    <a class="nav-link" data-page="gpio" id="navGpio" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 6.027a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0m-1.5 1.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1m2.5-.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0m-1.5 1.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1m-6.5-3h1v1h1v1h-1v1h-1v-1h-1v-1h1z"/><path d="M3.051 3.26a.5.5 0 0 1 .354-.613l1.932-.518a.5.5 0 0 1 .62.39c.655-.079 1.35-.117 2.043-.117.72 0 1.443.041 2.12.126a.5.5 0 0 1 .622-.399l1.932.518a.5.5 0 0 1 .306.729q.211.136.373.297c.408.408.78 1.05 1.095 1.772.32.733.599 1.591.805 2.466s.34 1.78.364 2.606c.024.816-.059 1.602-.328 2.21a1.42 1.42 0 0 1-1.445.83c-.636-.067-1.115-.394-1.513-.773-.245-.232-.496-.526-.739-.808-.126-.148-.25-.292-.368-.423-.728-.804-1.597-1.527-3.224-1.527s-2.496.723-3.224 1.527c-.119.131-.242.275-.368.423-.243.282-.494.575-.739.808-.398.38-.877.706-1.513.773a1.42 1.42 0 0 1-1.445-.83c-.27-.608-.352-1.395-.329-2.21.024-.826.16-1.73.365-2.606.206-.875.486-1.733.805-2.466.315-.722.687-1.364 1.094-1.772a2.3 2.3 0 0 1 .433-.335l-.028-.079z"/></svg>
+                        Custom Pad
+                    </a>
+                    <a class="nav-link" data-page="bt-host" id="navBtHost" href="#">
+                        <svg width="18" height="18" viewBox="3.5 0.5 9 15" fill="currentColor"><path fill-rule="evenodd" d="m8.543 3.948 1.316 1.316L8.543 6.58zm0 8.104 1.316-1.316L8.543 9.42zm-1.41-4.043L4.275 5.133l.827-.827L7.377 6.58V1.128l4.137 4.136L8.787 8.01l2.745 2.745-4.136 4.137V9.42l-2.294 2.274-.827-.827z"/></svg>
+                        Bluetooth Host
+                    </a>
+                    <a class="nav-link" data-page="usb-host" id="navUsbHost" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="m7.792.312-1.533 2.3A.25.25 0 0 0 6.467 3H7.5v7.319a2.5 2.5 0 0 0-.515-.298L5.909 9.56A1.5 1.5 0 0 1 5 8.18v-.266a1.5 1.5 0 1 0-1 0v.266a2.5 2.5 0 0 0 1.515 2.298l1.076.461a1.5 1.5 0 0 1 .888 1.129 2.001 2.001 0 1 0 1.021-.006v-.902a1.5 1.5 0 0 1 .756-1.303l1.484-.848A2.5 2.5 0 0 0 11.995 7h.755a.25.25 0 0 0 .25-.25v-2.5a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25v2.5c0 .138.112.25.25.25h.741a1.5 1.5 0 0 1-.747 1.142L8.76 8.99a3 3 0 0 0-.26.17V3h1.033a.25.25 0 0 0 .208-.389L8.208.312a.25.25 0 0 0-.416 0"/></svg>
+                        USB Host
+                    </a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">Output</div>
+                    <a class="nav-link" data-page="feedback" id="navFeedback" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13h-5a.5.5 0 0 1-.46-.302l-.761-1.77a1.964 1.964 0 0 0-.453-.618A5.984 5.984 0 0 1 2 6zm3 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1-.5-.5z"/></svg>
+                        Feedback
+                    </a>
+                    <a class="nav-link" data-page="bluetooth" id="navBluetooth" href="#">
+                        <svg width="18" height="18" viewBox="3.5 0.5 9 15" fill="currentColor"><path fill-rule="evenodd" d="m8.543 3.948 1.316 1.316L8.543 6.58zm0 8.104 1.316-1.316L8.543 9.42zm-1.41-4.043L4.275 5.133l.827-.827L7.377 6.58V1.128l4.137 4.136L8.787 8.01l2.745 2.745-4.136 4.137V9.42l-2.294 2.274-.827-.827z"/></svg>
+                        Bluetooth Device
+                    </a>
+                    <a class="nav-link" data-page="usb" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="m7.792.312-1.533 2.3A.25.25 0 0 0 6.467 3H7.5v7.319a2.5 2.5 0 0 0-.515-.298L5.909 9.56A1.5 1.5 0 0 1 5 8.18v-.266a1.5 1.5 0 1 0-1 0v.266a2.5 2.5 0 0 0 1.515 2.298l1.076.461a1.5 1.5 0 0 1 .888 1.129 2.001 2.001 0 1 0 1.021-.006v-.902a1.5 1.5 0 0 1 .756-1.303l1.484-.848A2.5 2.5 0 0 0 11.995 7h.755a.25.25 0 0 0 .25-.25v-2.5a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25v2.5c0 .138.112.25.25.25h.741a1.5 1.5 0 0 1-.747 1.142L8.76 8.99a3 3 0 0 0-.26.17V3h1.033a.25.25 0 0 0 .208-.389L8.208.312a.25.25 0 0 0-.416 0"/></svg>
+                        USB Device
+                    </a>
+                    <a class="nav-link" data-page="native-output" id="navNativeOutput" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><!-- Stylized N (N64-like) --><path d="M2 2 L5 2 L11 11.5 L11 2 L14 2 L14 14 L11 14 L5 4.5 L5 14 L2 14 Z"/></svg>
+                        <span id="navNativeOutputLabel">Native</span>
+                    </a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">Debug</div>
+                    <a class="nav-link" data-page="input-test" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+                        Input Test
+                    </a>
+                    <a class="nav-link" data-page="log" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 0h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2 2 2 0 0 1-2 2H3a2 2 0 0 1-2-2h1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1H1a2 2 0 0 1 2-2h2V0z"/><path d="M1 6v-.5a.5.5 0 0 1 1 0V6h.5a.5.5 0 0 1 0 1h-.5v.5a.5.5 0 0 1-1 0V7H.5a.5.5 0 0 1 0-1H1zm0 4v-.5a.5.5 0 0 1 1 0v.5h.5a.5.5 0 0 1 0 1H2v.5a.5.5 0 0 1-1 0V11H.5a.5.5 0 0 1 0-1H1z"/></svg>
+                        Log
+                    </a>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">System</div>
+                    <a class="nav-link" data-page="advanced" href="#">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+                        Advanced
+                    </a>
+                </div>
+            </nav>
+        </aside>
 
-        <!-- Connect Prompt -->
-        <div id="connectPrompt" class="connect-prompt">
-            <p>Connect your Joypad device to configure it.</p>
-            <button id="connectBtn2">Connect Device</button>
-            <p style="margin-top: 20px; font-size: 12px;">
-                Requires Chrome, Edge, or Opera with Web Serial API support.
-            </p>
-        </div>
-
-        <!-- Main Content (hidden until connected) -->
-        <div id="mainContent" class="hidden">
-            <!-- Device Info -->
-            <div class="card">
-                <h2>Device</h2>
-                <div class="card-content">
-                    <div class="device-info">
-                        <div class="row">
-                            <span class="label">App</span>
-                            <span class="value" id="deviceApp">-</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Version</span>
-                            <span class="value" id="deviceVersion">-</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Board</span>
-                            <span class="value" id="deviceBoard">-</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Serial</span>
-                            <span class="value" id="deviceSerial">-</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Commit</span>
-                            <span class="value" id="deviceCommit">-</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Build</span>
-                            <span class="value" id="deviceBuild">-</span>
-                        </div>
-                    </div>
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Header Bar (always visible) -->
+            <div class="header-bar" id="headerBar">
+                <div class="header-info" id="headerInfo" style="display:none">
+                    <span class="header-item" id="headerApp">Joypad</span>
+                    <span class="header-sep"></span>
+                    <a class="header-item header-mono header-link" id="headerCommit" target="_blank" rel="noopener">-</a>
+                    <span class="header-sep"></span>
+                    <span class="header-item header-mono" id="headerBoard">-</span>
+                </div>
+                <div class="header-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="header-item" id="statusText">Disconnected</span>
+                    <button id="connectBtn" class="btn-sm">Connect</button>
                 </div>
             </div>
 
-            <!-- USB Output Mode -->
-            <div class="card">
-                <h2>USB Output Mode</h2>
-                <div class="card-content">
-                    <div class="row">
-                        <span class="label">Current Mode</span>
-                        <select id="modeSelect">
-                            <option value="">Loading...</option>
-                        </select>
+            <!-- Connect Prompt -->
+            <div id="connectPrompt" class="connect-prompt">
+                <div class="connect-inner">
+                    <h2>Connect your device</h2>
+                    <p>Choose a connection method to configure your Joypad controller.</p>
+                    <div class="connect-buttons">
+                        <button id="connectSerialBtn">USB (Serial)</button>
+                        <button id="connectBleBtn" class="secondary">Bluetooth (BLE)</button>
                     </div>
-                    <p style="font-size: 12px; color: var(--text-muted);">
-                        Changing mode will reboot the device.
+                    <p class="hint" style="margin-top: 24px;">
+                        USB requires Chrome, Edge, or Opera with Web Serial support.<br>
+                        BLE requires Chrome with Web Bluetooth support.
                     </p>
+                    <div class="connect-notice" id="connectNotice">
+                        <span>Device not showing up? Triple-click the boot button to return to SInput mode.</span>
+                        <button class="notice-close" onclick="this.parentElement.style.display='none';localStorage.setItem('hideConnectNotice','1')">&times;</button>
+                    </div>
+                    <script>if(localStorage.getItem('hideConnectNotice'))document.getElementById('connectNotice').style.display='none'</script>
                 </div>
             </div>
 
-            <!-- Profiles (unified built-in + custom) -->
-            <div class="card" id="customProfilesCard">
-                <h2>Profiles</h2>
-                <div class="card-content">
-                    <div class="row">
-                        <span class="label">Manage Profiles</span>
-                        <button id="newProfileBtn" class="secondary">+ New Profile</button>
+            <!-- Content Area (hidden until connected) -->
+            <div id="mainContent" class="content-area hidden">
+                <section class="page page--active" data-page="device-info">
+                    <div id="cardDeviceInfo"></div>
+                </section>
+                <section class="page" data-page="usb">
+                    <div id="cardUsbOutput"></div>
+                </section>
+                <section class="page" data-page="bluetooth">
+                    <div id="cardBtOutput"></div>
+                </section>
+                <section class="page" data-page="native-output">
+                    <div id="cardNativeOutput"></div>
+                </section>
+                <section class="page" data-page="feedback">
+                    <div id="cardFeedback"></div>
+                </section>
+                <section class="page" data-page="router">
+                    <div id="cardRouter"></div>
+                </section>
+                <section class="page" data-page="hotkeys">
+                    <div id="cardHotkeys"></div>
+                </section>
+                <section class="page" data-page="profiles">
+                    <div id="cardProfiles"></div>
+                </section>
+                <section class="page" data-page="gpio">
+                    <div id="cardPadConfig"></div>
+                </section>
+                <section class="page" data-page="usb-host">
+                    <div id="cardUsbHost"></div>
+                </section>
+                <section class="page" data-page="bt-host">
+                    <div id="cardBtHost"></div>
+                </section>
+                <section class="page" data-page="input-test">
+                    <div id="cardInputTest"></div>
+                </section>
+                <section class="page" data-page="log">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Log</h2>
+                            <button id="debugStreamBtn" class="btn-sm secondary">Debug Stream</button>
+                        </div>
+                        <div class="log" id="log"></div>
                     </div>
-                    <div id="profileList" class="profile-list">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
+                </section>
+                <section class="page" data-page="advanced">
+                    <div id="cardAdvanced"></div>
+                </section>
             </div>
+        </main>
 
-            <!-- Profile Editor Modal -->
-            <div id="profileEditorModal" class="modal hidden">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h3 id="profileEditorTitle">Edit Profile</h3>
-                        <button class="modal-close" id="closeEditorBtn">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label>Profile Name</label>
-                            <input type="text" id="profileNameInput" maxlength="11" placeholder="Profile name">
-                        </div>
-                        <div class="form-group">
-                            <label>Button Mapping</label>
-                            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                For each input button, select what output button it should produce.
-                            </p>
-                            <div id="buttonMapContainer" class="button-map-grid">
-                                <!-- Populated by JS -->
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Stick Sensitivity</label>
-                            <div class="sensitivity-row">
-                                <span>Left Stick</span>
-                                <input type="range" id="leftStickSens" min="0" max="200" value="100">
-                                <span id="leftStickSensValue">100%</span>
-                            </div>
-                            <div class="sensitivity-row">
-                                <span>Right Stick</span>
-                                <input type="range" id="rightStickSens" min="0" max="200" value="100">
-                                <span id="rightStickSensValue">100%</span>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>SOCD Cleaning</label>
-                            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-                                How to handle simultaneous opposite cardinal directions (e.g. Left+Right).
-                            </p>
-                            <select id="socdModeSelect" style="width: 100%;">
-                                <option value="0">Passthrough (no cleaning)</option>
-                                <option value="1">Neutral (cancel both directions)</option>
-                                <option value="2">Up Priority (U+D=U, L+R=neutral) — Hitbox style</option>
-                                <option value="3">Last Win (last input takes priority)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Options</label>
-                            <div class="checkbox-row">
-                                <input type="checkbox" id="flagSwapSticks">
-                                <label for="flagSwapSticks">Swap Left/Right Sticks</label>
-                            </div>
-                            <div class="checkbox-row">
-                                <input type="checkbox" id="flagInvertLY">
-                                <label for="flagInvertLY">Invert Left Y Axis</label>
-                            </div>
-                            <div class="checkbox-row">
-                                <input type="checkbox" id="flagInvertRY">
-                                <label for="flagInvertRY">Invert Right Y Axis</label>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button id="deleteProfileBtn" class="secondary danger">Delete</button>
-                        <div style="flex: 1;"></div>
-                        <button id="cancelEditorBtn" class="secondary">Cancel</button>
-                        <button id="saveProfileBtn">Save Profile</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Wiimote Settings -->
-            <div class="card">
-                <h2>Wiimote</h2>
-                <div class="card-content">
-                    <div class="row">
-                        <span class="label">Orientation</span>
-                        <select id="wiimoteOrientSelect">
-                            <option value="0">Auto</option>
-                            <option value="1">Horizontal</option>
-                            <option value="2">Vertical</option>
-                        </select>
-                    </div>
-                    <p style="font-size: 12px; color: var(--text-muted);">
-                        Controls D-pad mapping when using Wiimote alone (no extension).
-                    </p>
-                </div>
-            </div>
-
-            <!-- Input Test -->
-            <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h2 style="margin-bottom: 0;">Input Test</h2>
-                    <button id="streamBtn" class="secondary" style="padding: 6px 12px; font-size: 12px;">Start Stream</button>
-                </div>
-                <div class="card-content">
-                    <div class="stream-container">
-                        <!-- Input (raw controller data) -->
-                        <div class="stream-section">
-                            <h4>Input (Raw) <span id="inputDeviceName" style="font-weight: normal; color: var(--text-muted);"></span>
-                                <button id="rumbleBtn" class="secondary" style="padding: 4px 8px; font-size: 11px; margin-left: 10px;" title="Test rumble on connected controller">🎮 Rumble</button>
-                            </h4>
-                            <div class="input-display" id="inputDisplay">
-                                <div class="buttons" id="inputButtons">
-                                    <span class="btn" data-bit="0">B1</span>
-                                    <span class="btn" data-bit="1">B2</span>
-                                    <span class="btn" data-bit="2">B3</span>
-                                    <span class="btn" data-bit="3">B4</span>
-                                    <span class="btn" data-bit="4">L1</span>
-                                    <span class="btn" data-bit="5">R1</span>
-                                    <span class="btn" data-bit="6">L2</span>
-                                    <span class="btn" data-bit="7">R2</span>
-                                    <span class="btn" data-bit="8">S1</span>
-                                    <span class="btn" data-bit="9">S2</span>
-                                    <span class="btn" data-bit="10">L3</span>
-                                    <span class="btn" data-bit="11">R3</span>
-                                    <span class="btn" data-bit="20">L4</span>
-                                    <span class="btn" data-bit="21">R4</span>
-                                    <span class="btn" data-bit="12">DU</span>
-                                    <span class="btn" data-bit="13">DD</span>
-                                    <span class="btn" data-bit="14">DL</span>
-                                    <span class="btn" data-bit="15">DR</span>
-                                    <span class="btn" data-bit="16">A1</span>
-                                    <span class="btn" data-bit="17">A2</span>
-                                    <span class="btn" data-bit="18">A3</span>
-                                    <!-- <span class="btn" data-bit="19">A4</span> --><!-- Reserved, not used by any controller -->
-                                </div>
-                                <div class="axes">
-                                    <div class="axis">
-                                        <div>LX: <span id="axisLX">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisLXBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>LY: <span id="axisLY">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisLYBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>RX: <span id="axisRX">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisRXBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>RY: <span id="axisRY">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisRYBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>L2: <span id="axisL2">0</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisL2Bar" style="width: 0%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>R2: <span id="axisR2">0</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="axisR2Bar" style="width: 0%"></div></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Output (after profile mapping) -->
-                        <div class="stream-section">
-                            <h4>Output (Mapped)</h4>
-                            <div class="input-display" id="outputDisplay">
-                                <div class="buttons" id="outputButtons">
-                                    <span class="btn" data-bit="0">B1</span>
-                                    <span class="btn" data-bit="1">B2</span>
-                                    <span class="btn" data-bit="2">B3</span>
-                                    <span class="btn" data-bit="3">B4</span>
-                                    <span class="btn" data-bit="4">L1</span>
-                                    <span class="btn" data-bit="5">R1</span>
-                                    <span class="btn" data-bit="6">L2</span>
-                                    <span class="btn" data-bit="7">R2</span>
-                                    <span class="btn" data-bit="8">S1</span>
-                                    <span class="btn" data-bit="9">S2</span>
-                                    <span class="btn" data-bit="10">L3</span>
-                                    <span class="btn" data-bit="11">R3</span>
-                                    <span class="btn" data-bit="20">L4</span>
-                                    <span class="btn" data-bit="21">R4</span>
-                                    <span class="btn" data-bit="12">DU</span>
-                                    <span class="btn" data-bit="13">DD</span>
-                                    <span class="btn" data-bit="14">DL</span>
-                                    <span class="btn" data-bit="15">DR</span>
-                                    <span class="btn" data-bit="16">A1</span>
-                                    <span class="btn" data-bit="17">A2</span>
-                                    <span class="btn" data-bit="18">A3</span>
-                                    <!-- <span class="btn" data-bit="19">A4</span> --><!-- Reserved, not used by any controller -->
-                                </div>
-                                <div class="axes">
-                                    <div class="axis">
-                                        <div>LX: <span id="outAxisLX">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisLXBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>LY: <span id="outAxisLY">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisLYBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>RX: <span id="outAxisRX">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisRXBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>RY: <span id="outAxisRY">128</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisRYBar" style="width: 50%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>L2: <span id="outAxisL2">0</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisL2Bar" style="width: 0%"></div></div>
-                                    </div>
-                                    <div class="axis">
-                                        <div>R2: <span id="outAxisR2">0</span></div>
-                                        <div class="axis-bar"><div class="axis-bar-fill" id="outAxisR2Bar" style="width: 0%"></div></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Advanced Settings -->
-            <div class="card">
-                <h2>Advanced</h2>
-                <div class="card-content">
-                    <div class="danger-zone">
-                        <h3>Danger Zone</h3>
-                        <div class="buttons">
-                            <button id="clearBtBtn" class="secondary">Clear BT Bonds</button>
-                            <button id="resetBtn" class="secondary">Factory Reset</button>
-                            <button id="rebootBtn" class="secondary">Reboot</button>
-                            <button id="bootselBtn" class="secondary">Bootloader</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Log -->
-            <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h2 style="margin-bottom: 0;">Log</h2>
-                    <button id="debugStreamBtn" class="secondary" style="padding: 6px 12px; font-size: 12px;">Debug Stream</button>
-                </div>
-                <div class="log" id="log"></div>
-            </div>
-        </div>
+        <!-- Mobile Bottom Tabs -->
+        <nav class="mobile-tabs" id="mobileTabs">
+            <button class="tab active" data-group="output">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>
+                <span>Output</span>
+            </button>
+            <button class="tab" data-group="input">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M6 0a1 1 0 0 0-1 1v3.5a.5.5 0 0 1-.5.5h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3a.5.5 0 0 1 .5.5V11a.5.5 0 0 1-.5.5h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3A2.5 2.5 0 0 0 7.5 11V1A1 1 0 0 0 6 0zm4 0a1 1 0 0 0-1 1v10a2.5 2.5 0 0 0 2.5 2.5h3a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 1-.5-.5V7.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 1-.5-.5V1a1 1 0 0 0-1-1z"/></svg>
+                <span>Input</span>
+            </button>
+            <button class="tab" data-group="debug">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+                <span>Debug</span>
+            </button>
+            <button class="tab" data-group="system">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+                <span>System</span>
+            </button>
+        </nav>
     </div>
 
     <script type="module" src="./main.js"></script>

@@ -4,7 +4,7 @@
 [submodule "src/lib/joybus-pio"]
 	path = src/lib/joybus-pio
 	url = https://github.com/RobertDaleSmith/joybus-pio.git
-	branch = c
+	branch = main
 [submodule "src/lib/pico-sdk"]
 	path = src/lib/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk.git
@@ -17,3 +17,10 @@
 [submodule "src/lib/Pico-PIO-USB"]
 	path = src/lib/Pico-PIO-USB
 	url = https://github.com/sekigon-gonnoc/Pico-PIO-USB.git
+[submodule "src/lib/jvsio"]
+	path = src/lib/jvsio
+	url = https://github.com/herzmx/jvsio.git
+[submodule "src/lib/libxsm3"]
+	path = src/lib/libxsm3
+	url = https://github.com/RobertDaleSmith/libxsm3.git
+	branch = joypad-embedded
