@@ -27,7 +27,7 @@
 
 #ifndef WS2812_PIN
   #ifdef ADAFRUIT_FEATHER_RP2040_USB_HOST
-    #define WS2812_PIN 21
+    #define WS2812_PIN 16
     #define WS2812_POWER_PIN 20
   #elif defined(ADAFRUIT_MACROPAD_RP2040)
     #define WS2812_PIN 19
