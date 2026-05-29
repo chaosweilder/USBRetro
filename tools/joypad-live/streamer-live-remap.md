@@ -425,30 +425,14 @@ painful). Keep all device I/O in the standalone API.
 
 ---
 
-## 7. Replicate it ourselves (macOS test plan)
+## 7. Testing without Twitch
 
-We can build/verify everything except the live Twitch front end, which we
-simulate with `curl`.
-
-1. **Flash** a `usb2usb` build and confirm SInput mode (default). Find the CDC
-   port: `ls /dev/cu.usbmodem*`.
-2. **Define two test profiles** with `tools/cdc_test.py <port>`:
-   ```
-   profiles
-   raw <framed PROFILE.SAVE for AswapB>   # or add a profile.save helper to cdc_test.py
-   ```
-   (Easiest: add a `profile.save` verb to `cdc_test.py`, or define them once via
-   config.joypad.ai, then close the browser to free the port.)
-3. **Verify a live swap:** open any gamepad tester (or a game), then
-   `profile.set 1` → confirm A now reports as B. `profile.set 0` → back to normal.
-4. **Run the C# API:** `dotnet run -- /dev/cu.usbmodemXXXX`, then:
-   ```sh
-   curl http://127.0.0.1:8777/profiles
-   curl -X POST http://127.0.0.1:8777/profile/1   # swap
-   curl -X POST http://127.0.0.1:8777/neutral     # reset
-   ```
-5. **Simulate the queue/timer** with a tiny script firing `curl` on a timer to
-   prove the “effect for N seconds then neutral” loop before wiring Streamer.bot.
+Validated end-to-end on macOS without a live Twitch front end: flash a
+`usb2usb` build (SInput mode default), then drive the REST API with `curl` or
+the bundled `simulate_crowd_control.py`, which fires effects on a timer and
+returns to neutral — proving the "effect for N seconds then neutral" loop
+before any Streamer.bot wiring. `tools/cdc_test.py <port>` is handy for poking
+individual `PROFILE.*` commands directly.
 
 ---
 
@@ -465,7 +449,10 @@ simulate with `curl`.
 
 ---
 
-## 9. Future
+## 9. Ideas / not yet implemented
+
+> These are not shipped — aspirational, listed so contributors know the
+> direction.
 
 - **Per-game detection** (console outputs) → auto-profile per game.
 - Ship the bridge + Streamer.bot import code as a reusable “Joypad Crowd Control”
