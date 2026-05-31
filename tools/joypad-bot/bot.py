@@ -70,6 +70,12 @@ Each turn, look at the screen and emit ONE press() tool call listing the buttons
 to hold for the next few frames. Pass an empty list to release everything. The game \
 will advance, and you'll see the next frame.
 
+You will be told your previous action and whether it produced a visible change on \
+the screen. If your last press had no visible effect, the button you pressed almost \
+certainly did nothing useful in this context — try a different button or direction. \
+Cursor/highlight selection menus typically respond to LEFT/RIGHT or UP/DOWN; \
+confirmation is usually A or START. Experiment.
+
 Play to make progress: clear menus, start the game, then play it well. Keep `reason` \
 short — under 20 words. Don't analyze; play."""
 
@@ -153,6 +159,8 @@ def main():
 
     action = 0  # currently-held button bitmask
     history = []
+    prev_state = None         # raw RGB frame from the previous turn
+    prev_call = None          # the previous tool call's {"buttons", "reason"}
 
     print(f"[bot] {args.model} playing {Path(args.rom).name} — "
           f"{args.frames_per_decision} frames/decision, "
@@ -182,7 +190,27 @@ def main():
                 action = 0
                 continue
 
-            # Ask the model what to do.
+            # Diff signal: did the previous action visibly change anything?
+            # Compares the current frame to the one we showed the model last
+            # turn; a clean equality is heuristic but cheap and surprisingly
+            # informative for menu navigation (cursor moves change pixels).
+            if prev_state is not None and prev_state.shape == state.shape:
+                unchanged = bool((state == prev_state).all())
+            else:
+                unchanged = False
+
+            # Build the user-message context. Send only the current frame as
+            # image (cheap) and describe the previous turn in text so the
+            # model has memory without paying for a second image upload.
+            if prev_call is not None:
+                prev_btns = ",".join(prev_call["buttons"]) or "nothing"
+                effect = "the screen did NOT visibly change" if unchanged \
+                         else "the screen changed"
+                ctx = (f"Previous action: press({prev_btns}). After it, "
+                       f"{effect}. Frame {i}. What should I press now?")
+            else:
+                ctx = f"Frame {i}. What should I press?"
+
             img_b64 = frame_to_jpeg_b64(state, max_side=args.max_side)
             t0 = time.time()
             resp = client.chat.completions.create(
@@ -195,7 +223,7 @@ def main():
                             "url": f"data:image/jpeg;base64,{img_b64}",
                             "detail": "low",
                          }},
-                        {"type": "text", "text": f"Frame after decision {i-1}. What should I press now?"},
+                        {"type": "text", "text": ctx},
                     ]},
                 ],
                 tools=TOOLS,
@@ -210,17 +238,23 @@ def main():
             reason = call_args.get("reason", "")[:80]
             action = buttons_to_action(buttons)
 
-            print(f"[{i:03d}] {elapsed_ms:4d}ms  press({buttons:<60})  {reason}".replace(
-                str(buttons), str(buttons)))
+            buttons_str = ",".join(buttons) if buttons else "-"
+            diff_tag = "  [no-change]" if (prev_call is not None and unchanged) else ""
+            print(f"[{i:03d}] {elapsed_ms:4d}ms  press({buttons_str:<48})  {reason}{diff_tag}")
             history.append({
                 "decision": i,
                 "buttons": buttons,
                 "reason": reason,
                 "ms": elapsed_ms,
+                "prev_action_had_effect": (prev_call is not None and not unchanged) if prev_call else None,
             })
 
             if save_dir:
                 Image.fromarray(state).save(save_dir / f"{i:04d}.png")
+
+            # Track for next turn's diff + memory.
+            prev_state = state.copy()
+            prev_call = {"buttons": buttons, "reason": reason}
     except KeyboardInterrupt:
         print("\n[bot] interrupted.")
     finally:
