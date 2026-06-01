@@ -169,8 +169,18 @@ flash_t* flash_get_settings(void);
 // Get active custom profile index (0=Default/passthrough, 1-4=custom profiles)
 uint8_t flash_get_active_profile_index(void);
 
-// Set active custom profile index (saves to flash with debouncing)
+// Set active custom profile index (immediate flash write — blocks ~50 ms
+// with interrupts disabled). Use for PROFILE.SET from the web config and
+// other rare deliberate-config paths where landing before a reboot
+// matters more than not stalling a hot path.
 void flash_set_active_profile_index(uint8_t index);
+
+// Same effect as flash_set_active_profile_index, but the flash write is
+// debounced (~5 s) instead of immediate. Safe to call from hot paths
+// like the SELECT+D-pad cycle hotkey where back-to-back immediate
+// writes would block the USB host / console-output timing and hang
+// the firmware.
+void flash_set_active_profile_index_deferred(uint8_t index);
 
 // Ephemeral variant of the above: update RAM only, do not write to flash.
 // For live-control flows (joypad-live) where many switches per session

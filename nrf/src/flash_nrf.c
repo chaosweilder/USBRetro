@@ -227,6 +227,14 @@ void flash_set_active_profile_index(uint8_t index)
     flash_save(&runtime_settings);
 }
 
+// nRF NVS is already debounced/async, so identical to the immediate
+// variant. Stubbed to satisfy the link contract — RP2040 backend
+// distinguishes immediate vs debounced, nRF doesn't need to.
+void flash_set_active_profile_index_deferred(uint8_t index)
+{
+    flash_set_active_profile_index(index);
+}
+
 uint8_t flash_get_total_profile_count(void)
 {
     if (!runtime_settings_loaded) return 1;
