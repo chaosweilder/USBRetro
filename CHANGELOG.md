@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.1] — 2026-06-02
+
+### Added
+
+#### New Controller Support
+- **Valve Steam Controller 2** — USB host driver covering both direct wired (`VID 0x28DE PID 0x1302`) and the 2.4 GHz "puck" USB dongle (`PID 0x1304`). Decodes the 64-byte report ID `0x45` per the jfedor2/hid-remapper quirks: 13 confirmed buttons (ABXY, LB/RB, LT/RT digital, Select/Start, L3/R3, Steam/Home) into `JP_BUTTON_*`, both sticks with Valve's +Y=up inverted to HID convention, analog L2/R2 triggers (16-bit → 8-bit), and a 6-DOF IMU into `input_event_t.accel/gyro`. Routes to every USB device output mode and every console output the rest of joypad-os supports. Driver is parked at `src/usb/usbh/hid/devices/vendors/valve/steam_controller_2.{c,h}`; design doc at `.dev/docs/STEAM_CONTROLLER_2_PLAN.md`. Untested on hardware (no SC2 here at landing time) but compile-clean on every `usb2usb_*` target — see the design doc for the unmapped button bits (likely grip / paddle / trackpad-click) that still need a debug-log pass on real hardware.
+
+#### Tooling
+- **joypad-bot** — VLM agent that plays emulators through joypad-os adapters. v1 baseline: pure-software VLM-plays-NES loop with last-action context and frame-diff signal. v1.2 adds continuous emulator state + persistent knowledge field. v2 scaffolding lands the LeRobot recorder + trainer + inference path for vision-grounded play.
+
+### Fixed
+- **profile** — apps with built-in *and* custom profiles (`usb2gc`, `usb2pce`, `usb2dc`, `usb2nuon`, `usb23do`, `usb2loopy`) had two independent active-profile state machines: `profile_get_active_index(target)` for built-ins and `flash_get_active_profile_index()` for customs. The router gave custom precedence, but the CDC commands and the SELECT+D-pad hotkey only ever walked one side. Three symptoms: (a) web config could create + select a custom, but on refresh `PROFILE.LIST` returned the built-in active index so the UI showed the wrong profile; (b) switching from a custom back to a built-in via the UI left the custom flag set so the router kept applying the previously selected custom on top of the built-in; (c) the SELECT+D-pad hotkey could only reach one side per app. Fix is a unified `[built-ins, customs]` index space across `cmd_profile_list` / `cmd_profile_get` / `cmd_profile_set` (precedence + "clear custom on built-in select") and `profile_cycle_next/prev`. The cycle hotkey would have hung the firmware on usb2gc / usb2pce / etc. because `flash_set_active_profile_index` commits with `flash_save_now` (~50 ms blocking with interrupts disabled, fine for the rare `PROFILE.SET` deliberate path but not for a hot cycle loop) — added `flash_set_active_profile_index_deferred()` that uses the debounced `flash_save` instead, and pointed the cycle code at it. ESP NVS / nRF NVS already async — stubbed there to keep the link contract.
+
+---
+
 ## [2.1.0] — 2026-05-27
 
 ### Added
