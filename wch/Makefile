@@ -188,6 +188,13 @@ SRC_C += \
 	$(JOYPAD)/lib/libxsm3/excrypt_parve.c \
 	$(JOYPAD)/lib/libxsm3/excrypt_sha.c \
 
+# TinyUSB's cpu/rv32imac-ilp32.mk emits `-march=rv32imac_zicsr` (correct for
+# modern GCC). The WCH-bundled GCC 8.2.0 we build with predates the split-out
+# `zicsr` extension and rejects that march string. Swap it for plain `rv32imac`
+# here — this is a property of OUR toolchain choice, so the workaround lives in
+# the joypad build, not in the (now-pristine) TinyUSB fork.
+CFLAGS := $(filter-out -march=rv32imac_zicsr,$(CFLAGS)) -march=rv32imac
+
 include ../src/lib/tinyusb/examples/build_system/make/rules.mk
 
 # ---------------------------------------------------------------------------
