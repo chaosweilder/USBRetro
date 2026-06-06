@@ -269,10 +269,10 @@ set(SRCS
     "${TINYUSB_PATH}/src/tusb.c"
     "${TINYUSB_PATH}/src/common/tusb_fifo.c"
     "${TINYUSB_PATH}/src/device/usbd.c"
-    "${TINYUSB_PATH}/src/device/usbd_control.c"
     "${TINYUSB_PATH}/src/class/cdc/cdc_device.c"
     "${TINYUSB_PATH}/src/class/hid/hid_device.c"
-    "${TINYUSB_PATH}/src/portable/espressif/esp32sx/dcd_esp32sx.c"
+    "${TINYUSB_PATH}/src/portable/synopsys/dwc2/dcd_dwc2.c"
+    "${TINYUSB_PATH}/src/portable/synopsys/dwc2/dwc2_common.c"
 )
 
 # Add BTstack sources when needed
