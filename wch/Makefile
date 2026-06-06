@@ -35,8 +35,10 @@ BOARD ?= ch32v307v_r1_1v0
 # override so a stray SPEED=full in the environment can't switch the device IP.
 override SPEED := high
 
-# Pull in the TinyUSB make build system (sets TOP, CURRENT_PATH, family, etc.)
-include ../src/lib/tinyusb/examples/build_system/make/make.mk
+# Pull in the TinyUSB make build system (sets TOP, EXAMPLE_PATH, family, etc.).
+# tinyusb master renamed examples/build_system/make/make.mk -> hw/bsp/family_support.mk
+# (the cpu/ and toolchain/ subdirs it includes still live under examples/build_system/make).
+include ../src/lib/tinyusb/hw/bsp/family_support.mk
 
 # Joypad shared source tree lives at <repo>/src ; TOP is <repo>/src/lib/tinyusb
 JOYPAD = $(TOP)/../..
@@ -74,7 +76,9 @@ CFLAGS += \
 
 # Shared code is portable C compiled for many targets and trips assorted
 # warnings under TinyUSB's -Werror. The ESP/nRF builds relax it the same way.
-CFLAGS_GCC += -Wno-error
+# (tinyusb master dropped the CFLAGS_GCC convention; gcc_common.mk's -Werror is
+# already in CFLAGS by here, so a later -Wno-error in CFLAGS overrides it.)
+CFLAGS += -Wno-error
 
 # Bump the stack from the 2KB default — host enumeration + HID parsing + the
 # Joypad registry is a deep call chain that overflows 2KB (resets the chip).
@@ -84,7 +88,7 @@ LDFLAGS += -Wl,--defsym=__STACK_SIZE=4096
 # WCH platform sources (this directory) — main, tusb_config consumer, stubs
 # ---------------------------------------------------------------------------
 EXAMPLE_SOURCE += $(wildcard src/*.c)
-SRC_C += $(addprefix $(CURRENT_PATH)/, $(EXAMPLE_SOURCE))
+SRC_C += $(addprefix $(EXAMPLE_PATH)/, $(EXAMPLE_SOURCE))
 
 # Joypad platform HAL
 SRC_C += $(JOYPAD)/platform/ch32/platform_ch32.c
@@ -188,14 +192,15 @@ SRC_C += \
 	$(JOYPAD)/lib/libxsm3/excrypt_parve.c \
 	$(JOYPAD)/lib/libxsm3/excrypt_sha.c \
 
-# TinyUSB's cpu/rv32imac-ilp32.mk emits `-march=rv32imac_zicsr` (correct for
-# modern GCC). The WCH-bundled GCC 8.2.0 we build with predates the split-out
-# `zicsr` extension and rejects that march string. Swap it for plain `rv32imac`
-# here — this is a property of OUR toolchain choice, so the workaround lives in
-# the joypad build, not in the (now-pristine) TinyUSB fork.
-CFLAGS := $(filter-out -march=rv32imac_zicsr,$(CFLAGS)) -march=rv32imac
+# TinyUSB's cpu/rv32imac-ilp32.mk emits a modern `-march` string (currently
+# `-march=rv32imac_zicsr_zifencei`). The WCH-bundled GCC 8.2.0 we build with
+# predates the split-out `zicsr`/`zifencei` extensions and rejects those march
+# substrings. Strip every `-march=...` flag and force plain `rv32imac` — this is
+# a property of OUR toolchain choice, so the workaround lives in the joypad
+# build, not in the (now-pristine) TinyUSB fork.
+CFLAGS := $(filter-out -march=%,$(CFLAGS)) -march=rv32imac
 
-include ../src/lib/tinyusb/examples/build_system/make/rules.mk
+include ../src/lib/tinyusb/hw/bsp/family_rules.mk
 
 # ---------------------------------------------------------------------------
 # Convenience targets (wlink = WCH-LinkE flasher, cargo install wlink)
