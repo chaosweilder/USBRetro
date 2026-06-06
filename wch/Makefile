@@ -19,9 +19,12 @@
 
 # ---------------------------------------------------------------------------
 # Toolchain — WCH gcc 8.2.0. Newer GCC miscompiles the WCH USB timing code, so
-# this is pinned. Override GCC8_BIN if it lives elsewhere on your machine.
+# this is pinned. `make init-wch` (top-level) installs it repo-locally under
+# wch/toolchain/ (gitignored). Override GCC8_BIN to use a copy elsewhere.
 # ---------------------------------------------------------------------------
-GCC8_BIN      ?= /tmp/gcc8/xpack-riscv-none-embed-gcc-8.2.0/bin
+WCH_DIR       := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+GCC8_VER      := 8.2.0-3.1
+GCC8_BIN      ?= $(WCH_DIR)toolchain/xPacks/riscv-none-embed-gcc/$(GCC8_VER)/bin
 export PATH   := $(GCC8_BIN):$(PATH)
 # Absolute tool prefix so the build finds gcc8 regardless of make's exec PATH
 # handling. Override CROSS_COMPILE entirely to use a system toolchain.
