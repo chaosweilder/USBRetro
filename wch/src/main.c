@@ -78,9 +78,9 @@ int main(void)
 
   printf("[joypad] Entering main loop\n");
 
-  extern void ch32_hybrid_poll(void);   // once-per-loop interrupt-IN poll (hybrid HCD)
+  extern void ch32_attach_poll(void);   // once-per-loop attach detect + disconnect + trace drain
   while (1) {
-    ch32_hybrid_poll();
+    ch32_attach_poll();
 
     leds_task();
     players_task();
