@@ -482,22 +482,19 @@ void tud_xbone_update(void)
 
     switch (driver_state) {
         case XBONE_STATE_READY_ANNOUNCE:
-            // Wait for the auth dongle to be ready before announcing to the
-            // console — otherwise the console issues auth challenges we can't
-            // answer and gives up on us. xbone_auth_is_available() returns
-            // true once the dongle has either run the announce/descriptor/
-            // POWER_ON handshake OR hit the post-mount fallback timeout.
+            // Announce to the console unconditionally after the fixed delay
+            // (matching GP2040-CE). Do NOT gate this on the auth source being
+            // ready: the console drives announce → descriptor → auth and idles
+            // at the auth stage (we keep it alive with idle reports), so the
+            // dongle/controller gets as long as it needs to finish its own
+            // init. Auth packets are only forwarded once the source is actually
+            // ready (gated in xbone_auth_task on dongle_ready), so a not-yet-
+            // ready source just delays the auth exchange instead of failing it.
+            // Gating the announce here (plus a premature-ready timeout) caused a
+            // race where auth was forwarded before the source was initialized —
+            // worked on the Nth retry for dongles, never for a real controller.
             if (now - timer_announce > ANNOUNCE_DELAY) {
-                if (!xbone_auth_is_available()) {
-                    static uint32_t last_wait_log = 0;
-                    if (now - last_wait_log > 2000) {
-                        printf("[tud_xbone] Waiting for auth dongle before announce...\n");
-                        last_wait_log = now;
-                    }
-                    break;
-                }
-
-                printf("[tud_xbone] Announce — auth dongle is ready\n");
+                printf("[tud_xbone] Announce to console\n");
 
                 xgip_reset(&outgoing_xgip);
                 xgip_set_attributes(&outgoing_xgip, GIP_ANNOUNCE, 1, 1, 0, 0);
