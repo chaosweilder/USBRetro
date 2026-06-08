@@ -48,6 +48,17 @@ static int16_t convert_axis_to_s16(uint8_t value)
     return (int16_t)scaled;
 }
 
+// Same conversion but inverted for Y axes. Our core normalizes Y to HID
+// convention (0=up, 255=down) but Xbox signed sticks are positive=up, so the Y
+// axes must be flipped (mirrors OGX-Mini's Range::invert on joystick_ly/ry).
+static int16_t convert_axis_to_s16_inv(uint8_t value)
+{
+    int32_t scaled = (128 - (int32_t)value) * 256;
+    if (scaled < -32768) scaled = -32768;
+    if (scaled > 32767) scaled = 32767;
+    return (int16_t)scaled;
+}
+
 // ============================================================================
 // MODE INTERFACE IMPLEMENTATION
 // ============================================================================
@@ -95,9 +106,9 @@ static bool xid_mode_send_report(uint8_t player_index,
 
     // Analog sticks (signed 16-bit, -32768 to +32767)
     xid_report.stick_lx = convert_axis_to_s16(profile_out->left_x);
-    xid_report.stick_ly = convert_axis_to_s16(profile_out->left_y);
+    xid_report.stick_ly = convert_axis_to_s16_inv(profile_out->left_y);
     xid_report.stick_rx = convert_axis_to_s16(profile_out->right_x);
-    xid_report.stick_ry = convert_axis_to_s16(profile_out->right_y);
+    xid_report.stick_ry = convert_axis_to_s16_inv(profile_out->right_y);
 
     return tud_xid_send_report(&xid_report);
 }
