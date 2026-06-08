@@ -1245,6 +1245,32 @@ target_link_libraries(joypad_usb_pico PRIVATE ${COMMON_LIBRARIES} tinyusb_device
 joypad_target_common(joypad_usb_pico)
 joypad_add_btstack(joypad_usb_pico)
 
+# --- USB to USB (OGX-Mini Pi Pico hardware, PIO-USB) ---
+# Matches the OGX-Mini Pico pinout: PIO-USB host D+ on GP0 (D- = GP1), status
+# LED on GP25. GP0/1 are UART0, so UART stdio is disabled here — leaving it on
+# would init UART0 on GP0/1 and collide with the PIO-USB host port. Everything
+# else is identical to usb2usb_pico (native USB = console-facing device port).
+add_executable(joypad_usb_ogxm_pico)
+target_compile_definitions(joypad_usb_ogxm_pico PRIVATE
+    CONFIG_USB=1
+    CONFIG_PIO_USB_DP_PIN=0
+    PICO_DEFAULT_PIO_USB_DP_PIN=0
+    BOARD_TUH_RHPORT=1
+    USE_BOOTSEL_BUTTON=1
+)
+target_sources(joypad_usb_ogxm_pico PUBLIC ${COMMON_SOURCES} ${USB_DEVICE_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c
+)
+target_include_directories(joypad_usb_ogxm_pico PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+)
+target_link_libraries(joypad_usb_ogxm_pico PRIVATE ${COMMON_LIBRARIES} tinyusb_device tinyusb_pico_pio_usb)
+joypad_target_common(joypad_usb_ogxm_pico)
+joypad_add_btstack(joypad_usb_ogxm_pico)
+pico_enable_stdio_uart(joypad_usb_ogxm_pico 0)
+pico_enable_stdio_usb(joypad_usb_ogxm_pico 0)
+
 # --- USB to USB (Raspberry Pi Pico W, PIO-USB) ---
 # PIO USB host on GP16/GP17, no WS2812, LED behind CYW43
 add_executable(joypad_usb_pico_w)
