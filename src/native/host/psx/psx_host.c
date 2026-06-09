@@ -572,6 +572,15 @@ static void psx_process(const uint8_t* buf) {
             if (has_pressure) {
                 e.has_pressure = true;
                 for (int i = 0; i < 12; i++) e.pressure[i] = pressure[i];
+                // DS2 (0x79) reports true analog L2/R2 pressure (pressure[4]/[5]).
+                // Surface it on the trigger axes so analog-trigger outputs (XID/Xbox
+                // OG, XInput, GameCube, PS3/PS4, SInput) get real travel instead of
+                // the digital-button fallback that synthesizes a full 0xFF press
+                // (profile.c) when analog L2/R2 is left at 0. Non-DS2 pads (0x41
+                // digital, 0x73 analog) never set has_pressure, so they correctly
+                // stay digital full-press — they carry no trigger pressure to map.
+                e.analog[ANALOG_L2] = pressure[4];
+                e.analog[ANALOG_R2] = pressure[5];
             }
             router_submit_input(&e);
         }
