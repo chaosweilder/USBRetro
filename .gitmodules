@@ -12,7 +12,7 @@
 [submodule "src/lib/tinyusb"]
 	path = src/lib/tinyusb
 	url = https://github.com/joypad-ai/tinyusb.git
-	branch = dev
+	branch = joypad-0.20.0-ch32
 [submodule "src/lib/SNESpad"]
 	path = src/lib/SNESpad
 	url = https://github.com/RobertDaleSmith/SNESpad.git

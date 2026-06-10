@@ -42,13 +42,12 @@ override SPEED := high
 # tinyusb master renamed examples/build_system/make/make.mk -> hw/bsp/family_support.mk
 # (the cpu/ and toolchain/ subdirs it includes still live under examples/build_system/make).
 #
-# NOTE: the main src/lib/tinyusb submodule is pinned to 0.20.0 for the console
-# platforms (RP2040 host regression — see .dev/dc-dongle-bisect/README.md).
-# The CH32 host driver and this build system need tinyusb MASTER from the
-# joypad-ai fork (c3ac096a4, branch with CH32 USBFS host). Point TINYUSB_ROOT
-# at a master checkout, e.g.:
-#   make TINYUSB_ROOT=/path/to/tinyusb-master
-# or temporarily `git -C ../src/lib/tinyusb checkout c3ac096a4` (don't commit it).
+# NOTE: src/lib/tinyusb is pinned to the joypad-ai fork branch
+# `joypad-0.20.0-ch32` = upstream 0.20.0 release + the CH32 USBFS host commits.
+# 0.20.0 (not master) because the Jan–Jun 2026 master host rework regresses
+# RP2040 hosts that share the chip with Core-1 real-time console protocols
+# (see .dev/dc-dongle-bisect/README.md). All platforms build from this one
+# submodule. TINYUSB_ROOT stays overridable for testing other checkouts.
 TINYUSB_ROOT ?= ../src/lib/tinyusb
 include $(TINYUSB_ROOT)/hw/bsp/family_support.mk
 
