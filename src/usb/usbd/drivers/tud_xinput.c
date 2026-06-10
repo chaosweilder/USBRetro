@@ -18,6 +18,7 @@
 #include <string.h>
 #include "lib/libxsm3/xsm3.h"
 #include "platform/platform.h"
+#include "../tusb_compat.h"  // usbd_edpt_xfer is_isr shim (0.20.0 vs master)
 
 // ============================================================================
 // INTERNAL STATE

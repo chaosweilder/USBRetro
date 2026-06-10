@@ -6,6 +6,7 @@
 #include "platform/platform.h"
 #include <string.h>
 #include <stdio.h>
+#include "../tusb_compat.h"  // usbd_edpt_xfer is_isr shim (0.20.0 vs master)
 
 // Forward declaration for auth passthrough check (weak - returns false if not linked)
 __attribute__((weak)) bool xbone_auth_is_available(void) { return false; }

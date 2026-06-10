@@ -52,8 +52,9 @@ override SPEED := high
 TINYUSB_ROOT ?= ../src/lib/tinyusb
 include $(TINYUSB_ROOT)/hw/bsp/family_support.mk
 
-# Joypad shared source tree lives at <repo>/src ; TOP is <repo>/src/lib/tinyusb
-JOYPAD = $(TOP)/../..
+# Joypad shared source tree lives at <repo>/src. Independent of TINYUSB_ROOT
+# so an out-of-tree tinyusb checkout doesn't relocate the joypad sources.
+JOYPAD ?= $(abspath ../src)
 
 # ---------------------------------------------------------------------------
 # Include paths
