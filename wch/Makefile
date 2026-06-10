@@ -41,7 +41,16 @@ override SPEED := high
 # Pull in the TinyUSB make build system (sets TOP, EXAMPLE_PATH, family, etc.).
 # tinyusb master renamed examples/build_system/make/make.mk -> hw/bsp/family_support.mk
 # (the cpu/ and toolchain/ subdirs it includes still live under examples/build_system/make).
-include ../src/lib/tinyusb/hw/bsp/family_support.mk
+#
+# NOTE: the main src/lib/tinyusb submodule is pinned to 0.20.0 for the console
+# platforms (RP2040 host regression — see .dev/dc-dongle-bisect/README.md).
+# The CH32 host driver and this build system need tinyusb MASTER from the
+# joypad-ai fork (c3ac096a4, branch with CH32 USBFS host). Point TINYUSB_ROOT
+# at a master checkout, e.g.:
+#   make TINYUSB_ROOT=/path/to/tinyusb-master
+# or temporarily `git -C ../src/lib/tinyusb checkout c3ac096a4` (don't commit it).
+TINYUSB_ROOT ?= ../src/lib/tinyusb
+include $(TINYUSB_ROOT)/hw/bsp/family_support.mk
 
 # Joypad shared source tree lives at <repo>/src ; TOP is <repo>/src/lib/tinyusb
 JOYPAD = $(TOP)/../..
@@ -203,7 +212,7 @@ SRC_C += \
 # build, not in the (now-pristine) TinyUSB fork.
 CFLAGS := $(filter-out -march=%,$(CFLAGS)) -march=rv32imac
 
-include ../src/lib/tinyusb/hw/bsp/family_rules.mk
+include $(TINYUSB_ROOT)/hw/bsp/family_rules.mk
 
 # ---------------------------------------------------------------------------
 # Convenience targets (wlink = WCH-LinkE flasher, cargo install wlink)
