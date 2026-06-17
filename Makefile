@@ -546,6 +546,9 @@ usb2neogeo_pico:
 usb2neogeo_rp2040zero:
 	$(call build_app,usb2neogeo_rp2040zero)
 
+.PHONY: usb2neogeo_rp2350core
+usb2neogeo_rp2350core:
+	$(call build_app,usb2neogeo_rp2350core)
 
 .PHONY: usb2neogeo_retrofrog
 usb2neogeo_retrofrog:
