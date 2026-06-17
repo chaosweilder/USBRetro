@@ -757,11 +757,11 @@ target_link_libraries(joypad_neogeo_retrofrog PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_neogeo_retrofrog)
 joypad_add_btstack(joypad_neogeo_retrofrog)
 
-# Neo Geo — RP2350 CORE A (WS2812 PIO on GP25 
+# Neo Geo — RP2350 CORE A (WS2812 PIO on GP25) 
 add_executable(joypad_neogeo_rp2350core)
 target_compile_definitions(joypad_neogeo_rp2350core PRIVATE
     CONFIG_NEOGEO=1
-    WS2812_PIN=25
+    WS2812_PIN=16
     PICO_RP2350_ZERO_BUILD=1
 )
 target_sources(joypad_neogeo_rp2350core PUBLIC ${COMMON_SOURCES}
