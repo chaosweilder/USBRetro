@@ -757,11 +757,30 @@ target_link_libraries(joypad_neogeo_retrofrog PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_neogeo_retrofrog)
 joypad_add_btstack(joypad_neogeo_retrofrog)
 
+# Neo Geo — RP2350 ZERO  (WS2812 PIO on GP16) 
+add_executable(joypad_neogeo_rp2350zero)
+target_compile_definitions(joypad_neogeo_rp2350zero PRIVATE
+    CONFIG_NEOGEO=1
+    WS2812_PIN=16
+    PICO_RP2350_ZERO_BUILD=1
+)
+target_sources(joypad_neogeo_rp2350zero PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/gpio/gpio_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo/app.c
+)
+target_include_directories(joypad_neogeo_rp2350zero PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo
+)
+target_link_libraries(joypad_neogeo_rp2350zero PRIVATE ${COMMON_LIBRARIES})
+joypad_target_common(joypad_neogeo_rp2350zero)
+joypad_add_btstack(joypad_neogeo_rp2350zero)
+
 # Neo Geo — RP2350 CORE A (WS2812 PIO on GP25) 
 add_executable(joypad_neogeo_rp2350core)
 target_compile_definitions(joypad_neogeo_rp2350core PRIVATE
     CONFIG_NEOGEO=1
-    WS2812_PIN=16
+    WS2812_PIN=25
     PICO_RP2350_ZERO_BUILD=1
 )
 target_sources(joypad_neogeo_rp2350core PUBLIC ${COMMON_SOURCES}
