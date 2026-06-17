@@ -211,6 +211,15 @@ void flash_set_active_profile_index(uint8_t index)
     }
 }
 
+// ESP NVS save is already debounced/async, so this is identical to the
+// immediate variant. Stubbed to satisfy the link contract from
+// core/services/storage/flash.h — the RP2040 backend distinguishes
+// immediate vs debounced; ESP doesn't need to.
+void flash_set_active_profile_index_deferred(uint8_t index)
+{
+    flash_set_active_profile_index(index);
+}
+
 uint8_t flash_get_total_profile_count(void)
 {
     if (!runtime_settings_loaded) return 1;

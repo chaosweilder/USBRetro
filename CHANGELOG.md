@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.1] — 2026-06-02
+
+### Added
+
+#### New Controller Support
+- **Valve Steam Controller 2** — USB host driver covering both direct wired (`VID 0x28DE PID 0x1302`) and the 2.4 GHz "puck" USB dongle (`PID 0x1304`). Decodes the 64-byte report ID `0x45` per the jfedor2/hid-remapper quirks: 13 confirmed buttons (ABXY, LB/RB, LT/RT digital, Select/Start, L3/R3, Steam/Home) into `JP_BUTTON_*`, both sticks with Valve's +Y=up inverted to HID convention, analog L2/R2 triggers (16-bit → 8-bit), and a 6-DOF IMU into `input_event_t.accel/gyro`. Routes to every USB device output mode and every console output the rest of joypad-os supports. Driver is parked at `src/usb/usbh/hid/devices/vendors/valve/steam_controller_2.{c,h}`; design doc at `.dev/docs/STEAM_CONTROLLER_2_PLAN.md`. Untested on hardware (no SC2 here at landing time) but compile-clean on every `usb2usb_*` target — see the design doc for the unmapped button bits (likely grip / paddle / trackpad-click) that still need a debug-log pass on real hardware.
+
+#### Tooling
+- **joypad-bot** — VLM agent that plays emulators through joypad-os adapters. v1 baseline: pure-software VLM-plays-NES loop with last-action context and frame-diff signal. v1.2 adds continuous emulator state + persistent knowledge field. v2 scaffolding lands the LeRobot recorder + trainer + inference path for vision-grounded play.
+
+### Fixed
+- **profile** — apps with built-in *and* custom profiles (`usb2gc`, `usb2pce`, `usb2dc`, `usb2nuon`, `usb23do`, `usb2loopy`) had two independent active-profile state machines: `profile_get_active_index(target)` for built-ins and `flash_get_active_profile_index()` for customs. The router gave custom precedence, but the CDC commands and the SELECT+D-pad hotkey only ever walked one side. Three symptoms: (a) web config could create + select a custom, but on refresh `PROFILE.LIST` returned the built-in active index so the UI showed the wrong profile; (b) switching from a custom back to a built-in via the UI left the custom flag set so the router kept applying the previously selected custom on top of the built-in; (c) the SELECT+D-pad hotkey could only reach one side per app. Fix is a unified `[built-ins, customs]` index space across `cmd_profile_list` / `cmd_profile_get` / `cmd_profile_set` (precedence + "clear custom on built-in select") and `profile_cycle_next/prev`. The cycle hotkey would have hung the firmware on usb2gc / usb2pce / etc. because `flash_set_active_profile_index` commits with `flash_save_now` (~50 ms blocking with interrupts disabled, fine for the rare `PROFILE.SET` deliberate path but not for a hot cycle loop) — added `flash_set_active_profile_index_deferred()` that uses the debounced `flash_save` instead, and pointed the cycle code at it. ESP NVS / nRF NVS already async — stubbed there to keep the link contract.
+
+---
+
 ## [2.1.0] — 2026-05-27
 
 ### Added
@@ -31,6 +46,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 #### Output & Device
 - **Dreamcast VMU emulation** — FT1 / FT3 (and SD-card backed) persistence; gating via `CONFIG_VMU` / `CONFIG_SD`. A freshly-preformatted virtual VMU now drops a default `ICONDATA_VMS` (Joypad OS LOGO_32) in save-area blocks 0-1 so the DC BIOS shows a logo instead of the no-icon placeholder; user saves on SD overlay it as usual. Tool: `tools/vmu/gen_default_icondata.py` to swap the default logo.
+- **VMU persistence backend abstraction + QSPI flash** — a `vmu_storage` selector binds one backend by priority (SD card > onboard QSPI > RAM-only). The new opt-in QSPI backend (`CONFIG_VMU_QSPI`) reserves a 128 KB region of the RP2040's onboard flash and saves the card across power cycles via debounced, dirty-sector-only writes (Core-1-safe through `flash_safe_execute`) — no SD card or extra hardware needed. VMU is now **enabled on the KB2040 `usb2dc` target** (previously gated off); it fits the same ~247 KB SRAM as the RP2040-Zero build and gets persistent saves via QSPI.
 - **PS3 power-down passthrough** — both PS3 sleep (USB bus suspend) and the PS3's *Settings → Accessory Settings → Turn off controller* menu now propagate to the bridged controller. On suspend, the adapter drops the BT link so a bridged DS4 / DS3 auto-sleeps within ~1 min instead of staying powered forever (PS3 keeps VBUS hot during sleep). The menu trigger is detected as the DS3 `0xF4` feature report with `0x42 0x0C` payload and routes to a weak `app_on_console_shutdown()` callback that `bt2usb` and `usb2usb` (with USB BT dongle) override to drop the BT ACL link (full baseband disconnect, not just the HID profile — DS4 lightbar latched solid otherwise). Closes #145.
 - **SD card filesystem** — SD HAL + FatFs filesystem service (PR #1 baseline).
 - **OLED menu** — tiny static-table OLED menu (USB Mode / Reboot / Bootloader) for controller-with-display builds.
@@ -64,6 +80,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - **GameCube keyboard** — 3-key rollover + arrow-key D-pad inversion.
 - **Dreamcast** — enumeration race condition and VMU write reliability; Core-0 TX workaround restored on KB2040; upstream Core-1 TX config restored on `usb2dc`.
+- **Dreamcast analog triggers** — L2/R2 snapped to full the instant they were touched, because the digital L2/R2 bit (set at the "any press" threshold of 1) forced the trigger to 255. The analog level now passes through proportionally; the digital bit only forces full for digital-only pads with no analog trigger axis (e.g. N64 L/R).
+- **Router hot path** — `router_submit_input` runs on every USB controller report (~1 kHz on a native HID pad). The CDC input-streaming block was doing all of its prep — player lookup, `get_device_name()` (which reaches into the HID registry and `tuh_vid_pid_get()`), transport-name lookup — *before* calling `cdc_commands_send_player_input`, which already short-circuits when no host is listening. Gate moved to the caller, so on output modes whose USB device is in HOST mode and never enumerates CDC (`usb2gc`, `usb2dc`, etc.) all that prep is skipped — tightens the main-loop iteration for high-precision input scenarios like Melee dash dancing on `usb2gc`.
 - **`switch_pro`** — flaky init by handling `0x21` reports and guarding LED OFF spam.
 - **`wii_ext`** — neutral report seeded for format 0x03 (Pro default) so initial reads aren't garbage.
 - **Router MERGE_BLEND** — analog stick read using local merge buffer (community PR #133, herzmx) plus a separate fix for analog stick reads from the merge buffer.

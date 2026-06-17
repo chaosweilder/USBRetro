@@ -14,7 +14,7 @@
 #include "core/services/players/manager.h"
 #include "core/services/players/feedback.h"
 #include "platform/platform.h"
-#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF)
+#if !defined(PLATFORM_ESP32) && !defined(PLATFORM_NRF) && !defined(PLATFORM_CH32)
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
 #endif
@@ -82,7 +82,7 @@ static void log_stdio_out_chars(const char *buf, int len)
     }
 }
 
-#if defined(PLATFORM_ESP32) || defined(PLATFORM_NRF)
+#if defined(PLATFORM_ESP32) || defined(PLATFORM_NRF) || defined(PLATFORM_CH32)
 // ESP32/nRF: capture printf by replacing stdout with a custom FILE* (funopen)
 // that feeds output into the ring buffer AND writes to the original output.
 static FILE *platform_orig_stdout = NULL;
@@ -520,11 +520,24 @@ static void cmd_profile_list(const char* json)
     // Determine active profile in unified indexing. Use the public getters so
     // an active PROFILE.SELECT ephemeral override is visible in PROFILE.LIST
     // (matches the runtime's view of "what's actually in effect right now").
+    //
+    // Apps with built-in profiles (e.g. usb2gc) have two independent active
+    // states: profile_get_active_index(target) for built-ins and
+    // flash_get_active_profile_index() for customs. The router/output path
+    // gives custom profiles precedence over built-ins (see
+    // flash_get_active_custom_profile() — non-NULL whenever a custom is
+    // selected). PROFILE.LIST must reflect that same precedence or the
+    // web config shows the wrong "active" after refreshing a custom-profile
+    // selection.
     int active;
     if (builtin_count > 0) {
-        // Use built-in profile active index, or offset for custom
-        active = profile_get_active_index(get_profile_target());
-        // TODO: Handle custom profile selection for apps with built-in profiles
+        uint8_t flash_active = flash_get_active_profile_index();
+        if (flash_active > 0) {
+            // Custom profile selected — it takes runtime precedence.
+            active = custom_to_unified_index((int)(flash_active - 1));
+        } else {
+            active = profile_get_active_index(get_profile_target());
+        }
     } else {
         // No built-in profiles — flash_get_active_profile_index() returns the
         // PROFILE.SELECT sidecar if set, else the persisted value.
@@ -571,14 +584,20 @@ static void cmd_profile_get(const char* json)
 {
     int index;
     if (!json_get_int(json, "index", &index)) {
-        // No index - return active profile info
+        // No index - return active profile info. Same precedence rule as
+        // PROFILE.LIST: custom-selected (flash_active > 0) wins over the
+        // app's built-in active.
         uint8_t builtin_count = get_builtin_count();
         int active;
         if (builtin_count > 0) {
-            active = profile_get_active_index(get_profile_target());
+            uint8_t flash_active = flash_get_active_profile_index();
+            if (flash_active > 0) {
+                active = custom_to_unified_index((int)(flash_active - 1));
+            } else {
+                active = profile_get_active_index(get_profile_target());
+            }
         } else {
-            flash_t* settings = flash_get_settings();
-            active = settings ? settings->active_profile_index : 0;
+            active = flash_get_active_profile_index();
         }
         index = active;
     }
@@ -652,7 +671,13 @@ static void cmd_profile_set(const char* json)
     uint8_t builtin_count = get_builtin_count();
 
     if (builtin_count > 0 && index < builtin_count) {
-        // Select built-in profile
+        // Select built-in profile. ALSO clear any persisted custom selection
+        // — flash_get_active_custom_profile() takes runtime precedence over
+        // the built-in active, so a stale flash_active > 0 would keep
+        // applying the previously-selected custom even though the UI now
+        // says built-in is active. flash_set_active_profile_index(0) =
+        // "no custom selected", which lets the built-in take effect.
+        flash_set_active_profile_index(0);
         profile_set_active(get_profile_target(), index);
         const char* name = profile_get_name(get_profile_target(), index);
         snprintf(response_buf, sizeof(response_buf),
@@ -2830,7 +2855,7 @@ void cdc_commands_init(void)
     cdc_protocol_init(&protocol_ctx, packet_handler);
 
     // Register stdio hook to capture printf output into ring buffer
-#if defined(PLATFORM_ESP32) || defined(PLATFORM_NRF)
+#if defined(PLATFORM_ESP32) || defined(PLATFORM_NRF) || defined(PLATFORM_CH32)
     // Replace stdout with a tee: ring buffer + original output
     platform_orig_stdout = stdout;
     FILE *f = funopen(NULL, NULL, platform_log_writefn, NULL, NULL);

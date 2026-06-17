@@ -147,6 +147,7 @@ set(USB_HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/hid/devices/vendors/raphnet/raphnet_pce.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/hid/devices/vendors/microsoft/ms_sidewinder_dualstrike.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/hid/devices/vendors/microsoft/ms_sidewinder_commander.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/hid/devices/vendors/valve/steam_controller_2.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/hid/devices/generic/sinput_host.c
     ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbh/xinput/xinput.c
 )
@@ -655,7 +656,7 @@ pico_generate_pio_header(joypad_dc ${CMAKE_CURRENT_LIST_DIR}/native/device/dream
 # USB4Maple-compatible pinout: GPIO 14/15 for Maple Bus
 add_executable(joypad_dc_rp2040zero)
 target_compile_definitions(joypad_dc_rp2040zero PRIVATE
-    CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1 CONFIG_VMU=1
+    CONFIG_DC=1 CONFIG_USB_HOST=1 CONFIG_DC_CORE1_TX=1 CONFIG_VMU=1 CONFIG_VMU_QSPI=1 CONFIG_NO_FLASH_LOCKOUT=1
     MAPLE_PIN1=14
     MAPLE_PIN5=15
     WS2812_PIN=16
@@ -739,6 +740,23 @@ target_link_libraries(joypad_neogeo_rp2040zero PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_neogeo_rp2040zero)
 joypad_add_btstack(joypad_neogeo_rp2040zero)
 
+add_executable(joypad_neogeo_retrofrog)
+target_compile_definitions(joypad_neogeo_retrofrog PRIVATE
+    CONFIG_NEOGEO=1
+    PICO_RP2040_ZERO_BUILD=1
+)
+target_sources(joypad_neogeo_retrofrog PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/gpio/gpio_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo/app.c
+)
+target_include_directories(joypad_neogeo_retrofrog PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2neogeo
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/neogeo
+)
+target_link_libraries(joypad_neogeo_retrofrog PRIVATE ${COMMON_LIBRARIES})
+joypad_target_common(joypad_neogeo_retrofrog)
+joypad_add_btstack(joypad_neogeo_retrofrog)
+
 # --- N64 to Dreamcast ---
 add_executable(joypad_n642dc)
 # Core 0 TX mode required: joybus uses PIO1 SM3, conflicts with Core 1 TX
@@ -761,6 +779,30 @@ joypad_target_common(joypad_n642dc)
 # No BTstack for n642dc - uses native N64 input, not USB host
 pico_generate_pio_header(joypad_n642dc ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
 pico_generate_pio_header(joypad_n642dc ${CMAKE_CURRENT_LIST_DIR}/native/device/dreamcast/maple.pio)
+
+# --- GameCube to Dreamcast (KB2040) ---
+# Same PIO layout as n642dc — gc_host shares joybus.pio with the N64 driver,
+# so it uses PIO1 SM3 at offset 10 and leaves PIO1 SM0-2 for maple_rx.
+# Core-0 TX required for the same reason (joybus on PIO1 SM3).
+add_executable(joypad_gc2dc)
+target_compile_definitions(joypad_gc2dc PRIVATE CONFIG_GC2DC=1 CONFIG_DC=1 CONFIG_NO_NEOPIXEL=1 GC_PIN_DATA=29)
+target_sources(joypad_gc2dc PUBLIC ${COMMON_SOURCES}
+    ${GC_HOST_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/dreamcast_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast/maple_state_machine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2dc/app.c
+)
+target_include_directories(joypad_gc2dc PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/gc2dc
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/host/gc
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/dreamcast
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/joybus-pio/include
+)
+target_link_libraries(joypad_gc2dc PRIVATE ${COMMON_LIBRARIES} hardware_dma)
+joypad_target_common(joypad_gc2dc)
+# No BTstack — native GC input, no USB host.
+pico_generate_pio_header(joypad_gc2dc ${CMAKE_CURRENT_LIST_DIR}/lib/joybus-pio/src/joybus.pio)
+pico_generate_pio_header(joypad_gc2dc ${CMAKE_CURRENT_LIST_DIR}/native/device/dreamcast/maple.pio)
 
 # --- N64 to Dreamcast (Pico 2 W) ---
 # Pinout: DC SDCKA=GPIO14, SDCKB=GPIO15 (physical pins 19/20)
@@ -1114,6 +1156,7 @@ target_sources(joypad_usb_feather_rp2040_max3421 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/display_i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/joy_anim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/services/display/eyes_anim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c
 )
 target_include_directories(joypad_usb_feather_rp2040_max3421 PUBLIC
@@ -1202,6 +1245,32 @@ target_link_libraries(joypad_usb_pico PRIVATE ${COMMON_LIBRARIES} tinyusb_device
 joypad_target_common(joypad_usb_pico)
 joypad_add_btstack(joypad_usb_pico)
 
+# --- USB to USB (OGX-Mini Pi Pico hardware, PIO-USB) ---
+# Matches the OGX-Mini Pico pinout: PIO-USB host D+ on GP0 (D- = GP1), status
+# LED on GP25. GP0/1 are UART0, so UART stdio is disabled here — leaving it on
+# would init UART0 on GP0/1 and collide with the PIO-USB host port. Everything
+# else is identical to usb2usb_pico (native USB = console-facing device port).
+add_executable(joypad_usb_ogxm_pico)
+target_compile_definitions(joypad_usb_ogxm_pico PRIVATE
+    CONFIG_USB=1
+    CONFIG_PIO_USB_DP_PIN=0
+    PICO_DEFAULT_PIO_USB_DP_PIN=0
+    BOARD_TUH_RHPORT=1
+    USE_BOOTSEL_BUTTON=1
+)
+target_sources(joypad_usb_ogxm_pico PUBLIC ${COMMON_SOURCES} ${USB_DEVICE_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb/app.c
+)
+target_include_directories(joypad_usb_ogxm_pico PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2usb
+    ${CMAKE_CURRENT_SOURCE_DIR}/usb/usbd
+)
+target_link_libraries(joypad_usb_ogxm_pico PRIVATE ${COMMON_LIBRARIES} tinyusb_device tinyusb_pico_pio_usb)
+joypad_target_common(joypad_usb_ogxm_pico)
+joypad_add_btstack(joypad_usb_ogxm_pico)
+pico_enable_stdio_uart(joypad_usb_ogxm_pico 0)
+pico_enable_stdio_usb(joypad_usb_ogxm_pico 0)
+
 # --- USB to USB (Raspberry Pi Pico W, PIO-USB) ---
 # PIO USB host on GP16/GP17, no WS2812, LED behind CYW43
 add_executable(joypad_usb_pico_w)
@@ -1250,6 +1319,11 @@ target_compile_definitions(joypad_usb_rp2040zero PRIVATE
     PICO_DEFAULT_PIO_USB_DP_PIN=10
     BOARD_TUH_RHPORT=1
     WS2812_PIN=16
+    # Also drive a plain status LED on GP14 (OGX-Mini's LED_INDICATOR_PIN).
+    # Independent pin from the WS2812, so one build lights whichever the board
+    # physically has: stock Waveshare / OGX-Mini v1 -> NeoPixel on 16,
+    # OGX-Mini green v2/v3 -> plain LED on 14. Driving an absent LED is a no-op.
+    BOARD_LED_PIN=14
     USE_BOOTSEL_BUTTON=1
 )
 target_sources(joypad_usb_rp2040zero PUBLIC ${COMMON_SOURCES} ${USB_DEVICE_SOURCES}

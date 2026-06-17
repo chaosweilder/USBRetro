@@ -21,6 +21,7 @@
 #include "core/buttons.h"
 #include "core/output_interface.h"
 #include <string.h>
+#include "../tusb_compat.h"  // usbd_edpt_xfer is_isr shim (0.20.0 vs master)
 
 // ============================================================================
 // CONSTANTS

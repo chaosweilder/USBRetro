@@ -590,6 +590,37 @@ void flash_set_active_profile_index(uint8_t index)
     }
 }
 
+// Deferred variant — same memory + ephemeral effect as
+// flash_set_active_profile_index, but uses the debounced flash_save
+// instead of flash_save_now so it's safe to call from hot paths like the
+// SELECT+D-pad cycle hotkey. The persist lands ~5 s after the last call,
+// which is fine because:
+//   - On normal use the cycle stops within a second or two, then the
+//     debounce fires and writes once;
+//   - If the user power-cycles before the debounce fires they just
+//     boot back into the previously-persisted profile, which is the
+//     same recovery semantics as any debounced setting.
+void flash_set_active_profile_index_deferred(uint8_t index)
+{
+    ephemeral_active = false;
+    ephemeral_active_idx = -1;
+
+    if (!runtime_settings_loaded) {
+        return;
+    }
+
+    uint8_t max_index = runtime_settings.custom_profile_count;
+    if (index > max_index) {
+        index = max_index;
+    }
+
+    if (runtime_settings.active_profile_index != index) {
+        runtime_settings.active_profile_index = index;
+        flash_save(&runtime_settings);   // debounced — non-blocking
+        printf("[flash] Active profile set to %d (deferred)\n", index);
+    }
+}
+
 // Ephemeral variant: update a RAM-only sidecar, do not write to flash and
 // do NOT mutate runtime_settings.active_profile_index (any later flash_save
 // from another setting would otherwise persist the ephemeral value). The
