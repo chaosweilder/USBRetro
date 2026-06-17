@@ -761,7 +761,6 @@ joypad_add_btstack(joypad_neogeo_retrofrog)
 add_executable(joypad_neogeo_rp2350zero)
 target_compile_definitions(joypad_neogeo_rp2350zero PRIVATE
     CONFIG_NEOGEO=1
-    WS2812_PIN=16
     PICO_RP2350_ZERO_BUILD=1
 )
 target_sources(joypad_neogeo_rp2350zero PUBLIC ${COMMON_SOURCES}
