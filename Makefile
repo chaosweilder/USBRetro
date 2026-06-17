@@ -53,6 +53,7 @@ BOARD_SCRIPT_pico2_w := boards/build_pico2_w.sh
 BOARD_SCRIPT_kb2040 := boards/build_ada_kb2040.sh
 BOARD_SCRIPT_qtpy := boards/build_ada_qtpy.sh
 BOARD_SCRIPT_rp2040zero := boards/build_waveshare_rp2040_zero.sh
+BOARD_SCRIPT_rp2350core := boards/build_waveshare_rp2350_zero.sh
 BOARD_SCRIPT_seeed_xiao_rp2040 := boards/build_seeed_xiao_rp2040.sh
 BOARD_SCRIPT_feather_usbhost := boards/build_ada_feather_usbhost.sh
 BOARD_SCRIPT_feather := boards/build_ada_feather.sh
