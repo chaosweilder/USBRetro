@@ -79,7 +79,7 @@
     #define P1_NEOGEO_B4_PIN 4
     #define P1_NEOGEO_B5_PIN 9
     #define P1_NEOGEO_B6_PIN 2
-#elif defined(PICO_RP2350_CORE_BUILD)
+#elif defined(PICO_RP2350_ZERO_BUILD)
     #define P1_NEOGEO_DU_PIN 14
     #define P1_NEOGEO_DD_PIN 29
     #define P1_NEOGEO_DR_PIN 28
