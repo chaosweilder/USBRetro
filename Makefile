@@ -1253,6 +1253,11 @@ flash-usb2neogeo_rp2040zero:
 .PHONY: flash-usb2neogeo_retrofrog
 flash-usb2neogeo_retrofrog:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_retrofrog
+
+.PHONY: flash-usb2neogeo_rp2350core
+flash-usb2neogeo_rp2350core:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_rp2350core
+
 .PHONY: flash-usb2nuon_kb2040
 flash-usb2nuon_kb2040:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2nuon_kb2040
