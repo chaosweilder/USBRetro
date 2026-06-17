@@ -34,6 +34,7 @@ jobs:
           - usb2neogeo_pico
           - usb2neogeo_rp2040zero
           - usb2neogeo_rp2350core
+          - usb2neogeo_rp2350zero
           - n642dc_kb2040
           - usb23do_rp2040zero
           - usb2uart_kb2040
