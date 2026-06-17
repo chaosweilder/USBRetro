@@ -359,7 +359,7 @@ jobs:
           path: organized/usb2dc/*.uf2
           if-no-files-found: ignore
 
-      - name: Upload usb2neogeo
+      - name: Upload geo
         uses: actions/upload-artifact@v4
         with:
           name: joypad_${{ steps.commit.outputs.hash }}_usb2neogeo
