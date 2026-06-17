@@ -83,6 +83,7 @@ CONSOLE_neogeo_pico := joypad_neogeo_pico
 CONSOLE_neogeo_rp2040zero := joypad_neogeo_rp2040zero
 CONSOLE_neogeo_retrofrog := joypad_neogeo_retrofrog
 CONSOLE_neogeo_rp2350core := joypad_neogeo_rp2350core
+CONSOLE_neogeo_rp2350zero := joypad_neogeo_rp2350zero
 CONSOLE_n642dc := joypad_n642dc
 CONSOLE_n642dc_pico2_w := joypad_n642dc_pico2_w
 CONSOLE_n642nuon := joypad_n642nuon
@@ -158,6 +159,7 @@ APP_usb2neogeo_pico := pico neogeo_pico usb2neogeo_pico USB/BT NEOGEO
 APP_usb2neogeo_rp2040zero := rp2040zero neogeo_rp2040zero usb2neogeo_rp2040zero USB/BT NEOGEO
 APP_usb2neogeo_retrofrog := rp2040zero neogeo_retrofrog usb2neogeo_retrofrog USB/BT NEOGEO
 APP_usb2neogeo_rp2350core := rp2350zero neogeo_rp2350core usb2neogeo_rp2350core USB/BT NEOGEO
+APP_usb2neogeo_rp2350zero := rp2350zero neogeo_rp2350zero usb2neogeo_rp2350zero USB/BT NEOGEO
 APP_n642dc_kb2040 := kb2040 n642dc n642dc_kb2040 N64 Dreamcast
 APP_n642dc_pico2_w := pico2_w n642dc_pico2_w n642dc_pico2_w N64 Dreamcast
 APP_gc2dc_kb2040 := kb2040 gc2dc gc2dc_kb2040 GameCube Dreamcast
@@ -293,6 +295,8 @@ help:
 	@echo "  make usb2neogeo_pico    - USB/BT -> NEOGEO (Pi Pico)"
 	@echo "  make usb2neogeo_rp2040zero - USB/BT -> NEOGEO (RP2040-Zero)"
 	@echo "  make usb2neogeo_retrofrog  - USB/BT -> NEOGEO (Retro Frog USB4NeoGeo)"
+	@echo "  make usb2neogeo_rp2350zero - USB/BT -> NEOGEO (RP2350-Zero)"
+	@echo "  make usb2neogeo_rp2350core - USB/BT -> NEOGEO (RP2350-core)"	
 	@echo "  make n642dc_kb2040      - N64 -> Dreamcast (KB2040)"
 	@echo "  make n642dc_pico2_w     - N64 -> Dreamcast (Pi Pico 2 W)"
 	@echo "  make n642nuon_pico    - N64 -> Nuon (KB2040)"
@@ -545,6 +549,10 @@ usb2neogeo_pico:
 .PHONY: usb2neogeo_rp2040zero
 usb2neogeo_rp2040zero:
 	$(call build_app,usb2neogeo_rp2040zero)
+
+.PHONY: usb2neogeo_rp2350zero
+usb2neogeo_rp2350zero:
+	$(call build_app,usb2neogeo_rp2350zero)
 
 .PHONY: usb2neogeo_rp2350core
 usb2neogeo_rp2350core:
@@ -1257,6 +1265,10 @@ flash-usb2neogeo_rp2040zero:
 .PHONY: flash-usb2neogeo_retrofrog
 flash-usb2neogeo_retrofrog:
 	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_retrofrog
+
+.PHONY: flash-usb2neogeo_rp2350zero
+flash-usb2neogeo_rp2350zero:
+	@$(MAKE) --no-print-directory _flash_app APP_NAME=usb2neogeo_rp2350zero
 
 .PHONY: flash-usb2neogeo_rp2350core
 flash-usb2neogeo_rp2350core:
