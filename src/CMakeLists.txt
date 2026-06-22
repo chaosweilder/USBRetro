@@ -492,6 +492,7 @@ pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcen
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/clock.pio)
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
 
+# --- PCEngine ---
 
 add_executable(joypad_pce_rp240zero)
 target_compile_definitions(joypad_pce PRIVATE CONFIG_PCE=1)
@@ -512,8 +513,8 @@ target_link_libraries(joypad_pce_rp240zero PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_pce_rp240zero)
 joypad_add_btstack(joypad_pce_rp240zero)
 pico_generate_pio_header(joypad_pce_rp240zero ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/plex.pio)
-pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/clock.pio)
-pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
+pico_generate_pio_header(joypad_pce_rp240zero ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/clock.pio)
+pico_generate_pio_header(joypad_pce_rp240zero ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
 
 # --- GameCube (KB2040) ---
 # CDC config mode: when no GC 3.3V detected, boots as USB device with CDC for web config
