@@ -495,7 +495,7 @@ pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcen
 # --- PCEngine ---
 
 add_executable(joypad_pce_rp240zero)
-target_compile_definitions(joypad_pce PRIVATE CONFIG_PCE=1)
+target_compile_definitions(joypad_pce_rp240zero PRIVATE CONFIG_PCE=1)
 if (PICO_BOARD STREQUAL "pico")
     target_compile_definitions(joypad_pce_rp240zero 
     PRIVATE PICO_RP2040_ZERO_BUILD=1
