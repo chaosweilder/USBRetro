@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.12)
 
 # Pull in SDK from local submodule (must be before project)
 set(PICO_SDK_PATH ${CMAKE_CURRENT_LIST_DIR}/lib/pico-sdk)
-include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
+include(${PICO_SDK_PATH}/pico_sdk_init.cmake)usb2
 
 project(joypad C CXX ASM)
 set(CMAKE_C_STANDARD 11)
@@ -489,6 +489,29 @@ target_link_libraries(joypad_pce PRIVATE ${COMMON_LIBRARIES})
 joypad_target_common(joypad_pce)
 joypad_add_btstack(joypad_pce)
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/plex.pio)
+pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/clock.pio)
+pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
+
+
+add_executable(joypad_pce_rp240zero)
+target_compile_definitions(joypad_pce PRIVATE CONFIG_PCE=1)
+if (PICO_BOARD STREQUAL "pico")
+    target_compile_definitions(joypad_pce_rp240zero 
+    PRIVATE PICO_RP2040_ZERO_BUILD=1
+    )
+endif()
+target_sources(joypad_pce_rp240zero PUBLIC ${COMMON_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/pcengine/pcengine_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2pce/app.c
+)
+target_include_directories(joypad_pce_rp240zero PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2pce
+    ${CMAKE_CURRENT_SOURCE_DIR}/native/device/pcengine
+)
+target_link_libraries(joypad_pce_rp240zero PRIVATE ${COMMON_LIBRARIES})
+joypad_target_common(joypad_pce_rp240zero)
+joypad_add_btstack(joypad_pce_rp240zero)
+pico_generate_pio_header(joypad_pce_rp240zero ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/plex.pio)
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/clock.pio)
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
 
