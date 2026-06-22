@@ -25,6 +25,7 @@ jobs:
       matrix:
         app:
           - usb2pce_kb2040
+          - usb2pce_rp2040zero
           - usb2gc_kb2040
           - usb2gc_rp2040zero
           - usb2nuon_kb2040
