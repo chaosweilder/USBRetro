@@ -498,7 +498,6 @@ add_executable(joypad_pce_rp240zero)
     target_compile_definitions(joypad_pce_rp240zero 
     PRIVATE PICO_RP2040_ZERO_BUILD=1
     )
-endif()
 target_sources(joypad_pce_rp240zero PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/pcengine/pcengine_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2pce/app.c
