@@ -18,8 +18,18 @@
 #define MAX_PLAYERS 5               // PCE supports up to 5 players
 
 // Defaults to ADAFRUIT_KB2040, build for Adafruit KB2040 board
-#define DATAIN_PIN  14
-#define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
+#define USE_DATAIN_PIN   14     
+
+// auto pin
+#if USE_DATAIN_PIN == 14
+  #define DATAIN_PIN   14
+  #define CLKIN_PIN    15
+#elif USE_DATAIN_PIN == 18
+  #define DATAIN_PIN   18
+  #define CLKIN_PIN    19
+#else
+  #error "USE_DATAIN_PIN only 14 or 18"
+#endif
 
 #ifdef RPI_PICO_BUILD
   #define OUTD0_PIN   4
