@@ -475,10 +475,7 @@ message(STATUS "Board ${PICO_BOARD}: BUTTON_USER_GPIO=${BOARD_BUTTON_GPIO}")
 add_executable(joypad_pce)
 target_compile_definitions(joypad_pce PRIVATE CONFIG_PCE=1)
 if (PICO_BOARD STREQUAL "pico")
-    target_compile_definitions(joypad_pce 
-    PRIVATE RPI_PICO_BUILD=1
-    DATAIN_PINSEL=18
-    )
+    target_compile_definitions(joypad_pce PRIVATE RPI_PICO_BUILD=1)
 endif()
 target_sources(joypad_pce PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/pcengine/pcengine_device.c
@@ -498,11 +495,8 @@ pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcen
 # --- PCEngine RP2040 ZERO---
 
 add_executable(joypad_pce_rp240zero)
-target_compile_definitions(joypad_pce_rp240zero PRIVATE CONFIG_PCE=1)
-if (PICO_BOARD STREQUAL "pico")
     target_compile_definitions(joypad_pce_rp240zero 
     PRIVATE PICO_RP2040_ZERO_BUILD=1
-    DATAIN_PINSEL=14
     )
 endif()
 target_sources(joypad_pce_rp240zero PUBLIC ${COMMON_SOURCES}
