@@ -27,7 +27,7 @@
   #define OUTD1_PIN   5
   #define OUTD2_PIN   6
   #define OUTD3_PIN   7
-#elif PICO_RP2040_ZERO_BUILD
+#elif defined(PICO_RP2040_ZERO_BUILD)
   #define DATAIN_PIN  14
   #define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
   #define OUTD0_PIN   26 // Note - out pins must be a consecutive 'out' group
@@ -52,6 +52,21 @@
 
 extern PIO pio;
 extern uint sm1, sm2, sm3; // sm1 = plex; sm2 = clock, sm3 = select
+
+// ============================================================================
+// HARDWARE CONFIGURATION
+// ============================================================================
+#ifdef RPI_PICO_BUILD
+    #define BOARD "pico"
+#elif defined(PICO_RP2040_ZERO_BUILD)
+    #define BOARD "rp2040zero"
+#elif defined(PICO_RP2350_CORE_BUILD)
+    #define BOARD "rp2350core"
+#else
+    #define BOARD "ada_kb2040"
+#endif
+
+
 
 // Function declarations
 void pce_init(void);
