@@ -60,8 +60,6 @@ extern uint sm1, sm2, sm3; // sm1 = plex; sm2 = clock, sm3 = select
     #define BOARD "pico"
 #elif defined(PICO_RP2040_ZERO_BUILD)
     #define BOARD "rp2040zero"
-#elif defined(PICO_RP2350_CORE_BUILD)
-    #define BOARD "rp2350core"
 #else
     #define BOARD "ada_kb2040"
 #endif
