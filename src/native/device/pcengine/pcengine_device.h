@@ -30,10 +30,10 @@
 #elif defined(PICO_RP2040_ZERO_BUILD)
   #define DATAIN_PIN  14
   #define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
-  #define OUTD0_PIN   4
-  #define OUTD1_PIN   5
-  #define OUTD2_PIN   6
-  #define OUTD3_PIN   7
+  #define OUTD0_PIN   26 // Note - out pins must be a consecutive 'out' group
+  #define OUTD1_PIN   27
+  #define OUTD2_PIN   28
+  #define OUTD3_PIN   29
 #else
   // Default configuration
   #define DATAIN_PIN  18
