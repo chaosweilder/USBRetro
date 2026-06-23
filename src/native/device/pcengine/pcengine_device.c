@@ -16,7 +16,9 @@ static void pce_early_gpio_init(void)
     // Set output pins as outputs with HIGH value
     // OUTD0_PIN through OUTD0_PIN+3 (either 4-7 for Pico or 26-29 for KB2040)
     
-    #ifdef RPI_PICO_BUILD
+    #ifdef defined(PICO_RP2040_ZERO_BUILD)
+    const uint32_t pin_mask = (1u << 26) | (1u << 27) | (1u << 28) | (1u << 29);
+    #else RPI_PICO_BUILD
     const uint32_t pin_mask = (1u << 4) | (1u << 5) | (1u << 6) | (1u << 7);
     #else
     const uint32_t pin_mask = (1u << 26) | (1u << 27) | (1u << 28) | (1u << 29);
