@@ -19,16 +19,22 @@
 
 // Defaults to ADAFRUIT_KB2040, build for Adafruit KB2040 board
 #ifdef PICO_RP2040_ZERO_BUILD
+  // Waveshare RP2040 Zero - Usa pin 14 como quieres
   #define DATAIN_PIN   14
   #define CLKIN_PIN    15
+  #warning "RP2040 Zero build → DATAIN on pin 14"
+
 #elif defined(ADAFRUIT_KB2040_BUILD) || defined(RPI_PICO_BUILD)
+  // Adafruit KB2040 y Raspberry Pi Pico - Mantener pines originales
   #define DATAIN_PIN   18
   #define CLKIN_PIN    19
+  #warning "KB2040 / Pico build → DATAIN on pin 18"
+
 #else
   // Fallback (por si usas otro build)
   #define DATAIN_PIN   18
   #define CLKIN_PIN    19
-#endif 
+#endif
 
 #ifdef RPI_PICO_BUILD
   #define OUTD0_PIN   4
