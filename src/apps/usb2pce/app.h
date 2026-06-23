@@ -47,36 +47,6 @@
 #define MAX_PLAYER_SLOTS 5                  // Multitap supports 5 players
 #define AUTO_ASSIGN_ON_PRESS 1
 
-// ============================================================================
-// PLAYER GPIO PINS
-// ============================================================================
-// Defaults to ADAFRUIT_KB2040, build for Adafruit KB2040 board
-#if defined(PICO_RP2040_ZERO_BUILD)
-#define DATAIN_PIN  14
-#define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
-#else
-#define DATAIN_PIN  18
-#define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
-#endif
-
-#ifdef RPI_PICO_BUILD
-  #define OUTD0_PIN   4
-  #define OUTD1_PIN   5
-  #define OUTD2_PIN   6
-  #define OUTD3_PIN   7
-#elif defined(PICO_RP2040_ZERO_BUILD)
-  #define OUTD0_PIN   26 // Note - out pins must be a consecutive 'out' group
-  #define OUTD1_PIN   27
-  #define OUTD2_PIN   28
-  #define OUTD3_PIN   29
-#else
-  // Default configuration
-  #define OUTD0_PIN   26 // Note - out pins must be a consecutive 'out' group
-  #define OUTD1_PIN   27
-  #define OUTD2_PIN   28
-  #define OUTD3_PIN   29
-#endif
-
 
 // ============================================================================
 // HARDWARE CONFIGURATION
