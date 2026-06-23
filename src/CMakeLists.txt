@@ -493,11 +493,11 @@ pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcen
 pico_generate_pio_header(joypad_pce ${CMAKE_CURRENT_LIST_DIR}/native/device/pcengine/select.pio)
 
 # --- PCEngine RP2040 ZERO---
-
-add_executable(joypad_pce_rp240zero)
-    target_compile_definitions(joypad_pce_rp240zero 
-    PRIVATE PICO_RP2040_ZERO_BUILD=1
-    )
+add_executable(joypad_pcerp240zero)
+target_compile_definitions(joypad_pcerp240zero PRIVATE CONFIG_PCE=1)
+if (PICO_BOARD STREQUAL "pico")
+    target_compile_definitions(joypad_pcerp240zero PRIVATE PRIVATE PICO_RP2040_ZERO_BUILD=1)
+endif()
 target_sources(joypad_pce_rp240zero PUBLIC ${COMMON_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/native/device/pcengine/pcengine_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/apps/usb2pce/app.c
