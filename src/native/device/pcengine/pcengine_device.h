@@ -19,7 +19,7 @@
 
 // Defaults to ADAFRUIT_KB2040, build for Adafruit KB2040 board
 
-  #define DATAIN_PIN DATAIN_PINSEL
+  #define DATAIN_PIN=DATAIN_PINSEL
   #define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
 
 
