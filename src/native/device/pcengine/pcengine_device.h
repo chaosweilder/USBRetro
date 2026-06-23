@@ -35,8 +35,6 @@
   #define OUTD3_PIN   29
 #else
   // Default configuration
-  #define DATAIN_PIN  18
-  #define CLKIN_PIN   DATAIN_PIN + 1  // Note - in pins must be a consecutive 'in' group
   #define OUTD0_PIN   26 // Note - out pins must be a consecutive 'out' group
   #define OUTD1_PIN   27
   #define OUTD2_PIN   28
