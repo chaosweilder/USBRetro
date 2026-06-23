@@ -55,7 +55,7 @@
 // ============================================================================
 #ifdef RPI_PICO_BUILD
     #define BOARD "pico"
-#elif defined(PICO_RP2040_ZERO_BUILD)
+#elif PICO_RP2040_ZERO_BUILD
     #define BOARD "rp2040zero"
 #else
     #define BOARD "ada_kb2040"
