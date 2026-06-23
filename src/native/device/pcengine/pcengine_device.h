@@ -19,12 +19,16 @@
 
 // Defaults to ADAFRUIT_KB2040, build for Adafruit KB2040 board
 #ifdef PICO_RP2040_ZERO_BUILD
-  #define DATAIN_PIN  14
-  #define CLKIN_PIN   DATAIN_PIN + 1
+  #define DATAIN_PIN   14
+  #define CLKIN_PIN    15
+#elif defined(ADAFRUIT_KB2040_BUILD) || defined(RPI_PICO_BUILD)
+  #define DATAIN_PIN   18
+  #define CLKIN_PIN    19
 #else
-  #define DATAIN_PIN  18
-  #define CLKIN_PIN   DATAIN_PIN + 1
-#endif  
+  // Fallback (por si usas otro build)
+  #define DATAIN_PIN   18
+  #define CLKIN_PIN    19
+#endif 
 
 #ifdef RPI_PICO_BUILD
   #define OUTD0_PIN   4
